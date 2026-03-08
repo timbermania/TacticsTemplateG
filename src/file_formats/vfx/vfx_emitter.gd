@@ -273,8 +273,8 @@ func _init(emitter_bytes: PackedByteArray = [], new_vfx_data: VisualEffectData =
 	homing_strength_min_end = emitter_bytes.decode_u16(0xbc)
 	homing_strength_max_end = emitter_bytes.decode_u16(0xbe)
 
-	child_emitter_idx_on_death = emitter_bytes.decode_u16(0xc0)
-	child_emitter_idx_on_interval = emitter_bytes.decode_u16(0xc1)
+	child_emitter_idx_on_death = emitter_bytes.decode_u8(0xc0)
+	child_emitter_idx_on_interval = emitter_bytes.decode_u8(0xc1)
 
 	# bytes 0xc2, 0xc3 not used
 

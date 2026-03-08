@@ -448,18 +448,18 @@ func init_from_file() -> void:
 	section_start = section_offsets[section_num]
 	timer_data_header_bytes = vfx_bytes.slice(section_start, section_offsets[section_num + 1])
 	
-	phase1_duration = timer_data_header_bytes.decode_u16(4)
+	# Phase timing read below from TIMELINES section header (not EFFECT_FLAGS)
 	child_spawn_delay = timer_data_header_bytes.decode_u16(6)
-	phase2_offset = timer_data_header_bytes.decode_u16(0x0a)
 
 	### TODO timeline data
 	section_num = VfxSections.TIMELINES
 	section_start = section_offsets[section_num]
 	timer_data_bytes = vfx_bytes.slice(section_start, section_offsets[section_num + 1])
 	
-	var effect_start_time: int = timer_data_bytes.decode_u16(4)
+	# Phase timing from TIMELINES section header (matches godot-learning)
+	phase1_duration = timer_data_bytes.decode_u16(4)
 	var target_switching_delay: int = timer_data_bytes.decode_u16(6)
-	var effect_max_duration_per_target: int = timer_data_bytes.decode_u16(10)
+	phase2_offset = timer_data_bytes.decode_u16(10)
 	
 	# TODO 5 emitter timing sections, 0x80 long each
 	for emitter_timing_section_id: int in 5:

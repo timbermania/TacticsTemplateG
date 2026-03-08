@@ -58,10 +58,9 @@ func initialize(data: VisualEffectData) -> void:
 	phase2_started = false
 	_first_update_after_init = true
 
-	# Phase timing from parsed header
+	# Phase timing from parsed TIMELINES header
 	phase1_duration = data.phase1_duration
-	var child_spawn_delay: int = data.child_spawn_delay
-	phase2_start = phase1_duration + child_spawn_delay
+	phase2_start = phase1_duration + data.phase2_offset
 
 	# Create timeline controllers from pre-parsed timeline arrays
 	phase1_controller = _create_controller(data.phase1_emitter_timelines)
@@ -85,20 +84,11 @@ func _create_controller(timelines: Array[VisualEffectData.EmitterTimeline]) -> V
 	var ctrl := VfxTimelineController.new()
 	ctrl.initialize(timelines)
 	ctrl.action_flags_triggered.connect(_on_action_flags)
-	ctrl.emitter_stopped.connect(_on_emitter_stopped)
 	return ctrl
 
 
 func _on_action_flags(flags: int, channel_index: int, frame: int) -> void:
 	action_flags_triggered.emit(flags, channel_index, frame)
-
-
-func _on_emitter_stopped(emitter_index: int, _channel_index: int, _frame: int) -> void:
-	# Deactivate the emitter so _cleanup() removes it from active_emitters
-	for emitter: VfxActiveEmitter in active_emitters:
-		if emitter.emitter_index == emitter_index:
-			emitter.active = false
-			break
 
 
 func enable_timeline() -> void:
