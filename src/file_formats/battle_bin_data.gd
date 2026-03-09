@@ -48,7 +48,7 @@ var ability_vfx_ids: PackedInt32Array = []
 
 # https://ffhacktics.com/wiki/Secondary_effects_by_Charge_Animation
 var charging_vfx_ids_start: int = 0x1b84ac - 0x67000 # 1 byte each?, 0x13 total
-var charging_vfx_ids: PackedInt32Array = [] # TODO get this data
+var charging_vfx_ids: PackedInt32Array = []
 
 var status_image_rects_start: int = 0x14cf68 - 0x67000 # 4 bytes each, 49 entries, mostly text + sword and rod icon
 var status_image_rects: Array[Rect2i] = []
@@ -153,7 +153,14 @@ func init_from_battle_bin() -> void:
 		ability_animation_charging_set_ids[ability_id] = ability_animation_id_bytes.decode_u8(ability_id * entry_size)
 		ability_animation_executing_ids[ability_id] = ability_animation_id_bytes.decode_u8((ability_id * entry_size) + 1)
 		ability_animation_text_ids[ability_id] = ability_animation_id_bytes.decode_u8((ability_id * entry_size) + 2)
-	
+
+	# charging vfx ids (maps charge animation set to TRAP handler index)
+	var num_charge_entries: int = 0x13
+	charging_vfx_ids.resize(num_charge_entries)
+	var charge_data: PackedByteArray = battle_bytes.slice(charging_vfx_ids_start, charging_vfx_ids_start + num_charge_entries)
+	for idx: int in num_charge_entries:
+		charging_vfx_ids[idx] = charge_data.decode_u8(idx)
+
 	# ability vfx header offsets
 	entry_size = 3
 	num_entries = ItemData.ItemType.CLOTH + 1
