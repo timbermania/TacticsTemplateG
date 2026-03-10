@@ -60,7 +60,15 @@ const HANDLER_CONFIGS: Dictionary = {
 	4: [4, 5, 10, 14, 15, 16],  # summon orbs
 	5: [12],                     # summon glow
 	6: [0, 1],                  # hit clouds (throwstone/ranged)
+	8: [6],                      # charge particles A
+	9: [7],                      # charge particles B
+	12: [8],                     # charge particles C
+	13: [5],                     # charge particles D
+	15: [4],                     # charge particles E
+	17: [3],                     # element particles
+	19: [15],                    # charge particles F
 	21: [11],                    # knight break (overbright white triangles, palette 10)
+	22: [14],                    # summon charge orbs
 }
 
 enum DirectionMode { NONE, DIRECTIONAL, FACING }
@@ -70,16 +78,45 @@ const HANDLER_GROUP_NAMES: Dictionary = {
 	1: "Spell Shimmer",
 	2: "Hit Clouds (Melee)",
 	3: "Elemental Puffs",
-	4: "Summon Orbs",
+	4: "Spell Charge Orbs",
 	5: "Summon Glow",
 	6: "Hit Clouds (Throwstone)",
+	8: "Charge Particles A",
+	9: "Charge Particles B",
+	12: "Charge Particles C",
+	13: "Charge Particles D",
+	15: "Charge Particles E",
+	17: "Element Particles",
+	19: "Charge Particles F",
 	21: "Knight Break",
+	22: "Summon Charge Orbs",
 }
 
 const ELEMENT_NAMES: PackedStringArray = [
 	"None", "Fire", "Lightning", "Ice", "Wind",
 	"Earth", "Water", "Holy", "Dark"
 ]
+
+# Named handler IDs
+const HANDLER_HIT_MELEE: int = 2
+const HANDLER_HIT_RANGED: int = 6
+const HANDLER_ORBITAL: int = 22
+const ORBITAL_PALETTE_ID: int = 12  # CLUT 0x7ACC = palette row 12
+
+# Handlers that trigger white flash on the target unit sprite
+const FLASH_HANDLER_IDS: PackedInt32Array = [HANDLER_HIT_MELEE, HANDLER_HIT_RANGED]
+
+static func element_type_to_trap_id(el: Action.ElementTypes) -> int:
+	match el:
+		Action.ElementTypes.FIRE: return 1
+		Action.ElementTypes.LIGHTNING: return 2
+		Action.ElementTypes.ICE: return 3
+		Action.ElementTypes.WIND: return 4
+		Action.ElementTypes.EARTH: return 5
+		Action.ElementTypes.WATER: return 6
+		Action.ElementTypes.HOLY: return 7
+		Action.ElementTypes.DARK: return 8
+		_: return 0
 
 
 class TrapEmitter:

@@ -50,6 +50,7 @@ var _texture_size: Vector2 = Vector2(256, 144)
 var _palette_textures: Dictionary[int, Texture2D] = {} # palette_id -> Texture2D
 var _z_bias: float = 0.001
 var _initialized: bool = false
+var _orbital_handler: TrapOrbitalHandler = null
 
 
 func initialize() -> void:
@@ -98,6 +99,18 @@ func play(handler_id: int, element_id: int, direction: Vector3 = Vector3.ZERO, t
 
 	_impact_direction = direction
 
+	# Handler 22: orbital summon charge orbs
+	if handler_id == TrapEffectData.HANDLER_ORBITAL:
+		_orbital_handler = TrapOrbitalHandler.new()
+		_orbital_handler.start(Vector3.ZERO)  # Local space — instance node is already at unit position
+		_particles = _orbital_handler.particles
+		_emitter_palette.clear()
+		_emitter_palette[TrapOrbitalHandler.EMITTER_INDEX] = TrapEffectData.ORBITAL_PALETTE_ID
+		_tick_counter = 0
+		_tick_timer = 0.0
+		_is_playing = true
+		return
+
 	# Determine which emitters to activate
 	if handler_id == 0:
 		_active_emitter_indices.assign(range(TrapEffectData.NUM_EMITTERS))
@@ -129,11 +142,17 @@ func play(handler_id: int, element_id: int, direction: Vector3 = Vector3.ZERO, t
 
 func stop() -> void:
 	_is_playing = false
+	_orbital_handler = null
 	_particles.clear()
 	_release_all_meshes()
 	if _palette_controller != null:
 		_palette_controller.reset()
 		_palette_controller = null
+
+
+func start_fade() -> void:
+	if _orbital_handler != null:
+		_orbital_handler.start_fade()
 
 
 func is_playing() -> bool:
@@ -165,6 +184,23 @@ func _process(delta: float) -> void:
 func _process_tick() -> void:
 	var trap_data: TrapEffectData = RomReader.trap_effect_data
 	if trap_data.emitters.is_empty():
+		return
+
+	# Handler 22: orbital tick
+	if _orbital_handler != null:
+		_orbital_handler.tick()
+		for p: VfxParticleData in _particles:
+			p.age += 1  # Orbital particles bypass physics, must increment age manually
+			_tick_trap_animation(p, trap_data)
+		_tick_counter += 1
+		if _orbital_handler.is_done():
+			if loop:
+				_orbital_handler.start(Vector3.ZERO)
+				_tick_counter = 0
+				_tick_timer = 0.0
+			else:
+				_is_playing = false
+				completed.emit()
 		return
 
 	_spawn_particles_for_tick(trap_data)
@@ -246,7 +282,7 @@ func _create_particle(emitter_idx: int, emitter: TrapEffectData.TrapEmitter, tra
 	p.inertia = TRAP_INERTIA
 	p.weight = float(randi_range(emitter.weight_min, emitter.weight_max))
 
-	_init_trap_animation(p, emitter, trap_data)
+	init_trap_animation(p, emitter, trap_data)
 	return p
 
 
@@ -329,7 +365,7 @@ static func _build_direction_basis(direction: Vector3) -> Basis:
 #  TRAP animation — 1:1 tick (not /2 like E###.BIN)
 # ============================================================
 
-func _init_trap_animation(p: VfxParticleData, emitter: TrapEffectData.TrapEmitter, trap_data: TrapEffectData) -> void:
+static func init_trap_animation(p: VfxParticleData, emitter: TrapEffectData.TrapEmitter, trap_data: TrapEffectData) -> void:
 	p.anim_index = emitter.anim_index
 	p.anim_frame = 0
 	p.anim_time = 0
@@ -345,10 +381,10 @@ func _init_trap_animation(p: VfxParticleData, emitter: TrapEffectData.TrapEmitte
 		p.current_frameset = first.frameset_id
 		p.anim_time = first.duration
 		if first.duration == 0:
-			_mark_animation_terminal(p)
+			mark_animation_terminal(p)
 
 
-func _tick_trap_animation(p: VfxParticleData, trap_data: TrapEffectData) -> void:
+static func _tick_trap_animation(p: VfxParticleData, trap_data: TrapEffectData) -> void:
 	if p.animation_complete or p.animation_held:
 		return
 	if p.anim_index < 0 or p.anim_index >= trap_data.animations.size():
@@ -366,19 +402,19 @@ func _tick_trap_animation(p: VfxParticleData, trap_data: TrapEffectData) -> void
 	_resolve_trap_animation_frame(p, animation)
 
 
-func _resolve_trap_animation_frame(p: VfxParticleData, animation: VisualEffectData.VfxAnimation) -> void:
+static func _resolve_trap_animation_frame(p: VfxParticleData, animation: VisualEffectData.VfxAnimation) -> void:
 	while p.anim_frame < animation.animation_frames.size():
 		var af: VisualEffectData.VfxAnimationFrame = animation.animation_frames[p.anim_frame]
 
 		if af.frameset_id == VisualEffectData.ANIM_OPCODE_LOOP:
-			_mark_animation_terminal(p)
+			mark_animation_terminal(p)
 			return
 
 		p.current_frameset = af.frameset_id
 		p.anim_time = af.duration
 
 		if af.duration == 0:
-			_mark_animation_terminal(p)
+			mark_animation_terminal(p)
 			return
 
 		return
@@ -386,7 +422,7 @@ func _resolve_trap_animation_frame(p: VfxParticleData, animation: VisualEffectDa
 	p.animation_complete = true
 
 
-func _mark_animation_terminal(p: VfxParticleData) -> void:
+static func mark_animation_terminal(p: VfxParticleData) -> void:
 	if p.lifetime == -1:
 		p.animation_complete = true
 	else:
@@ -576,5 +612,6 @@ func _render_frame(mesh_inst: MeshInstance3D, mat: ShaderMaterial, p: VfxParticl
 	mat.set_shader_parameter("corner_br", Vector2(float(vfx_frame.bottom_right_xy.x), float(vfx_frame.bottom_right_xy.y)))
 	mat.set_shader_parameter("uv_rect_data", uv_rect_data)
 
+	mat.set_shader_parameter("color_modulate", p.color_modulate)
 	mat.render_priority = draw_order + 1
 	mesh_inst.visible = true

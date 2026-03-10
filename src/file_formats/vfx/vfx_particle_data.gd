@@ -45,6 +45,7 @@ var anim_offset: Vector2 = Vector2.ZERO
 # Pre-computed render state (set by animator.tick each physics frame)
 var current_frameset: int = 0
 var current_depth_mode: int = 0
+var color_modulate: float = 1.0
 
 
 func initialize(
@@ -80,6 +81,7 @@ func initialize(
 	anim_offset = Vector2.ZERO
 	current_frameset = 0
 	current_depth_mode = 0
+	color_modulate = 1.0
 
 
 func is_dead() -> bool:

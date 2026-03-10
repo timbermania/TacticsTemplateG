@@ -13,6 +13,7 @@ uniform vec2 corner_bl;
 uniform vec2 corner_br;
 uniform vec4 uv_rect_data;
 uniform float z_bias = 0.0;
+uniform float color_modulate = 1.0;
 
 varying vec4 uv_rect;
 varying float tile_center_depth;
@@ -51,7 +52,7 @@ void fragment() {
 		discard;
 	}
 
-	ALBEDO = col.rgb * 0.25;
+	ALBEDO = col.rgb * 0.25 * color_modulate;
 	ALPHA = 1.0;
 	DEPTH = tile_center_depth + z_bias;
 }

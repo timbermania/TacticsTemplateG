@@ -44,6 +44,8 @@ var current_cursor_map_position: Vector3
 @export var game_state_container: Container
 @export var game_state_label: Label
 
+var trap_instance: TrapEffectInstance
+
 var event_num: int = 0 # TODO handle event timeline
 
 @export var icon_counter: GridContainer
@@ -87,7 +89,7 @@ var walled_maps: PackedInt32Array = [
 
 func _ready() -> void:
 	main_camera = camera_controller.camera
-	
+
 	load_rom_button.file_selected.connect(RomReader.on_load_rom_dialog_file_selected)
 	RomReader.rom_loaded.connect(on_rom_loaded)
 	orthographic_check.toggled.connect(camera_controller.on_orthographic_toggled)
@@ -131,6 +133,14 @@ func toggle_debug_ui() -> void:
 func on_rom_loaded() -> void:
 	push_warning("on rom loaded")
 	load_rom_button.visible = false
+
+	if trap_instance != null:
+		trap_instance.stop()
+		trap_instance.queue_free()
+	trap_instance = TrapEffectInstance.new()
+	trap_instance.name = "TrapEffectInstance"
+	battle_view.add_child(trap_instance)
+	trap_instance.initialize()
 
 	scenario_editor.populate_option_lists()
 	scenario_editor.visible = true
