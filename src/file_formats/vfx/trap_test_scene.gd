@@ -239,8 +239,8 @@ func _on_play_pressed() -> void:
 
 	_trap_instance.loop = loop_checkbox.button_pressed
 
-	# Pass target_unit for handlers that trigger white flash (melee/throwstone)
-	# and for handler 4 (spell charge) which needs sprite height for convergence point
+	# Pass target_unit for hit flash (handler 2), spell charge height (handler 4),
+	# and all-emitter mode (handler 0)
 	var flash_unit: Unit = test_unit if handler_id in [0, 2, 4] else null
 	_trap_instance.play(handler_id, elem_idx, _impact_direction, flash_unit)
 
