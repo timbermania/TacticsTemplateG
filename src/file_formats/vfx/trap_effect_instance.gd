@@ -156,6 +156,12 @@ func play(handler_id: int, element_id: int, direction: Vector3 = Vector3.ZERO, t
 		else:
 			_emitter_palette[idx] = element_id
 
+	# Charge+X: SCATTER particles converge ~18 PSX units above feet, always palette 11
+	if handler_id == TrapEffectData.HANDLER_CHARGE_X:
+		_scatter_anchor = Vector3(0.0, 18.0 / VfxEmitter.POSITION_DIVISOR, 0.0)
+		for idx: int in _active_emitter_indices:
+			_emitter_palette[idx] = TrapEffectData.CHARGE_X_PALETTE_ID
+
 	_tick_counter = 0
 	_tick_timer = 0.0
 	_is_playing = true

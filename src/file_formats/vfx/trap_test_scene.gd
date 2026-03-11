@@ -241,7 +241,7 @@ func _on_play_pressed() -> void:
 
 	# Pass target_unit for handlers that trigger white flash (melee/throwstone)
 	# and for handler 4 (spell charge) which needs sprite height for convergence point
-	var flash_unit: Unit = test_unit if handler_id in [0, 2, 4, 6] else null
+	var flash_unit: Unit = test_unit if handler_id in [0, 2, 4] else null
 	_trap_instance.play(handler_id, elem_idx, _impact_direction, flash_unit)
 
 

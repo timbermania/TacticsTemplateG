@@ -51,15 +51,12 @@ const EMITTER_NAMES: Dictionary = {
 	16: "beam",
 }
 
-# Handler index → config indices
-# Handler 2 has two variants: melee (0+9) vs throwstone/ranged (0+1), selected by ability context
+# Handler index → config indices (aligned to PSX g_charge_effect_handlers[] func_id)
 const HANDLER_CONFIGS: Dictionary = {
-	1: [3, 7, 8, 11],           # spell shimmer
-	2: [0, 9],                  # hit clouds (melee)
-	3: [2, 6, 13],              # elemental puffs
-	4: [4, 5, 10, 14, 15, 16],  # summon orbs
-	5: [12],                     # summon glow
-	6: [0, 1],                  # hit clouds (throwstone/ranged)
+	2: [0, 1, 9],               # hit clouds (melee + ranged) — PSX func_id 2
+	3: [16],                     # elemental puffs — PSX func_id 3
+	# 4: intercepted by HANDLER_SPELL_CHARGE (lines + config 12 sparkles)
+	6: [10],                     # Charge+X particles — PSX func_id 6
 	8: [6],                      # charge particles A
 	9: [7],                      # charge particles B
 	12: [8],                     # charge particles C
@@ -75,12 +72,10 @@ enum DirectionMode { NONE, DIRECTIONAL, FACING }
 enum VelocityMode { SPHERICAL_RANDOM, SCATTER, DIRECTIONAL, FACING_DIRECTIONAL, ZERO }
 
 const HANDLER_GROUP_NAMES: Dictionary = {
-	1: "Spell Shimmer",
-	2: "Hit Clouds (Melee)",
+	2: "Hit Clouds",
 	3: "Elemental Puffs",
 	4: "Spell Charge Lines",
-	5: "Summon Glow",
-	6: "Hit Clouds (Throwstone)",
+	6: "Charge+X",
 	8: "Charge Particles A",
 	9: "Charge Particles B",
 	12: "Charge Particles C",
@@ -99,13 +94,15 @@ const ELEMENT_NAMES: PackedStringArray = [
 
 # Named handler IDs
 const HANDLER_HIT_MELEE: int = 2
-const HANDLER_HIT_RANGED: int = 6
+const HANDLER_HIT_RANGED: int = 2   # PSX func_id 2 handles both melee and ranged
 const HANDLER_SPELL_CHARGE: int = 4
+const HANDLER_CHARGE_X: int = 6     # PSX func_id 6
 const HANDLER_ORBITAL: int = 22
 const ORBITAL_PALETTE_ID: int = 12  # CLUT 0x7ACC = palette row 12
+const CHARGE_X_PALETTE_ID: int = 11  # CLUT 0x7ACB
 
 # Handlers that trigger white flash on the target unit sprite
-const FLASH_HANDLER_IDS: PackedInt32Array = [HANDLER_HIT_MELEE, HANDLER_HIT_RANGED]
+const FLASH_HANDLER_IDS: PackedInt32Array = [HANDLER_HIT_MELEE]
 
 static func element_type_to_trap_id(el: Action.ElementTypes) -> int:
 	match el:
