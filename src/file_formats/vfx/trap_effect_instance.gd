@@ -51,6 +51,13 @@ var _palette_textures: Dictionary[int, Texture2D] = {} # palette_id -> Texture2D
 var _z_bias: float = 0.001
 var _initialized: bool = false
 var _orbital_handler: TrapOrbitalHandler = null
+var _spell_charge_handler: TrapSpellChargeHandler = null
+var _line_mesh: ImmediateMesh = null
+var _line_mesh_instance: MeshInstance3D = null
+var _line_material: ShaderMaterial = null
+var _scatter_anchor: Vector3 = Vector3.ZERO  # PSX anchor for SCATTER convergence
+var _charge_line_shader: Shader
+const LINE_HALF_WIDTH: float = 0.03
 
 
 func initialize() -> void:
@@ -75,6 +82,7 @@ func initialize() -> void:
 		load("res://src/file_formats/vfx/shaders/effect_particle_mode2.gdshader"),
 		load("res://src/file_formats/vfx/shaders/effect_particle_mode3.gdshader"),
 	]
+	_charge_line_shader = load("res://src/file_formats/vfx/shaders/trap_charge_line.gdshader")
 
 	_texture_size = Vector2(trap_data.trap_spr.width, trap_data.trap_spr.height)
 	_palette_textures[0] = trap_data.texture
@@ -98,6 +106,25 @@ func play(handler_id: int, element_id: int, direction: Vector3 = Vector3.ZERO, t
 	stop()
 
 	_impact_direction = direction
+
+	# Handler 4: spell charge lines
+	if handler_id == TrapEffectData.HANDLER_SPELL_CHARGE:
+		# PSX looks up sprite height from DAT_8009474b[sprite_type * 4]
+		var sprite_height: float = TrapSpellChargeHandler.DEFAULT_HEIGHT
+		if target_unit != null and target_unit.animation_manager != null \
+				and target_unit.animation_manager.global_spr != null:
+			sprite_height = float(target_unit.animation_manager.global_spr.graphic_height)
+		_spell_charge_handler = TrapSpellChargeHandler.new()
+		_spell_charge_handler.start(element_id, sprite_height)
+		_setup_line_mesh()
+		_emitter_palette.clear()
+		_emitter_palette[TrapSpellChargeHandler.SPARKLE_EMITTER_INDEX] = TrapSpellChargeHandler.SPARKLE_PALETTE_ID
+		# PSX patches SCATTER anchor to (height + 8) above feet
+		_scatter_anchor = Vector3(0.0, _spell_charge_handler.convergence_y, 0.0)
+		_tick_counter = 0
+		_tick_timer = 0.0
+		_is_playing = true
+		return
 
 	# Handler 22: orbital summon charge orbs
 	if handler_id == TrapEffectData.HANDLER_ORBITAL:
@@ -143,6 +170,13 @@ func play(handler_id: int, element_id: int, direction: Vector3 = Vector3.ZERO, t
 func stop() -> void:
 	_is_playing = false
 	_orbital_handler = null
+	_spell_charge_handler = null
+	_scatter_anchor = Vector3.ZERO
+	if _line_mesh_instance != null:
+		_line_mesh_instance.queue_free()
+		_line_mesh_instance = null
+		_line_mesh = null
+		_line_material = null
 	_particles.clear()
 	_release_all_meshes()
 	if _palette_controller != null:
@@ -153,6 +187,8 @@ func stop() -> void:
 func start_fade() -> void:
 	if _orbital_handler != null:
 		_orbital_handler.start_fade()
+	if _spell_charge_handler != null:
+		_spell_charge_handler.start_fade()
 
 
 func is_playing() -> bool:
@@ -203,14 +239,26 @@ func _process_tick() -> void:
 				completed.emit()
 		return
 
+	# Handler 4: spell charge lines
+	if _spell_charge_handler != null:
+		_spell_charge_handler.tick()
+		_spawn_handler_sparkles(trap_data)
+		var removed: int = _update_and_cull_particles(trap_data)
+		_spell_charge_handler.active_sparkle_count -= removed
+		_tick_counter += 1
+		if _spell_charge_handler.is_done():
+			if loop:
+				_spell_charge_handler.restart()
+				_particles.clear()
+				_tick_counter = 0
+				_tick_timer = 0.0
+			else:
+				_is_playing = false
+				completed.emit()
+		return
+
 	_spawn_particles_for_tick(trap_data)
-
-	for p: VfxParticleData in _particles:
-		_physics.update_particle(p)
-		_tick_trap_animation(p, trap_data)
-
-	_particles = _particles.filter(
-		func(p: VfxParticleData) -> bool: return p.active and not p.is_dead())
+	_update_and_cull_particles(trap_data)
 
 	if _palette_controller != null and not _palette_controller.is_done():
 		_palette_controller.update()
@@ -226,6 +274,16 @@ func _process_tick() -> void:
 		else:
 			_is_playing = false
 			completed.emit()
+
+
+func _update_and_cull_particles(trap_data: TrapEffectData) -> int:
+	for p: VfxParticleData in _particles:
+		_physics.update_particle(p)
+		_tick_trap_animation(p, trap_data)
+	var prev_count: int = _particles.size()
+	_particles = _particles.filter(
+		func(p: VfxParticleData) -> bool: return p.active and not p.is_dead())
+	return prev_count - _particles.size()
 
 
 # ============================================================
@@ -266,8 +324,18 @@ func _create_particle(emitter_idx: int, emitter: TrapEffectData.TrapEmitter, tra
 
 	var vel: Vector3 = Vector3.ZERO
 	match emitter.velocity_mode:
-		TrapEffectData.VelocityMode.SPHERICAL_RANDOM, TrapEffectData.VelocityMode.SCATTER:
+		TrapEffectData.VelocityMode.SPHERICAL_RANDOM:
 			vel = _calc_scatter_velocity(emitter, ellipsoid_offset)
+		TrapEffectData.VelocityMode.SCATTER:
+			# PSX SCATTER: particles spawn randomly within ±velocity range around
+			# the anchor point, then fly inward toward the anchor.
+			# The anchor (caster body center on PSX) is set per-handler via _scatter_anchor.
+			var scatter_range: Vector3 = emitter.velocity
+			spawn_pos = _scatter_anchor + Vector3(
+				randf_range(-absf(scatter_range.x), absf(scatter_range.x)),
+				randf_range(-absf(scatter_range.y), absf(scatter_range.y)),
+				randf_range(-absf(scatter_range.z), absf(scatter_range.z)))
+			vel = _calc_scatter_velocity(emitter, _scatter_anchor - spawn_pos)
 		TrapEffectData.VelocityMode.DIRECTIONAL, TrapEffectData.VelocityMode.FACING_DIRECTIONAL:
 			var vel_local: Vector3 = _calc_directional_velocity(emitter)
 			if has_direction:
@@ -430,6 +498,111 @@ static func mark_animation_terminal(p: VfxParticleData) -> void:
 
 
 # ============================================================
+#  Spell charge line helpers
+# ============================================================
+
+func _spawn_handler_sparkles(trap_data: TrapEffectData) -> void:
+	var count: int = _spell_charge_handler.sparkles_to_spawn
+	_spell_charge_handler.sparkles_to_spawn = 0
+	var emitter_idx: int = TrapSpellChargeHandler.SPARKLE_EMITTER_INDEX
+	if emitter_idx >= trap_data.emitters.size():
+		return
+	var emitter: TrapEffectData.TrapEmitter = trap_data.emitters[emitter_idx]
+	for _i in range(count):
+		var p: VfxParticleData = _create_particle(emitter_idx, emitter, trap_data)
+		_particles.append(p)
+		_spell_charge_handler.active_sparkle_count += 1
+
+
+func _setup_line_mesh() -> void:
+	_line_mesh = ImmediateMesh.new()
+	_line_mesh_instance = MeshInstance3D.new()
+	_line_mesh_instance.mesh = _line_mesh
+	_line_material = ShaderMaterial.new()
+	_line_material.shader = _charge_line_shader
+	_line_mesh_instance.material_override = _line_material
+	add_child(_line_mesh_instance)
+
+
+func _render_charge_lines() -> void:
+	_line_mesh.clear_surfaces()
+	if _spell_charge_handler.active_line_count == 0:
+		return
+
+	var cam: Camera3D = get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var cam_pos: Vector3 = cam.global_position
+
+	var elem_color: Color = _spell_charge_handler.element_color
+	var fade_curve: PackedByteArray = TrapSpellChargeHandler.FADE_CURVE
+
+	_line_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
+
+	for slot in _spell_charge_handler.line_slots:
+		if not slot.alive:
+			continue
+
+		var brightness_segs: int = _spell_charge_handler.get_brightness_index(slot)
+		if brightness_segs <= 0:
+			continue
+
+		var write_index: int = slot.age % TrapSpellChargeHandler.HISTORY_SIZE
+
+		# Walk backwards through history: newest (write_index) to oldest
+		for seg in range(brightness_segs):
+			var idx_end: int = (write_index - seg + TrapSpellChargeHandler.HISTORY_SIZE) % TrapSpellChargeHandler.HISTORY_SIZE
+			var idx_start: int = (idx_end - 1 + TrapSpellChargeHandler.HISTORY_SIZE) % TrapSpellChargeHandler.HISTORY_SIZE
+
+			var p_start: Vector3 = slot.history[idx_start]
+			var p_end: Vector3 = slot.history[idx_end]
+
+			# Skip degenerate segments
+			if p_start.is_equal_approx(p_end):
+				continue
+
+			# Color from fade curve (head = bright, tail = dim)
+			var head_idx: int = TrapSpellChargeHandler.HISTORY_SIZE - 1 - seg
+			var tail_idx: int = head_idx - 1
+			if tail_idx < 0:
+				tail_idx = 0
+			if head_idx >= fade_curve.size():
+				head_idx = fade_curve.size() - 1
+
+			var alpha_end: float = float(fade_curve[head_idx]) / 255.0
+			var alpha_start: float = float(fade_curve[tail_idx]) / 255.0
+			var color_end := Color(elem_color.r * alpha_end, elem_color.g * alpha_end, elem_color.b * alpha_end, 1.0)
+			var color_start := Color(elem_color.r * alpha_start, elem_color.g * alpha_start, elem_color.b * alpha_start, 1.0)
+
+			# Camera-facing quad (billboard strip)
+			var seg_dir: Vector3 = (p_end - p_start).normalized()
+			var to_cam: Vector3 = (cam_pos - (p_start + p_end) * 0.5).normalized()
+			var right: Vector3 = seg_dir.cross(to_cam).normalized() * LINE_HALF_WIDTH
+
+			# Two triangles: start-left, start-right, end-right, start-left, end-right, end-left
+			var s_l: Vector3 = p_start - right
+			var s_r: Vector3 = p_start + right
+			var e_l: Vector3 = p_end - right
+			var e_r: Vector3 = p_end + right
+
+			_line_mesh.surface_set_color(color_start)
+			_line_mesh.surface_add_vertex(s_l)
+			_line_mesh.surface_set_color(color_start)
+			_line_mesh.surface_add_vertex(s_r)
+			_line_mesh.surface_set_color(color_end)
+			_line_mesh.surface_add_vertex(e_r)
+
+			_line_mesh.surface_set_color(color_start)
+			_line_mesh.surface_add_vertex(s_l)
+			_line_mesh.surface_set_color(color_end)
+			_line_mesh.surface_add_vertex(e_r)
+			_line_mesh.surface_set_color(color_end)
+			_line_mesh.surface_add_vertex(e_l)
+
+	_line_mesh.surface_end()
+
+
+# ============================================================
 #  Mesh pool
 # ============================================================
 
@@ -494,6 +667,9 @@ func _release_all_meshes() -> void:
 # ============================================================
 
 func _render_particles() -> void:
+	if _spell_charge_handler != null:
+		_render_charge_lines()
+
 	if _particles.is_empty():
 		_release_all_meshes()
 		return

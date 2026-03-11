@@ -126,6 +126,7 @@ func _spawn_squire() -> void:
 	test_unit.char_body.set_rotation_degrees(Vector3(0, camera_controller.rotation_degrees.y, 0))
 	test_unit.update_animation_facing(camera_controller.camera_facing_vector)
 	test_unit.hide_debug_menu()
+	test_unit.stat_bars_container.visible = false
 
 
 func _setup_trap_instance() -> void:
@@ -239,7 +240,8 @@ func _on_play_pressed() -> void:
 	_trap_instance.loop = loop_checkbox.button_pressed
 
 	# Pass target_unit for handlers that trigger white flash (melee/throwstone)
-	var flash_unit: Unit = test_unit if handler_id in [0, 2, 6] else null
+	# and for handler 4 (spell charge) which needs sprite height for convergence point
+	var flash_unit: Unit = test_unit if handler_id in [0, 2, 4, 6] else null
 	_trap_instance.play(handler_id, elem_idx, _impact_direction, flash_unit)
 
 

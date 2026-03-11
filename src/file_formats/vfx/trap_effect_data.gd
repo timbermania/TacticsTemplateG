@@ -78,7 +78,7 @@ const HANDLER_GROUP_NAMES: Dictionary = {
 	1: "Spell Shimmer",
 	2: "Hit Clouds (Melee)",
 	3: "Elemental Puffs",
-	4: "Spell Charge Orbs",
+	4: "Spell Charge Lines",
 	5: "Summon Glow",
 	6: "Hit Clouds (Throwstone)",
 	8: "Charge Particles A",
@@ -100,6 +100,7 @@ const ELEMENT_NAMES: PackedStringArray = [
 # Named handler IDs
 const HANDLER_HIT_MELEE: int = 2
 const HANDLER_HIT_RANGED: int = 6
+const HANDLER_SPELL_CHARGE: int = 4
 const HANDLER_ORBITAL: int = 22
 const ORBITAL_PALETTE_ID: int = 12  # CLUT 0x7ACC = palette row 12
 
