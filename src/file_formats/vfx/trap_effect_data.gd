@@ -100,6 +100,14 @@ const HANDLER_CHARGE_X: int = 6     # PSX func_id 6
 const HANDLER_ORBITAL: int = 22
 const ORBITAL_PALETTE_ID: int = 12  # CLUT 0x7ACC = palette row 12
 const CHARGE_X_PALETTE_ID: int = 11  # CLUT 0x7ACB
+const HANDLER_CHARGE_A: int = 8
+const CHARGE_A_PALETTE_ID: int = 9   # CLUT 0x7AC9
+
+# Handlers where ALL emitters use a single palette (overrides element_id)
+const HANDLER_PALETTE_OVERRIDES: Dictionary = {
+	HANDLER_CHARGE_X: CHARGE_X_PALETTE_ID,   # 6 -> 11
+	HANDLER_CHARGE_A: CHARGE_A_PALETTE_ID,   # 8 -> 9
+}
 
 # Handlers that trigger white flash on the target unit sprite
 const FLASH_HANDLER_IDS: PackedInt32Array = [HANDLER_HIT_MELEE]

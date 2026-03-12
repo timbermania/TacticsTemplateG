@@ -156,11 +156,11 @@ func play(handler_id: int, element_id: int, direction: Vector3 = Vector3.ZERO, t
 		else:
 			_emitter_palette[idx] = element_id
 
-	# Charge+X: SCATTER particles converge ~18 PSX units above feet, always palette 11
-	if handler_id == TrapEffectData.HANDLER_CHARGE_X:
-		_scatter_anchor = Vector3(0.0, 18.0 / VfxEmitter.POSITION_DIVISOR, 0.0)
+	# Some handlers force a single palette for all emitters (ignoring element_id)
+	if handler_id in TrapEffectData.HANDLER_PALETTE_OVERRIDES:
+		var palette_id: int = TrapEffectData.HANDLER_PALETTE_OVERRIDES[handler_id]
 		for idx: int in _active_emitter_indices:
-			_emitter_palette[idx] = TrapEffectData.CHARGE_X_PALETTE_ID
+			_emitter_palette[idx] = palette_id
 
 	_tick_counter = 0
 	_tick_timer = 0.0
@@ -333,15 +333,10 @@ func _create_particle(emitter_idx: int, emitter: TrapEffectData.TrapEmitter, tra
 		TrapEffectData.VelocityMode.SPHERICAL_RANDOM:
 			vel = _calc_scatter_velocity(emitter, ellipsoid_offset)
 		TrapEffectData.VelocityMode.SCATTER:
-			# PSX SCATTER: particles spawn randomly within ±velocity range around
-			# the anchor point, then fly inward toward the anchor.
-			# The anchor (caster body center on PSX) is set per-handler via _scatter_anchor.
-			var scatter_range: Vector3 = emitter.velocity
-			spawn_pos = _scatter_anchor + Vector3(
-				randf_range(-absf(scatter_range.x), absf(scatter_range.x)),
-				randf_range(-absf(scatter_range.y), absf(scatter_range.y)),
-				randf_range(-absf(scatter_range.z), absf(scatter_range.z)))
-			vel = _calc_scatter_velocity(emitter, _scatter_anchor - spawn_pos)
+			# PSX SCATTER: velocity points inward toward center.
+			# spawn_pos already set by common code: ellipsoid_offset + pos_scatter
+			var center: Vector3 = _scatter_anchor + emitter.pos_scatter
+			vel = _calc_scatter_velocity(emitter, center - spawn_pos)
 		TrapEffectData.VelocityMode.DIRECTIONAL, TrapEffectData.VelocityMode.FACING_DIRECTIONAL:
 			var vel_local: Vector3 = _calc_directional_velocity(emitter)
 			if has_direction:
@@ -361,17 +356,12 @@ func _create_particle(emitter_idx: int, emitter: TrapEffectData.TrapEmitter, tra
 
 
 func _calc_ellipsoid_offset(emitter: TrapEffectData.TrapEmitter) -> Vector3:
-	var vel: Vector3 = emitter.velocity
-	var magnitude: float = vel.length()
-	if magnitude < 0.001:
+	var vel: Vector3 = emitter.velocity  # semi-axes, already in world units
+	if vel.length_squared() < 0.001:
 		return Vector3.ZERO
 
 	var dir: Vector3 = _random_unit_sphere()
-	return Vector3(
-		dir.x * vel.x / magnitude,
-		dir.y * vel.y / magnitude,
-		dir.z * vel.z / magnitude
-	) / VfxEmitter.POSITION_DIVISOR
+	return Vector3(dir.x * vel.x, dir.y * vel.y, dir.z * vel.z)
 
 
 func _calc_scatter_velocity(emitter: TrapEffectData.TrapEmitter, ellipsoid_offset: Vector3) -> Vector3:
