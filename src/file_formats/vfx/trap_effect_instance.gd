@@ -13,6 +13,8 @@ var loop: bool = false
 const TICK_DURATION: float = 1.0 / 30.0
 const TRAP_INERTIA: float = 4096.0
 const RADIUS_TO_VELOCITY: float = 1.0 / 14336.0
+const RISING_BURST_INITIAL_Y: float = 8.0 / 28.0  # PSX raw -8, Y-flipped, /POSITION_DIVISOR
+const RISING_BURST_Y_STEP: float = 3.0 / 28.0     # PSX decrement 3/frame, Y-flipped
 
 var _particles: Array[VfxParticleData] = []
 var _physics: VfxPhysics
@@ -56,6 +58,9 @@ var _line_mesh: ImmediateMesh = null
 var _line_mesh_instance: MeshInstance3D = null
 var _line_material: ShaderMaterial = null
 var _scatter_anchor: Vector3 = Vector3.ZERO  # PSX anchor for SCATTER convergence
+# Animated pos_scatter — handler 13 rising burst shifts spawn center upward each frame
+var _animate_pos_scatter: bool = false
+var _rising_center_y: float = 0.0
 var _charge_line_shader: Shader
 const LINE_HALF_WIDTH: float = 0.03
 
@@ -162,6 +167,10 @@ func play(handler_id: int, element_id: int, direction: Vector3 = Vector3.ZERO, t
 		for idx: int in _active_emitter_indices:
 			_emitter_palette[idx] = palette_id
 
+	_animate_pos_scatter = handler_id == TrapEffectData.HANDLER_RISING_BURST
+	if _animate_pos_scatter:
+		_rising_center_y = RISING_BURST_INITIAL_Y
+
 	_tick_counter = 0
 	_tick_timer = 0.0
 	_is_playing = true
@@ -175,6 +184,8 @@ func play(handler_id: int, element_id: int, direction: Vector3 = Vector3.ZERO, t
 
 func stop() -> void:
 	_is_playing = false
+	_animate_pos_scatter = false
+	_rising_center_y = 0.0
 	_orbital_handler = null
 	_spell_charge_handler = null
 	_scatter_anchor = Vector3.ZERO
@@ -264,6 +275,8 @@ func _process_tick() -> void:
 		return
 
 	_spawn_particles_for_tick(trap_data)
+	if _animate_pos_scatter:
+		_rising_center_y += RISING_BURST_Y_STEP
 	_update_and_cull_particles(trap_data)
 
 	if _palette_controller != null and not _palette_controller.is_done():
@@ -277,6 +290,8 @@ func _process_tick() -> void:
 			_particles.clear()
 			_tick_counter = 0
 			_tick_timer = 0.0
+			if _animate_pos_scatter:
+				_rising_center_y = RISING_BURST_INITIAL_Y
 		else:
 			_is_playing = false
 			completed.emit()
@@ -323,7 +338,8 @@ func _create_particle(emitter_idx: int, emitter: TrapEffectData.TrapEmitter, tra
 	var has_direction: bool = _impact_direction.length_squared() > 0.001
 
 	var ellipsoid_offset: Vector3 = _calc_ellipsoid_offset(emitter)
-	var spawn_pos: Vector3 = ellipsoid_offset + emitter.pos_scatter
+	var pos_scatter: Vector3 = Vector3(0.0, _rising_center_y, 0.0) if _animate_pos_scatter else emitter.pos_scatter
+	var spawn_pos: Vector3 = ellipsoid_offset + pos_scatter
 
 	if has_direction and emitter.velocity_mode == TrapEffectData.VelocityMode.DIRECTIONAL:
 		spawn_pos = _rotate_by_direction(spawn_pos, _impact_direction)
@@ -335,7 +351,7 @@ func _create_particle(emitter_idx: int, emitter: TrapEffectData.TrapEmitter, tra
 		TrapEffectData.VelocityMode.SCATTER:
 			# PSX SCATTER: velocity points inward toward center.
 			# spawn_pos already set by common code: ellipsoid_offset + pos_scatter
-			var center: Vector3 = _scatter_anchor + emitter.pos_scatter
+			var center: Vector3 = _scatter_anchor + pos_scatter
 			vel = _calc_scatter_velocity(emitter, center - spawn_pos)
 		TrapEffectData.VelocityMode.DIRECTIONAL, TrapEffectData.VelocityMode.FACING_DIRECTIONAL:
 			var vel_local: Vector3 = _calc_directional_velocity(emitter)

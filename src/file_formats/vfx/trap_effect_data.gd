@@ -60,7 +60,7 @@ const HANDLER_CONFIGS: Dictionary = {
 	8: [6],                      # charge particles A
 	9: [7],                      # footstep puffs (hard) — PSX func_id 9
 	12: [8],                     # hit/reaction dust — PSX func_id 12
-	13: [5],                     # charge particles D
+	13: [5],                     # rising burst — PSX func_id 13
 	15: [4],                     # charge particles E
 	17: [3],                     # element particles
 	19: [15],                    # charge particles F
@@ -79,7 +79,7 @@ const HANDLER_GROUP_NAMES: Dictionary = {
 	8: "Charge Particles A",
 	9: "Footstep Puffs (Hard)",
 	12: "Hit Dust",
-	13: "Charge Particles D",
+	13: "Rising Burst",
 	15: "Charge Particles E",
 	17: "Element Particles",
 	19: "Charge Particles F",
@@ -104,6 +104,8 @@ const HANDLER_FOOTSTEP_HARD: int = 9
 const FOOTSTEP_HARD_PALETTE_ID: int = 11  # CLUT 0x7ACB
 const HANDLER_HIT_DUST: int = 12
 const HIT_DUST_PALETTE_ID: int = 12  # CLUT 0x7ACC
+const HANDLER_RISING_BURST: int = 13
+const RISING_BURST_PALETTE_ID: int = 11  # CLUT 0x7ACB
 const HANDLER_ORBITAL: int = 22
 const ORBITAL_PALETTE_ID: int = 12  # CLUT 0x7ACC (applied per-emitter, not via HANDLER_PALETTE_OVERRIDES)
 
@@ -113,6 +115,7 @@ const HANDLER_PALETTE_OVERRIDES: Dictionary = {
 	HANDLER_CHARGE_A: CHARGE_A_PALETTE_ID,   # 8 -> 9
 	HANDLER_FOOTSTEP_HARD: FOOTSTEP_HARD_PALETTE_ID,  # 9 -> 11
 	HANDLER_HIT_DUST: HIT_DUST_PALETTE_ID,  # 12 -> 12
+	HANDLER_RISING_BURST: RISING_BURST_PALETTE_ID,  # 13 -> 11
 }
 
 # Handlers that trigger white flash on the target unit sprite
