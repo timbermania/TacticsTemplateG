@@ -61,7 +61,7 @@ const HANDLER_CONFIGS: Dictionary = {
 	9: [7],                      # footstep puffs (hard) — PSX func_id 9
 	12: [8],                     # hit/reaction dust — PSX func_id 12
 	13: [5],                     # rising burst — PSX func_id 13
-	15: [4],                     # charge particles E
+	15: [4],                     # charge drift — PSX func_id 15
 	17: [3],                     # element particles
 	19: [15],                    # charge particles F
 	21: [11],                    # knight break (overbright white triangles, palette 10)
@@ -80,7 +80,7 @@ const HANDLER_GROUP_NAMES: Dictionary = {
 	9: "Footstep Puffs (Hard)",
 	12: "Hit Dust",
 	13: "Rising Burst",
-	15: "Charge Particles E",
+	15: "Charge Drift",
 	17: "Element Particles",
 	19: "Charge Particles F",
 	21: "Knight Break",
@@ -106,6 +106,8 @@ const HANDLER_HIT_DUST: int = 12
 const HIT_DUST_PALETTE_ID: int = 12  # CLUT 0x7ACC
 const HANDLER_RISING_BURST: int = 13
 const RISING_BURST_PALETTE_ID: int = 11  # CLUT 0x7ACB
+const HANDLER_CHARGE_DRIFT: int = 15
+const CHARGE_DRIFT_PALETTE_ID: int = 15  # CLUT 0x7ACF
 const HANDLER_ORBITAL: int = 22
 const ORBITAL_PALETTE_ID: int = 12  # CLUT 0x7ACC (applied per-emitter, not via HANDLER_PALETTE_OVERRIDES)
 
@@ -116,6 +118,7 @@ const HANDLER_PALETTE_OVERRIDES: Dictionary = {
 	HANDLER_FOOTSTEP_HARD: FOOTSTEP_HARD_PALETTE_ID,  # 9 -> 11
 	HANDLER_HIT_DUST: HIT_DUST_PALETTE_ID,  # 12 -> 12
 	HANDLER_RISING_BURST: RISING_BURST_PALETTE_ID,  # 13 -> 11
+	HANDLER_CHARGE_DRIFT: CHARGE_DRIFT_PALETTE_ID,  # 15 -> 15
 }
 
 # Handlers that trigger white flash on the target unit sprite
