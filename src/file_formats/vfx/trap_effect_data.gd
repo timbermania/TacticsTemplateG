@@ -59,7 +59,7 @@ const HANDLER_CONFIGS: Dictionary = {
 	6: [10],                     # Charge+X particles — PSX func_id 6
 	8: [6],                      # charge particles A
 	9: [7],                      # footstep puffs (hard) — PSX func_id 9
-	12: [8],                     # charge particles C
+	12: [8],                     # hit/reaction dust — PSX func_id 12
 	13: [5],                     # charge particles D
 	15: [4],                     # charge particles E
 	17: [3],                     # element particles
@@ -78,7 +78,7 @@ const HANDLER_GROUP_NAMES: Dictionary = {
 	6: "Charge+X",
 	8: "Charge Particles A",
 	9: "Footstep Puffs (Hard)",
-	12: "Charge Particles C",
+	12: "Hit Dust",
 	13: "Charge Particles D",
 	15: "Charge Particles E",
 	17: "Element Particles",
@@ -104,12 +104,15 @@ const HANDLER_CHARGE_A: int = 8
 const CHARGE_A_PALETTE_ID: int = 9   # CLUT 0x7AC9
 const HANDLER_FOOTSTEP_HARD: int = 9
 const FOOTSTEP_HARD_PALETTE_ID: int = 11  # CLUT 0x7ACB
+const HANDLER_HIT_DUST: int = 12
+const HIT_DUST_PALETTE_ID: int = 12  # CLUT 0x7ACC
 
 # Handlers where ALL emitters use a single palette (overrides element_id)
 const HANDLER_PALETTE_OVERRIDES: Dictionary = {
 	HANDLER_CHARGE_X: CHARGE_X_PALETTE_ID,   # 6 -> 11
 	HANDLER_CHARGE_A: CHARGE_A_PALETTE_ID,   # 8 -> 9
 	HANDLER_FOOTSTEP_HARD: FOOTSTEP_HARD_PALETTE_ID,  # 9 -> 11
+	HANDLER_HIT_DUST: HIT_DUST_PALETTE_ID,  # 12 -> 12
 }
 
 # Handlers that trigger white flash on the target unit sprite
