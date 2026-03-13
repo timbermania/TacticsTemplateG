@@ -353,7 +353,7 @@ func _create_particle(emitter_idx: int, emitter: TrapEffectData.TrapEmitter, tra
 	var vel: Vector3 = Vector3.ZERO
 	match emitter.velocity_mode:
 		TrapEffectData.VelocityMode.SPHERICAL_RANDOM:
-			vel = _calc_scatter_velocity(emitter, ellipsoid_offset)
+			vel = _calc_directional_velocity(emitter)
 		TrapEffectData.VelocityMode.SCATTER:
 			# PSX SCATTER: velocity points inward toward center.
 			# spawn_pos already set by common code: ellipsoid_offset + pos_scatter

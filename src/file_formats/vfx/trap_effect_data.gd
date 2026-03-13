@@ -63,7 +63,7 @@ const HANDLER_CONFIGS: Dictionary = {
 	13: [5],                     # rising burst — PSX func_id 13
 	15: [4],                     # charge drift — PSX func_id 15
 	17: [3],                     # element particles
-	19: [15],                    # charge particles F
+	19: [15],                    # teleport
 	21: [11],                    # knight break (overbright white triangles, palette 10)
 	22: [14],                    # summon charge orbs
 }
@@ -82,7 +82,7 @@ const HANDLER_GROUP_NAMES: Dictionary = {
 	13: "Rising Burst",
 	15: "Charge Drift",
 	17: "Element Particles",
-	19: "Charge Particles F",
+	19: "Teleport",
 	21: "Knight Break",
 	22: "Summon Charge Orbs",
 }
@@ -120,6 +120,10 @@ const ELEMENT_PARTICLE_PALETTES: Dictionary = {
 	4: 13,   # Wind → CLUT 0x7ACD
 	5: 14,   # Earth → CLUT 0x7ACE
 }
+const HANDLER_TELEPORT: int = 19
+const TELEPORT_PALETTE_ID: int = 11  # CLUT 0x7ACB
+const HANDLER_KNIGHT_BREAK: int = 21
+const KNIGHT_BREAK_PALETTE_ID: int = 10  # CLUT 0x7ACA
 const HANDLER_ORBITAL: int = 22
 const ORBITAL_PALETTE_ID: int = 12  # CLUT 0x7ACC (applied per-emitter, not via HANDLER_PALETTE_OVERRIDES)
 
@@ -132,6 +136,8 @@ const HANDLER_PALETTE_OVERRIDES: Dictionary = {
 	HANDLER_HIT_DUST: HIT_DUST_PALETTE_ID,  # 12 -> 12
 	HANDLER_RISING_BURST: RISING_BURST_PALETTE_ID,  # 13 -> 11
 	HANDLER_CHARGE_DRIFT: CHARGE_DRIFT_PALETTE_ID,  # 15 -> 15
+	HANDLER_TELEPORT: TELEPORT_PALETTE_ID,  # 19 -> 11
+	HANDLER_KNIGHT_BREAK: KNIGHT_BREAK_PALETTE_ID,  # 21 -> 10
 }
 
 # Handlers that trigger white flash on the target unit sprite
