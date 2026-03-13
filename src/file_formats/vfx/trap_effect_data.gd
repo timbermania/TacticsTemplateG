@@ -95,6 +95,8 @@ const ELEMENT_NAMES: PackedStringArray = [
 # Named handler IDs (sorted by handler ID, each with its palette)
 const HANDLER_HIT_MELEE: int = 2
 const HANDLER_HIT_RANGED: int = 2   # PSX func_id 2 handles both melee and ranged
+const HANDLER_ELEMENTAL_PUFF: int = 3
+const ELEMENTAL_PUFF_PALETTE_ID: int = 13  # CLUT 0x7ACD
 const HANDLER_SPELL_CHARGE: int = 4
 const HANDLER_CHARGE_X: int = 6     # PSX func_id 6
 const CHARGE_X_PALETTE_ID: int = 11  # CLUT 0x7ACB
@@ -113,6 +115,7 @@ const ORBITAL_PALETTE_ID: int = 12  # CLUT 0x7ACC (applied per-emitter, not via 
 
 # Handlers where ALL emitters use a single palette (overrides element_id)
 const HANDLER_PALETTE_OVERRIDES: Dictionary = {
+	HANDLER_ELEMENTAL_PUFF: ELEMENTAL_PUFF_PALETTE_ID,  # 3 -> 13
 	HANDLER_CHARGE_X: CHARGE_X_PALETTE_ID,   # 6 -> 11
 	HANDLER_CHARGE_A: CHARGE_A_PALETTE_ID,   # 8 -> 9
 	HANDLER_FOOTSTEP_HARD: FOOTSTEP_HARD_PALETTE_ID,  # 9 -> 11
