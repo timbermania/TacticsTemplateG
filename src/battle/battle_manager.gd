@@ -45,6 +45,7 @@ var current_cursor_map_position: Vector3
 @export var game_state_label: Label
 
 var trap_instance: TrapEffectInstance
+var projectile_instance: ProjectileEffectInstance
 
 var event_num: int = 0 # TODO handle event timeline
 
@@ -141,6 +142,14 @@ func on_rom_loaded() -> void:
 	trap_instance.name = "TrapEffectInstance"
 	battle_view.add_child(trap_instance)
 	trap_instance.initialize()
+
+	if projectile_instance != null:
+		projectile_instance.stop()
+		projectile_instance.queue_free()
+	projectile_instance = ProjectileEffectInstance.new()
+	projectile_instance.name = "ProjectileEffectInstance"
+	battle_view.add_child(projectile_instance)
+	projectile_instance.initialize()
 
 	scenario_editor.populate_option_lists()
 	scenario_editor.visible = true

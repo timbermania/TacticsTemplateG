@@ -606,6 +606,15 @@ func show_trap_hit(action_instance: ActionInstance, target_unit: Unit) -> void:
 	bm.trap_instance.play(trap_hit_handler_id, trap_el, dir, flash_unit)
 
 
+func show_projectile(action_instance: ActionInstance, target_unit: Unit, variant: ProjectileEffectInstance.Variant) -> void:
+	var bm: BattleManager = action_instance.user.global_battle_manager
+	if bm == null or bm.projectile_instance == null:
+		return
+	var origin: Vector3 = action_instance.user.char_body.global_position
+	var target: Vector3 = target_unit.char_body.global_position
+	bm.projectile_instance.play(origin, target, variant)
+
+
 # TODO set action type directly for each action? maybe as part of action processing per target to check values after formula processing and passive effect modifications
 func get_action_types() -> Array[ActionType]:
 	var action_types: Array[ActionType] = []
