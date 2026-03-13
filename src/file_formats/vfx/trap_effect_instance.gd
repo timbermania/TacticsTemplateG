@@ -404,7 +404,7 @@ func _calc_directional_velocity(emitter: TrapEffectData.TrapEmitter) -> Vector3:
 
 	var cone_basis: Basis = Basis.from_euler(Vector3(angle_x, angle_y, angle_z), EULER_ORDER_ZYX)
 	var speed: float = randf_range(float(emitter.radius_min), float(emitter.radius_max)) * RADIUS_TO_VELOCITY
-	return cone_basis * Vector3(0, speed, 0)
+	return cone_basis * Vector3(0, -speed, 0)
 
 
 static func _random_unit_sphere() -> Vector3:
