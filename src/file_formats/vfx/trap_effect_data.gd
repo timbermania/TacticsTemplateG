@@ -110,6 +110,16 @@ const HANDLER_RISING_BURST: int = 13
 const RISING_BURST_PALETTE_ID: int = 11  # CLUT 0x7ACB
 const HANDLER_CHARGE_DRIFT: int = 15
 const CHARGE_DRIFT_PALETTE_ID: int = 15  # CLUT 0x7ACF
+const HANDLER_ELEMENT_PARTICLES: int = 17
+# Element → palette for handler 17 (PSX DAT_801b88dc + 0x7AC0)
+# Elements 1-5 get unique palettes; 6-8 and 0 fall back to palette 0
+const ELEMENT_PARTICLE_PALETTES: Dictionary = {
+	1: 10,   # Fire → CLUT 0x7ACA
+	2: 11,   # Lightning → CLUT 0x7ACB
+	3: 12,   # Ice → CLUT 0x7ACC
+	4: 13,   # Wind → CLUT 0x7ACD
+	5: 14,   # Earth → CLUT 0x7ACE
+}
 const HANDLER_ORBITAL: int = 22
 const ORBITAL_PALETTE_ID: int = 12  # CLUT 0x7ACC (applied per-emitter, not via HANDLER_PALETTE_OVERRIDES)
 

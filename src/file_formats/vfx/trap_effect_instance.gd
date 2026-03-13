@@ -161,6 +161,12 @@ func play(handler_id: int, element_id: int, direction: Vector3 = Vector3.ZERO, t
 		else:
 			_emitter_palette[idx] = element_id
 
+	# Handler 17: element-dependent palette from lookup table (not a fixed override)
+	if handler_id == TrapEffectData.HANDLER_ELEMENT_PARTICLES:
+		var palette_id: int = TrapEffectData.ELEMENT_PARTICLE_PALETTES.get(element_id, 0)
+		for idx: int in _active_emitter_indices:
+			_emitter_palette[idx] = palette_id
+
 	# Some handlers force a single palette for all emitters (ignoring element_id)
 	if handler_id in TrapEffectData.HANDLER_PALETTE_OVERRIDES:
 		var palette_id: int = TrapEffectData.HANDLER_PALETTE_OVERRIDES[handler_id]
