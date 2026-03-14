@@ -1,13 +1,15 @@
 class_name ProjectileEffectInstance
 extends Node3D
-## Self-contained projectile trajectory effect — linear interpolation from origin to target
+## Self-contained projectile trajectory effect — linear or parabolic arc from origin to target
 ## with oriented 3D Gouraud-shaded polygon model parsed from PSX ROM data.
-## Used for crossbow bolts, thrown stones, ninja weapons (shuriken).
+## Linear: crossbow bolts, thrown stones, ninja weapons (handler 20).
+## Parabolic: bow arrows with lofting arc (handler 1).
 ## No dependency on TrapEffectData or TrapEffectInstance.
 
 signal completed
 
 enum Variant { ARROW, STONE, SPECIAL }
+enum Trajectory { LINEAR, PARABOLIC }
 
 enum _State { IDLE, FLYING, DONE }
 
@@ -28,8 +30,9 @@ const ARROW_SCALE: float = 0.064
 const STONE_SCALE: float = 0.1
 const SPECIAL_SCALE: float = 0.1
 
-# Default ticks per tile of distance (~10 ticks for 3 tiles)
-const TICKS_PER_TILE: float = 3.33
+# Ticks per tile of distance. PSX g_effect_duration is ~8-15 frames total;
+# 5 ticks/tile gives ~25 ticks (0.83s) for a 5-tile throw — readable pace.
+const TICKS_PER_TILE: float = 5.0
 
 # ============================================================
 #  PSX model data — vertices and faces from BATTLE.BIN
@@ -115,6 +118,7 @@ var loop: bool = false
 
 var _state: _State = _State.IDLE
 var _variant: Variant = Variant.STONE
+var _trajectory: Trajectory = Trajectory.LINEAR
 var _origin: Vector3
 var _target: Vector3
 var _delta: Vector3
@@ -123,6 +127,11 @@ var _progress: float
 var _step: float
 var _current_position: Vector3
 var _orientation: Basis
+
+# Parabolic arc state (handler 1)
+var _arc_height: float = 2.0
+var _xz_distance: float
+var _xz_direction: Vector3
 
 # Rotation accumulators
 var _tumble_y: float = 0.0
@@ -154,23 +163,34 @@ func initialize() -> void:
 	_meshes[Variant.SPECIAL] = _build_mesh(SPECIAL_VERTICES, SPECIAL_FACES)
 
 
-func play(origin: Vector3, target: Vector3, variant: Variant) -> void:
+func play(origin: Vector3, target: Vector3, variant: Variant, trajectory: Trajectory = Trajectory.LINEAR, arc_height: float = 2.0) -> void:
 	stop()
 
 	_origin = origin
 	_target = target
-	_variant = variant
+	_trajectory = trajectory
+	_arc_height = arc_height
 	_delta = target - origin
 	_total_distance = _delta.length()
 
-	if _total_distance < 0.001:
+	if trajectory == Trajectory.PARABOLIC:
+		variant = Variant.ARROW # Handler 1 is arrow-only
+		# XZ-only distance (handler 1 ignores Y in distance calc)
+		var xz_delta: Vector3 = Vector3(_delta.x, 0.0, _delta.z)
+		_xz_distance = xz_delta.length()
+		_xz_direction = xz_delta.normalized() if _xz_distance > 0.001 else Vector3.FORWARD
+
+	_variant = variant
+
+	var effective_distance: float = _xz_distance if trajectory == Trajectory.PARABOLIC else _total_distance
+	if effective_distance < 0.001:
 		_state = _State.DONE
 		completed.emit()
 		return
 
 	# Duration proportional to distance
-	var duration_ticks: float = maxf(_total_distance * TICKS_PER_TILE, 2.0)
-	_step = _total_distance / duration_ticks
+	var duration_ticks: float = maxf(effective_distance * TICKS_PER_TILE, 2.0)
+	_step = effective_distance / duration_ticks
 
 	_progress = 0.0
 	_current_position = origin
@@ -217,20 +237,35 @@ func _process(delta: float) -> void:
 
 func _process_tick() -> void:
 	_progress += _step
-	if _progress >= _total_distance:
-		_progress = _total_distance
+	var effective_distance: float = _xz_distance if _trajectory == Trajectory.PARABOLIC else _total_distance
+	if _progress >= effective_distance:
+		_progress = effective_distance
 		_current_position = _target
 		_mesh_instance.visible = false
 		_state = _State.DONE
 		if loop:
-			play(_origin, _target, _variant)
+			play(_origin, _target, _variant, _trajectory, _arc_height)
 		else:
 			completed.emit()
 		return
 
-	# Interpolate position
-	var t: float = _progress / _total_distance
-	_current_position = _origin.lerp(_target, t)
+	var t: float = _progress / effective_distance
+
+	if _trajectory == Trajectory.PARABOLIC:
+		# XZ position: linear interpolation along horizontal plane
+		var xz_pos: Vector3 = Vector3(_origin.x, 0.0, _origin.z).lerp(Vector3(_target.x, 0.0, _target.z), t)
+		# Y position: lerp base heights + parabolic arc offset
+		var base_y: float = lerpf(_origin.y, _target.y, t)
+		var arc_y: float = _evaluate_parabolic_arc(t)
+		_current_position = Vector3(xz_pos.x, base_y + arc_y, xz_pos.z)
+
+		# Recompute orientation from arc tangent each tick for arrow tilt
+		var arc_derivative: float = 4.0 * _arc_height * (1.0 - 2.0 * t) / _xz_distance
+		var tangent: Vector3 = Vector3(_xz_direction.x, arc_derivative, _xz_direction.z).normalized()
+		_orientation = _compute_orientation(tangent * _xz_distance)
+	else:
+		# Linear interpolation
+		_current_position = _origin.lerp(_target, t)
 
 	# Update rotation per variant
 	match _variant:
@@ -244,20 +279,26 @@ func _process_tick() -> void:
 func _compute_orientation(delta_vec: Vector3) -> Basis:
 	var dir: Vector3 = delta_vec.normalized()
 	var up: Vector3 = Vector3.UP if absf(dir.dot(Vector3.UP)) < 0.99 else Vector3.FORWARD
-	# Arrow: PSX tip is at -Y, so looking_at(-Z) + 90° X rotation aligns tip with velocity
-	# Stone/Special: no directional alignment needed, but orientation basis is still useful
-	return Basis.looking_at(-dir, up)
+	# Arrow: PSX tip is at -Y → 90° X tumble aligns tip with local -Z.
+	# looking_at(dir) makes -Z face toward target, so tip points at target.
+	return Basis.looking_at(dir, up)
+
+
+## Symmetric parabola: rises from 0 at t=0, peaks at arc_height at t=0.5, returns to 0 at t=1.
+## Matches PSX evaluate_parabolic_arc (0x801af59c) shape.
+func _evaluate_parabolic_arc(t: float) -> float:
+	return 4.0 * _arc_height * t * (1.0 - t)
 
 
 func _update_transform() -> void:
-	var scale: float
+	var model_scale: float
 	match _variant:
 		Variant.ARROW:
-			scale = ARROW_SCALE
+			model_scale = ARROW_SCALE
 		Variant.STONE:
-			scale = STONE_SCALE
+			model_scale = STONE_SCALE
 		Variant.SPECIAL:
-			scale = SPECIAL_SCALE
+			model_scale = SPECIAL_SCALE
 
 	# Build rotation: orientation along trajectory + variant-specific tumble
 	var tumble_basis: Basis = Basis.IDENTITY
@@ -271,13 +312,12 @@ func _update_transform() -> void:
 		Variant.SPECIAL:
 			tumble_basis = Basis.from_euler(Vector3(_spin_x, 0.0, 0.0))
 
-	var basis: Basis = _orientation * tumble_basis
-	# Apply scale to basis columns
-	basis.x *= scale
-	basis.y *= scale
-	basis.z *= scale
+	var model_basis: Basis = _orientation * tumble_basis
+	model_basis.x *= model_scale
+	model_basis.y *= model_scale
+	model_basis.z *= model_scale
 
-	_mesh_instance.global_transform = Transform3D(basis, _current_position)
+	_mesh_instance.global_transform = Transform3D(model_basis, _current_position)
 
 
 # ============================================================

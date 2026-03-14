@@ -31,7 +31,7 @@ height = 0.16
 shading_mode = 0
 albedo_color = Color(0.2, 0.5, 1.0, 1)
 
-[node name="ProjectileTestScene" type="Node3D" node_paths=PackedStringArray("camera_controller", "maps_container", "target_marker", "origin_marker", "units_container", "effect_container", "variant_option", "play_button", "loop_checkbox", "speed_slider", "speed_label", "direction_slider", "direction_label", "distance_slider", "distance_label", "info_label")]
+[node name="ProjectileTestScene" type="Node3D" node_paths=PackedStringArray("camera_controller", "maps_container", "target_marker", "origin_marker", "units_container", "effect_container", "variant_option", "trajectory_option", "arc_height_slider", "arc_height_label", "play_button", "loop_checkbox", "speed_slider", "speed_label", "direction_slider", "direction_label", "distance_slider", "distance_label", "info_label")]
 script = ExtResource("1_script")
 camera_controller = NodePath("CameraController")
 maps_container = NodePath("Maps")
@@ -40,6 +40,9 @@ origin_marker = NodePath("OriginMarker")
 units_container = NodePath("UnitsContainer")
 effect_container = NodePath("EffectContainer")
 variant_option = NodePath("DebugUI/LeftPanel/Margin/VBox/VariantRow/VariantOption")
+trajectory_option = NodePath("DebugUI/LeftPanel/Margin/VBox/TrajectoryRow/TrajectoryOption")
+arc_height_slider = NodePath("DebugUI/LeftPanel/Margin/VBox/ArcHeightRow/ArcHeightSlider")
+arc_height_label = NodePath("DebugUI/LeftPanel/Margin/VBox/ArcHeightLabel")
 play_button = NodePath("DebugUI/LeftPanel/Margin/VBox/PlayButton")
 loop_checkbox = NodePath("DebugUI/LeftPanel/Margin/VBox/LoopCheckBox")
 speed_slider = NodePath("DebugUI/LeftPanel/Margin/VBox/SpeedRow/SpeedSlider")
@@ -115,6 +118,36 @@ text = "Variant:"
 layout_mode = 2
 size_flags_horizontal = 3
 
+[node name="TrajectoryRow" type="HBoxContainer" parent="DebugUI/LeftPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="TrajectoryLabel" type="Label" parent="DebugUI/LeftPanel/Margin/VBox/TrajectoryRow"]
+layout_mode = 2
+text = "Trajectory:"
+
+[node name="TrajectoryOption" type="OptionButton" parent="DebugUI/LeftPanel/Margin/VBox/TrajectoryRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ArcHeightRow" type="HBoxContainer" parent="DebugUI/LeftPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="ArcHeightRowLabel" type="Label" parent="DebugUI/LeftPanel/Margin/VBox/ArcHeightRow"]
+layout_mode = 2
+text = "Arc Height:"
+
+[node name="ArcHeightSlider" type="HSlider" parent="DebugUI/LeftPanel/Margin/VBox/ArcHeightRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.5
+max_value = 5.0
+step = 0.25
+value = 2.0
+
+[node name="ArcHeightLabel" type="Label" parent="DebugUI/LeftPanel/Margin/VBox"]
+layout_mode = 2
+text = "2.00"
+
 [node name="PlayButton" type="Button" parent="DebugUI/LeftPanel/Margin/VBox"]
 layout_mode = 2
 text = "Play"
@@ -175,11 +208,11 @@ size_flags_horizontal = 3
 min_value = 1.0
 max_value = 8.0
 step = 0.5
-value = 3.0
+value = 5.0
 
 [node name="DistanceLabel" type="Label" parent="DebugUI/LeftPanel/Margin/VBox"]
 layout_mode = 2
-text = "3.0 tiles"
+text = "5.0 tiles"
 
 [node name="HSeparator" type="HSeparator" parent="DebugUI/LeftPanel/Margin/VBox"]
 layout_mode = 2
