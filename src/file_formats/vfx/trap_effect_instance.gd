@@ -570,6 +570,7 @@ func _setup_line_mesh() -> void:
 	_line_mesh_instance.mesh = _line_mesh
 	_line_material = ShaderMaterial.new()
 	_line_material.shader = _charge_line_shader
+	_line_material.render_priority = 1
 	_line_mesh_instance.material_override = _line_material
 	add_child(_line_mesh_instance)
 
