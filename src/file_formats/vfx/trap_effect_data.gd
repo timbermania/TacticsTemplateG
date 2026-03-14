@@ -85,6 +85,7 @@ const HANDLER_GROUP_NAMES: Dictionary = {
 	19: "Teleport",
 	21: "Knight Break",
 	22: "Summon Charge Orbs",
+	18: "Summon Charge Lines",
 }
 
 const ELEMENT_NAMES: PackedStringArray = [
@@ -124,6 +125,7 @@ const HANDLER_TELEPORT: int = 19
 const TELEPORT_PALETTE_ID: int = 11  # CLUT 0x7ACB
 const HANDLER_KNIGHT_BREAK: int = 21
 const KNIGHT_BREAK_PALETTE_ID: int = 10  # CLUT 0x7ACA
+const HANDLER_SUMMON_CHARGE: int = 18
 const HANDLER_ORBITAL: int = 22
 const ORBITAL_PALETTE_ID: int = 12  # CLUT 0x7ACC (applied per-emitter, not via HANDLER_PALETTE_OVERRIDES)
 

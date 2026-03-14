@@ -54,6 +54,7 @@ var _z_bias: float = 0.001
 var _initialized: bool = false
 var _orbital_handler: TrapOrbitalHandler = null
 var _spell_charge_handler: TrapSpellChargeHandler = null
+var _summon_charge_handler: TrapSummonChargeHandler = null
 var _line_mesh: ImmediateMesh = null
 var _line_mesh_instance: MeshInstance3D = null
 var _line_material: ShaderMaterial = null
@@ -131,6 +132,20 @@ func play(handler_id: int, element_id: int, direction: Vector3 = Vector3.ZERO, t
 		_is_playing = true
 		return
 
+	# Handler 18: summon charge lines
+	if handler_id == TrapEffectData.HANDLER_SUMMON_CHARGE:
+		var sprite_height: float = TrapSummonChargeHandler.DEFAULT_HEIGHT
+		if target_unit != null and target_unit.animation_manager != null \
+				and target_unit.animation_manager.global_spr != null:
+			sprite_height = float(target_unit.animation_manager.global_spr.graphic_height)
+		_summon_charge_handler = TrapSummonChargeHandler.new()
+		_summon_charge_handler.start(element_id, sprite_height, direction)
+		_setup_line_mesh()
+		_tick_counter = 0
+		_tick_timer = 0.0
+		_is_playing = true
+		return
+
 	# Handler 22: orbital summon charge orbs
 	if handler_id == TrapEffectData.HANDLER_ORBITAL:
 		_orbital_handler = TrapOrbitalHandler.new()
@@ -194,6 +209,7 @@ func stop() -> void:
 	_rising_center_y = 0.0
 	_orbital_handler = null
 	_spell_charge_handler = null
+	_summon_charge_handler = null
 	_scatter_anchor = Vector3.ZERO
 	if _line_mesh_instance != null:
 		_line_mesh_instance.queue_free()
@@ -212,6 +228,8 @@ func start_fade() -> void:
 		_orbital_handler.start_fade()
 	if _spell_charge_handler != null:
 		_spell_charge_handler.start_fade()
+	if _summon_charge_handler != null:
+		_summon_charge_handler.start_fade()
 
 
 func is_playing() -> bool:
@@ -273,6 +291,20 @@ func _process_tick() -> void:
 			if loop:
 				_spell_charge_handler.restart()
 				_particles.clear()
+				_tick_counter = 0
+				_tick_timer = 0.0
+			else:
+				_is_playing = false
+				completed.emit()
+		return
+
+	# Handler 18: summon charge lines
+	if _summon_charge_handler != null:
+		_summon_charge_handler.tick()
+		_tick_counter += 1
+		if _summon_charge_handler.is_done():
+			if loop:
+				_summon_charge_handler.restart()
 				_tick_counter = 0
 				_tick_timer = 0.0
 			else:
@@ -542,9 +574,8 @@ func _setup_line_mesh() -> void:
 	add_child(_line_mesh_instance)
 
 
-func _render_charge_lines() -> void:
-	_line_mesh.clear_surfaces()
-	if _spell_charge_handler.active_line_count == 0:
+func _render_charge_lines_for(handler: Variant) -> void:
+	if handler.active_line_count == 0:
 		return
 
 	var cam: Camera3D = get_viewport().get_camera_3d()
@@ -552,25 +583,26 @@ func _render_charge_lines() -> void:
 		return
 	var cam_pos: Vector3 = cam.global_position
 
-	var elem_color: Color = _spell_charge_handler.element_color
-	var fade_curve: PackedByteArray = TrapSpellChargeHandler.FADE_CURVE
+	var elem_color: Color = handler.element_color
+	const FADE: PackedByteArray = [0, 25, 50, 75, 100, 125, 255]
+	const HIST_SIZE: int = 7
 
 	_line_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
 
-	for slot in _spell_charge_handler.line_slots:
+	for slot in handler.line_slots:
 		if not slot.alive:
 			continue
 
-		var brightness_segs: int = _spell_charge_handler.get_brightness_index(slot)
+		var brightness_segs: int = handler.get_brightness_index(slot)
 		if brightness_segs <= 0:
 			continue
 
-		var write_index: int = slot.age % TrapSpellChargeHandler.HISTORY_SIZE
+		var write_index: int = slot.age % HIST_SIZE
 
 		# Walk backwards through history: newest (write_index) to oldest
 		for seg in range(brightness_segs):
-			var idx_end: int = (write_index - seg + TrapSpellChargeHandler.HISTORY_SIZE) % TrapSpellChargeHandler.HISTORY_SIZE
-			var idx_start: int = (idx_end - 1 + TrapSpellChargeHandler.HISTORY_SIZE) % TrapSpellChargeHandler.HISTORY_SIZE
+			var idx_end: int = (write_index - seg + HIST_SIZE) % HIST_SIZE
+			var idx_start: int = (idx_end - 1 + HIST_SIZE) % HIST_SIZE
 
 			var p_start: Vector3 = slot.history[idx_start]
 			var p_end: Vector3 = slot.history[idx_end]
@@ -580,15 +612,15 @@ func _render_charge_lines() -> void:
 				continue
 
 			# Color from fade curve (head = bright, tail = dim)
-			var head_idx: int = TrapSpellChargeHandler.HISTORY_SIZE - 1 - seg
+			var head_idx: int = HIST_SIZE - 1 - seg
 			var tail_idx: int = head_idx - 1
 			if tail_idx < 0:
 				tail_idx = 0
-			if head_idx >= fade_curve.size():
-				head_idx = fade_curve.size() - 1
+			if head_idx >= FADE.size():
+				head_idx = FADE.size() - 1
 
-			var alpha_end: float = float(fade_curve[head_idx]) / 255.0
-			var alpha_start: float = float(fade_curve[tail_idx]) / 255.0
+			var alpha_end: float = float(FADE[head_idx]) / 255.0
+			var alpha_start: float = float(FADE[tail_idx]) / 255.0
 			var color_end := Color(elem_color.r * alpha_end, elem_color.g * alpha_end, elem_color.b * alpha_end, 1.0)
 			var color_start := Color(elem_color.r * alpha_start, elem_color.g * alpha_start, elem_color.b * alpha_start, 1.0)
 
@@ -685,8 +717,12 @@ func _release_all_meshes() -> void:
 # ============================================================
 
 func _render_particles() -> void:
+	if _line_mesh != null:
+		_line_mesh.clear_surfaces()
 	if _spell_charge_handler != null:
-		_render_charge_lines()
+		_render_charge_lines_for(_spell_charge_handler)
+	if _summon_charge_handler != null:
+		_render_charge_lines_for(_summon_charge_handler)
 
 	if _particles.is_empty():
 		_release_all_meshes()
