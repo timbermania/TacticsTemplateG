@@ -115,11 +115,7 @@ func play(handler_id: int, element_id: int, direction: Vector3 = Vector3.ZERO, t
 
 	# Handler 4: spell charge lines
 	if handler_id == TrapEffectData.HANDLER_SPELL_CHARGE:
-		# PSX looks up sprite height from DAT_8009474b[sprite_type * 4]
-		var sprite_height: float = TrapSpellChargeHandler.DEFAULT_HEIGHT
-		if target_unit != null and target_unit.animation_manager != null \
-				and target_unit.animation_manager.global_spr != null:
-			sprite_height = float(target_unit.animation_manager.global_spr.graphic_height)
+		var sprite_height: float = _get_sprite_height(target_unit)
 		_spell_charge_handler = TrapSpellChargeHandler.new()
 		_spell_charge_handler.start(element_id, sprite_height)
 		_setup_line_mesh()
@@ -134,10 +130,7 @@ func play(handler_id: int, element_id: int, direction: Vector3 = Vector3.ZERO, t
 
 	# Handler 18: summon charge lines
 	if handler_id == TrapEffectData.HANDLER_SUMMON_CHARGE:
-		var sprite_height: float = TrapSummonChargeHandler.DEFAULT_HEIGHT
-		if target_unit != null and target_unit.animation_manager != null \
-				and target_unit.animation_manager.global_spr != null:
-			sprite_height = float(target_unit.animation_manager.global_spr.graphic_height)
+		var sprite_height: float = _get_sprite_height(target_unit)
 		_summon_charge_handler = TrapSummonChargeHandler.new()
 		_summon_charge_handler.start(element_id, sprite_height, direction)
 		_setup_line_mesh()
@@ -564,6 +557,13 @@ func _spawn_handler_sparkles(trap_data: TrapEffectData) -> void:
 		_spell_charge_handler.active_sparkle_count += 1
 
 
+static func _get_sprite_height(unit: Unit) -> float:
+	if unit != null and unit.animation_manager != null \
+			and unit.animation_manager.global_spr != null:
+		return float(unit.animation_manager.global_spr.graphic_height)
+	return TrapSpellChargeHandler.DEFAULT_HEIGHT
+
+
 func _setup_line_mesh() -> void:
 	_line_mesh = ImmediateMesh.new()
 	_line_mesh_instance = MeshInstance3D.new()
@@ -584,8 +584,8 @@ func _render_charge_lines_for(handler: Variant) -> void:
 	var cam_pos: Vector3 = cam.global_position
 
 	var elem_color: Color = handler.element_color
-	const FADE: PackedByteArray = [0, 25, 50, 75, 100, 125, 255]
-	const HIST_SIZE: int = 7
+	var fade_curve: PackedByteArray = TrapSpellChargeHandler.FADE_CURVE
+	var hist_size: int = TrapSpellChargeHandler.HISTORY_SIZE
 
 	_line_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
 
@@ -597,12 +597,12 @@ func _render_charge_lines_for(handler: Variant) -> void:
 		if brightness_segs <= 0:
 			continue
 
-		var write_index: int = slot.age % HIST_SIZE
+		var write_index: int = slot.age % hist_size
 
 		# Walk backwards through history: newest (write_index) to oldest
 		for seg in range(brightness_segs):
-			var idx_end: int = (write_index - seg + HIST_SIZE) % HIST_SIZE
-			var idx_start: int = (idx_end - 1 + HIST_SIZE) % HIST_SIZE
+			var idx_end: int = (write_index - seg + hist_size) % hist_size
+			var idx_start: int = (idx_end - 1 + hist_size) % hist_size
 
 			var p_start: Vector3 = slot.history[idx_start]
 			var p_end: Vector3 = slot.history[idx_end]
@@ -612,15 +612,15 @@ func _render_charge_lines_for(handler: Variant) -> void:
 				continue
 
 			# Color from fade curve (head = bright, tail = dim)
-			var head_idx: int = HIST_SIZE - 1 - seg
+			var head_idx: int = hist_size - 1 - seg
 			var tail_idx: int = head_idx - 1
 			if tail_idx < 0:
 				tail_idx = 0
-			if head_idx >= FADE.size():
-				head_idx = FADE.size() - 1
+			if head_idx >= fade_curve.size():
+				head_idx = fade_curve.size() - 1
 
-			var alpha_end: float = float(FADE[head_idx]) / 255.0
-			var alpha_start: float = float(FADE[tail_idx]) / 255.0
+			var alpha_end: float = float(fade_curve[head_idx]) / 255.0
+			var alpha_start: float = float(fade_curve[tail_idx]) / 255.0
 			var color_end := Color(elem_color.r * alpha_end, elem_color.g * alpha_end, elem_color.b * alpha_end, 1.0)
 			var color_start := Color(elem_color.r * alpha_start, elem_color.g * alpha_start, elem_color.b * alpha_start, 1.0)
 

@@ -24,7 +24,6 @@ const FULL_CIRCLE: int = 4096
 const SPAWN_RADIUS: float = 6.0
 const DEFAULT_HEIGHT: float = 24.0  # PSX units — fallback if no unit provided
 const RING_ROTATION_RATE: int = 128  # PSX: frame_counter << 7
-const FADE_CURVE: PackedByteArray = [0, 25, 50, 75, 100, 125, 255]  # tail dim -> head bright
 
 var state: State = State.INIT
 var line_slots: Array[LineSlot] = []
