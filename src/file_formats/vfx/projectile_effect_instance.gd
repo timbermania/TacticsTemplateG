@@ -179,8 +179,9 @@ func _process_tick() -> void:
 		_current_position = Vector3(xz_pos.x, base_y + arc_y, xz_pos.z)
 
 		# Recompute orientation from arc tangent each tick for arrow tilt
+		var slope_y: float = (_target.y - _origin.y) / _xz_distance
 		var arc_derivative: float = 4.0 * _arc_height * (1.0 - 2.0 * t) / _xz_distance
-		var tangent: Vector3 = Vector3(_xz_direction.x, arc_derivative, _xz_direction.z).normalized()
+		var tangent: Vector3 = Vector3(_xz_direction.x, slope_y + arc_derivative, _xz_direction.z).normalized()
 		_orientation = _compute_orientation(tangent * _xz_distance)
 	else:
 		# Linear interpolation

@@ -31,7 +31,7 @@ height = 0.16
 shading_mode = 0
 albedo_color = Color(0.2, 0.5, 1.0, 1)
 
-[node name="ProjectileTestScene" type="Node3D" node_paths=PackedStringArray("camera_controller", "maps_container", "target_marker", "origin_marker", "units_container", "effect_container", "variant_option", "trajectory_option", "arc_height_slider", "arc_height_label", "play_button", "loop_checkbox", "speed_slider", "speed_label", "direction_slider", "direction_label", "distance_slider", "distance_label", "info_label")]
+[node name="ProjectileTestScene" type="Node3D" node_paths=PackedStringArray("camera_controller", "maps_container", "target_marker", "origin_marker", "units_container", "effect_container", "variant_option", "trajectory_option", "arc_height_slider", "arc_height_label", "play_button", "loop_checkbox", "speed_slider", "speed_label", "direction_slider", "direction_label", "distance_slider", "distance_label", "height_offset_slider", "height_offset_label", "info_label")]
 script = ExtResource("1_script")
 camera_controller = NodePath("CameraController")
 maps_container = NodePath("Maps")
@@ -51,6 +51,8 @@ direction_slider = NodePath("DebugUI/LeftPanel/Margin/VBox/DirectionRow/Directio
 direction_label = NodePath("DebugUI/LeftPanel/Margin/VBox/DirectionLabel")
 distance_slider = NodePath("DebugUI/LeftPanel/Margin/VBox/DistanceRow/DistanceSlider")
 distance_label = NodePath("DebugUI/LeftPanel/Margin/VBox/DistanceLabel")
+height_offset_slider = NodePath("DebugUI/LeftPanel/Margin/VBox/HeightOffsetRow/HeightOffsetSlider")
+height_offset_label = NodePath("DebugUI/LeftPanel/Margin/VBox/HeightOffsetLabel")
 info_label = NodePath("DebugUI/LeftPanel/Margin/VBox/InfoScroll/InfoLabel")
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
@@ -213,6 +215,25 @@ value = 5.0
 [node name="DistanceLabel" type="Label" parent="DebugUI/LeftPanel/Margin/VBox"]
 layout_mode = 2
 text = "5.0 tiles"
+
+[node name="HeightOffsetRow" type="HBoxContainer" parent="DebugUI/LeftPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="HeightOffsetRowLabel" type="Label" parent="DebugUI/LeftPanel/Margin/VBox/HeightOffsetRow"]
+layout_mode = 2
+text = "Height Offset:"
+
+[node name="HeightOffsetSlider" type="HSlider" parent="DebugUI/LeftPanel/Margin/VBox/HeightOffsetRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = -3.0
+max_value = 3.0
+step = 0.25
+value = 0.0
+
+[node name="HeightOffsetLabel" type="Label" parent="DebugUI/LeftPanel/Margin/VBox"]
+layout_mode = 2
+text = "0.00"
 
 [node name="HSeparator" type="HSeparator" parent="DebugUI/LeftPanel/Margin/VBox"]
 layout_mode = 2
