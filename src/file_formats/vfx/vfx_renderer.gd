@@ -6,18 +6,8 @@ extends Node3D
 ## Uses stable mesh assignment: each particle UID keeps the same mesh indices across frames,
 ## preventing cross-particle material flicker when sort order changes.
 
-const Z_EPSILON: float = 0.001
 const GROWTH_BATCH_SIZE: int = 128
 const OFFSCREEN_POSITION := Vector3(0, -10000, 0)
-
-const DEPTH_MODE_Z_OFFSETS: Array[float] = [
-	0.0,    # Mode 0: STANDARD
-	-0.05,  # Mode 1: PULL_FORWARD_8
-	-0.15,  # Mode 2: FIXED_FRONT
-	0.5,    # Mode 3: FIXED_BACK
-	-0.1,   # Mode 4: FIXED_16
-	-0.1,   # Mode 5: PULL_FORWARD_16
-]
 
 var _shared_quad: QuadMesh
 var _meshes: Array[MeshInstance3D] = []
@@ -34,16 +24,6 @@ var _vfx_data: VisualEffectData
 var _particle_mesh_map: Dictionary = {}  # int (uid) → PackedInt32Array (mesh indices)
 var _free_mesh_indices: Array[int] = []
 
-# Pre-allocated sort buffers
-var _sort_keys: PackedFloat64Array = []
-var _sort_particle_idx: PackedInt32Array = []
-var _sort_frame_idx: PackedInt32Array = []
-var _sort_frameset_idx: PackedInt32Array = []
-var _sort_opaque: Array[bool] = []
-var _sort_indices: Array[int] = []
-var _sort_capacity: int = 0
-var _sort_count: int = 0
-var _sort_comparator: Callable
 
 # Cached per-emitter align_to_velocity flags
 var _emitter_align_flags: Array[bool] = []
@@ -72,16 +52,6 @@ func initialize(vfx_data: VisualEffectData, initial_pool_size: int = 4096) -> vo
 	_free_mesh_indices.clear()
 	for i in range(_pool_size):
 		_free_mesh_indices.append(i)
-
-	# Setup sort buffers
-	_sort_capacity = initial_pool_size * 2
-	_sort_keys.resize(_sort_capacity)
-	_sort_particle_idx.resize(_sort_capacity)
-	_sort_frame_idx.resize(_sort_capacity)
-	_sort_frameset_idx.resize(_sort_capacity)
-	_sort_opaque.resize(_sort_capacity)
-	_sort_indices.resize(_sort_capacity)
-	_sort_comparator = func(a: int, b: int) -> bool: return _sort_keys[a] < _sort_keys[b]
 
 	# Cache align_to_velocity flags
 	_emitter_align_flags.clear()
@@ -154,90 +124,30 @@ func render(particles: Array[VfxParticleData], vfx_data: VisualEffectData) -> vo
 			_particle_mesh_map[uid] = current
 		# else: have == needed, no change
 
-	# Step 4: Build sort entries (same logic as before, but track which particle owns each entry)
-	const OPAQUE_PASS_OFFSET: float = 0.0
-	const SEMI_TRANS_PASS_OFFSET: float = 100000.0
-
-	_sort_count = 0
-
-	# Also track per-particle sort entry indices so we can map sorted entries back to mesh slots
-	# _sort_uid[i] = particle uid for sort entry i
-	# _sort_local_idx[i] = which mesh slot within that particle's allocation (0, 1, 2, ...)
-	var _sort_uid: PackedInt64Array = []
-	var _sort_local_idx: PackedInt32Array = []
-	_sort_uid.resize(_sort_capacity)
-	_sort_local_idx.resize(_sort_capacity)
-
+	# Step 4: Render all particles — opaque pass first (priority 0), then semi-trans (priority 1)
 	for uid: int in renderable_uids:
 		var pi: int = renderable_uids[uid]
 		var p: VfxParticleData = particles[pi]
 		var frameset_idx: int = p.current_frameset
 		var frameset: VisualEffectData.VfxFrameSet = vfx_data.framesets[frameset_idx]
-
-		var depth_mode: int = clampi(p.current_depth_mode, 0, DEPTH_MODE_Z_OFFSETS.size() - 1)
-		var depth_z_offset: float = DEPTH_MODE_Z_OFFSETS[depth_mode]
+		var align: bool = p.emitter_index >= 0 and p.emitter_index < _emitter_align_flags.size() and _emitter_align_flags[p.emitter_index]
+		var mesh_indices: PackedInt32Array = _particle_mesh_map[uid]
 		var local_slot: int = 0
 
 		for fi in range(frameset.frameset.size()):
-			var frame_z_offset: float = -fi * Z_EPSILON
-			var total_z_offset: float = frame_z_offset + depth_z_offset
-			var base_sort_key: float = p.channel_index * VfxConstants.CHANNEL_SORT_SPACING + (-total_z_offset)
+			var vfx_frame: VisualEffectData.VfxFrame = frameset.frameset[fi]
 
-			# Ensure sort buffers have room
-			var needed_cap: int = _sort_count + 2
-			if needed_cap > _sort_capacity:
-				_ensure_sort_capacity(needed_cap)
-				_sort_uid.resize(_sort_capacity)
-				_sort_local_idx.resize(_sort_capacity)
-
-			# Opaque pass entry
-			_sort_keys[_sort_count] = OPAQUE_PASS_OFFSET + base_sort_key
-			_sort_particle_idx[_sort_count] = pi
-			_sort_frame_idx[_sort_count] = fi
-			_sort_frameset_idx[_sort_count] = frameset_idx
-			_sort_opaque[_sort_count] = true
-			_sort_uid[_sort_count] = uid
-			_sort_local_idx[_sort_count] = local_slot
+			# Opaque pass
+			var omi: int = mesh_indices[local_slot]
+			_materials[omi].render_priority = 0
+			_render_frame(_meshes[omi], _materials[omi], p, vfx_frame, true, frame_camera, align)
 			local_slot += 1
-			_sort_count += 1
 
-			# Semi-trans pass entry
-			_sort_keys[_sort_count] = SEMI_TRANS_PASS_OFFSET + base_sort_key
-			_sort_particle_idx[_sort_count] = pi
-			_sort_frame_idx[_sort_count] = fi
-			_sort_frameset_idx[_sort_count] = frameset_idx
-			_sort_opaque[_sort_count] = false
-			_sort_uid[_sort_count] = uid
-			_sort_local_idx[_sort_count] = local_slot
+			# Semi-transparent pass
+			var smi: int = mesh_indices[local_slot]
+			_materials[smi].render_priority = 1
+			_render_frame(_meshes[smi], _materials[smi], p, vfx_frame, false, frame_camera, align)
 			local_slot += 1
-			_sort_count += 1
-
-	# Step 5: Sort by key to determine draw order
-	_sort_indices.resize(_sort_count)
-	for i in range(_sort_count):
-		_sort_indices[i] = i
-	_sort_indices.sort_custom(_sort_comparator)
-
-	# Step 6: Render using stable mesh assignment
-	# Sort determines draw ORDER (render_priority), but each entry uses its particle's own mesh slot
-	for draw_order in range(_sort_count):
-		var idx: int = _sort_indices[draw_order]
-		var uid: int = _sort_uid[idx]
-		var local_idx: int = _sort_local_idx[idx]
-		var p: VfxParticleData = particles[_sort_particle_idx[idx]]
-		var fs: VisualEffectData.VfxFrameSet = vfx_data.framesets[_sort_frameset_idx[idx]]
-		var vfx_frame: VisualEffectData.VfxFrame = fs.frameset[_sort_frame_idx[idx]]
-		var align: bool = p.emitter_index >= 0 and p.emitter_index < _emitter_align_flags.size() and _emitter_align_flags[p.emitter_index]
-
-		var mesh_indices: PackedInt32Array = _particle_mesh_map[uid]
-		var mi: int = mesh_indices[local_idx]
-		var mesh: MeshInstance3D = _meshes[mi]
-		var mat: ShaderMaterial = _materials[mi]
-
-		# Set render priority based on draw order so GPU draws in correct sequence
-		mat.render_priority = draw_order + 1
-
-		_render_frame(mesh, mat, p, vfx_frame, _sort_opaque[idx], frame_camera, align)
 
 
 
@@ -347,7 +257,7 @@ func _grow_pool(new_size: int) -> void:
 
 		var mat := ShaderMaterial.new()
 		mat.shader = _opaque_shader
-		mat.render_priority = 1  # Render after terrain (priority 0)
+		mat.render_priority = 0
 		if _vfx_data and _vfx_data.texture:
 			mat.set_shader_parameter("effect_texture", _vfx_data.texture)
 			mat.set_shader_parameter("texture_size", _texture_size)
@@ -360,13 +270,3 @@ func _grow_pool(new_size: int) -> void:
 	_pool_size = new_size
 
 
-func _ensure_sort_capacity(needed: int) -> void:
-	if needed <= _sort_capacity:
-		return
-	_sort_capacity = int(needed * 1.5)
-	_sort_keys.resize(_sort_capacity)
-	_sort_particle_idx.resize(_sort_capacity)
-	_sort_frame_idx.resize(_sort_capacity)
-	_sort_frameset_idx.resize(_sort_capacity)
-	_sort_opaque.resize(_sort_capacity)
-	_sort_indices.resize(_sort_capacity)
