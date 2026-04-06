@@ -102,10 +102,10 @@ func _resize_particle_meshes(renderable: Dictionary, particles: Array[VfxParticl
 				current.append(_pool.borrow_mesh_index())
 			_pool.particle_mesh_map[uid] = current
 		elif have > needed:
+			# Hide excess but keep assigned (never shrink — prevents cross-particle flicker)
 			for i in range(needed, have):
-				_pool.return_mesh(current[i])
-			current = current.slice(0, needed)
-			_pool.particle_mesh_map[uid] = current
+				_pool.meshes[current[i]].visible = false
+				_pool.meshes[current[i]].position = TrapMeshPool.OFFSCREEN_POS
 
 
 func _draw_particles(renderable: Dictionary, particles: Array[VfxParticleData],
@@ -131,7 +131,10 @@ func _draw_particles(renderable: Dictionary, particles: Array[VfxParticleData],
 			local_slot += 1
 
 			var mi_semi: int = mesh_indices[local_slot]
-			_render_frame(_pool.meshes[mi_semi], _pool.materials[mi_semi], p, vfx_frame, false, draw_order, emitter_palette)
+			if vfx_frame.semi_transparency_on:
+				_render_frame(_pool.meshes[mi_semi], _pool.materials[mi_semi], p, vfx_frame, false, draw_order, emitter_palette)
+			else:
+				_pool.meshes[mi_semi].visible = false
 			draw_order += 1
 			local_slot += 1
 

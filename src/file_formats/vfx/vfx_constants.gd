@@ -9,10 +9,21 @@ const PSX_FIXED_POINT_ONE: float = 4096.0  ## PSX fixed-point 1.0 — used as ac
 
 const NO_CHILD_EMITTER: int = -1
 const TIMELINE_EMITTER_DURATION: int = 10000  ## Long duration for timeline-driven emitters
-const CHANNEL_SORT_SPACING: float = 1000.0  ## Sort key spacing between channels
 const TICKS_PER_TILE: float = 5.0  ## Projectile flight duration per tile of distance
 
 enum AnchorMode { WORLD = 0, CURSOR = 1, ORIGIN = 2, TARGET = 3, PARENT = 4 }
+
+# Target anchor uses different encoding than emitter anchor (verified from PSX disassembly)
+const TARGET_ANCHOR_MAP: Array[int] = [
+	AnchorMode.WORLD,   # 0 (0x00)
+	AnchorMode.WORLD,   # 1 (0x20) — same as 0x00
+	AnchorMode.WORLD,   # 2 (0x40) — CAMERA, not yet implemented
+	AnchorMode.ORIGIN,  # 3 (0x60)
+	AnchorMode.TARGET,  # 4 (0x80)
+	AnchorMode.PARENT,  # 5 (0xA0)
+	AnchorMode.WORLD,   # 6 (0xC0) — unknown
+	AnchorMode.WORLD,   # 7 (0xE0) — unknown
+]
 enum SpreadMode { SPHERE = 0, BOX = 1 }
 enum AnimOpcode { LOOP = 0x81, SET_OFFSET = 0x82, ADD_OFFSET = 0x83 }
 

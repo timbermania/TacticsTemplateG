@@ -9,7 +9,7 @@ uniform vec2 corner_bl;
 uniform vec2 corner_br;
 uniform vec4 uv_rect_data;  // x, y, w, h (normalized)
 uniform float z_bias = 0.0;
-uniform float color_modulate = 1.0;
+uniform vec3 color_modulate = vec3(1.0);
 
 varying vec4 uv_rect;
 varying float tile_center_depth;

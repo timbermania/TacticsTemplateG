@@ -13,11 +13,16 @@ void fragment() {
 
 	vec4 col = texture(effect_texture, uv);
 
-	if (col.a < 0.01 || col.a > 0.9 || (col.r < 0.01 && col.g < 0.01 && col.b < 0.01)) {
+	if (col.a < 0.01 || col.a > 0.9) {
 		discard;
 	}
 
-	ALBEDO = col.rgb * 0.25 * color_modulate;
+	vec3 modulated = col.rgb * 0.25 * color_modulate;
+	if (modulated.r < 0.01 && modulated.g < 0.01 && modulated.b < 0.01) {
+		discard;
+	}
+
+	ALBEDO = modulated;
 	ALPHA = 1.0;
 	DEPTH = tile_center_depth + z_bias;
 }

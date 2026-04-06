@@ -15,6 +15,11 @@ func initialize(effect: VisualEffectData) -> void:
 	inertia_threshold = float(effect.inertia_threshold)
 
 
+func update_particles(particles: Array[VfxParticleData]) -> void:
+	for particle: VfxParticleData in particles:
+		update_particle(particle)
+
+
 func update_particle(particle: VfxParticleData) -> void:
 	if not particle.active:
 		return
@@ -45,8 +50,8 @@ func update_particle(particle: VfxParticleData) -> void:
 		particle.acceleration += particle.drag
 	else:
 		_apply_homing_acceleration(particle)
-
-	particle.age += 1
+	# Note: age increment moved to VfxEffectManager._physics_step() for correct
+	# PSX ordering: physics → homing arrival → mid-life children → age increment
 
 
 func _apply_homing_acceleration(particle: VfxParticleData) -> void:

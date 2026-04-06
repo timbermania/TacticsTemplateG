@@ -95,11 +95,13 @@ func _process_channel(state: ChannelState) -> Variant:
 		var emitter_index: int = emitter_id - 1
 		# Keyframe duration = total frames this emitter is active for this keyframe
 		var kf_duration: int = state.duration_remaining + state.spawn_counter + 1
+		var raw_action_flag: int = kf.flags.decode_u16(0) if kf.flags.size() >= 2 else 0
 		request = {
 			"emitter_index": emitter_index,
 			"spawn_counter": state.spawn_counter,
 			"channel_index": state.channel_index,
-			"keyframe_duration": kf_duration
+			"keyframe_duration": kf_duration,
+			"action_flags": raw_action_flag
 		}
 		state.spawn_counter += 1
 

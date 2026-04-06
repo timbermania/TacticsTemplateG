@@ -34,6 +34,13 @@ var solo_emitter: int = -1  # -1 = all enabled
 var enable_emitters: Array[int] = []
 # Command-line: --quit-after-loop to exit after first playthrough
 var quit_after_loop: bool = false
+# Command-line: --debug-mesh-pool to log mesh pool borrow/hide/release events
+var debug_mesh_pool: bool = false
+# Command-line: --debug-render to log per-particle render state changes
+var debug_render: bool = false
+# Command-line: --debug-emitters to log per-emitter particle counts and semi_trans state
+var debug_emitters: bool = false
+var _debug_emitter_tick: int = 0
 var _first_play_started: bool = false
 # Command-line: --target-anchor=x,y,z to override target anchor (local space)
 var target_anchor_override: Vector3 = Vector3.ZERO
@@ -58,6 +65,18 @@ func _ready() -> void:
 		if arg == "--quit-after-loop":
 			quit_after_loop = true
 			print("[VfxTestScene] quit_after_loop=true")
+		if arg == "--debug-mesh-pool":
+			debug_mesh_pool = true
+			print("[VfxTestScene] debug_mesh_pool=true")
+		if arg == "--debug-render":
+			debug_render = true
+			print("[VfxTestScene] debug_render=true")
+		if arg == "--debug-emitters":
+			debug_emitters = true
+			print("[VfxTestScene] debug_emitters=true")
+		if arg.begins_with("--effect="):
+			current_effect_index = int(arg.split("=")[1])
+			print("[VfxTestScene] effect=%d" % current_effect_index)
 		if arg.begins_with("--target-anchor="):
 			var parts: PackedStringArray = arg.split("=")[1].split(",")
 			if parts.size() == 3:
@@ -104,10 +123,18 @@ func _load_map() -> void:
 	camera_controller.position = midpoint
 
 
-func _play_effect() -> void:
+func _stop_current_effect() -> void:
 	if current_instance and is_instance_valid(current_instance):
+		# Disconnect to avoid spurious _on_effect_instance_finished during teardown
+		if current_instance.tree_exiting.is_connected(_on_effect_instance_finished):
+			current_instance.tree_exiting.disconnect(_on_effect_instance_finished)
+		current_instance.set_process(false)
 		current_instance.queue_free()
 		current_instance = null
+
+
+func _play_effect() -> void:
+	_stop_current_effect()
 
 	if current_effect_index < 0 or current_effect_index >= RomReader.vfx.size():
 		print("[VfxTestScene] Effect index %d out of range" % current_effect_index)
@@ -125,6 +152,18 @@ func _play_effect() -> void:
 	current_instance.initialize(vfx_data, target_world_pos, origin_world_pos, true)
 	current_instance.tree_exiting.connect(_on_effect_instance_finished)
 	current_instance.renderer.set_z_bias(z_bias_spinbox.value)
+	if debug_mesh_pool:
+		current_instance.renderer.debug_mesh_pool_enabled = true
+	if debug_render:
+		current_instance.renderer.debug_particle_render_enabled = true
+
+	# Dump parsed timeline data when debug_emitters is on
+	if debug_emitters:
+		var mgr: VfxEffectManager = current_instance.manager
+		print("[TIMELINE] phase1_duration=%d phase2_offset=%d" % [mgr.phase1_duration, mgr.phase2_start])
+		_dump_timelines("phase1", vfx_data.phase1_emitter_timelines)
+		_dump_timelines("animate_tick", vfx_data.child_emitter_timelines)
+		_dump_timelines("phase2", vfx_data.phase2_emitter_timelines)
 
 	# Override target anchor if requested
 	if target_anchor_overridden:
@@ -262,9 +301,7 @@ func _on_anchor_spinbox_changed(_value: float, index: int) -> void:
 
 
 func _play_effect_preserving_checkboxes() -> void:
-	if current_instance and is_instance_valid(current_instance):
-		current_instance.queue_free()
-		current_instance = null
+	_stop_current_effect()
 
 	if current_effect_index < 0 or current_effect_index >= RomReader.vfx.size():
 		return
@@ -280,6 +317,10 @@ func _play_effect_preserving_checkboxes() -> void:
 	current_instance.initialize(vfx_data, target_world_pos, origin_world_pos, true)
 	current_instance.tree_exiting.connect(_on_effect_instance_finished)
 	current_instance.renderer.set_z_bias(z_bias_spinbox.value)
+	if debug_mesh_pool:
+		current_instance.renderer.debug_mesh_pool_enabled = true
+	if debug_render:
+		current_instance.renderer.debug_particle_render_enabled = true
 
 	if target_anchor_overridden:
 		var m: VfxEffectManager = current_instance.manager
@@ -347,6 +388,42 @@ func _on_effect_instance_finished() -> void:
 
 
 func _process(delta: float) -> void:
+	# Emitter debug logging
+	if debug_emitters and current_instance and is_instance_valid(current_instance) and current_instance.manager:
+		_debug_emitter_tick += 1
+		if _debug_emitter_tick % 15 == 1:
+			var mgr: VfxEffectManager = current_instance.manager
+			var vfx_data: VisualEffectData = mgr.vfx_data
+			var counts: Dictionary = {}  # emitter_index -> particle count
+			for emitter: VfxActiveEmitter in mgr.active_emitters:
+				for p: VfxParticleData in emitter.particles:
+					if p.age == 0 or not p.active:
+						continue
+					counts[p.emitter_index] = counts.get(p.emitter_index, 0) + 1
+			if not counts.is_empty():
+				var parts: Array[String] = []
+				for ei: int in counts:
+					parts.append("e%d=%d" % [ei, counts[ei]])
+				print("[EMITTERS] tick=%d %s" % [_debug_emitter_tick, " ".join(parts)])
+
+			# Detailed log for emitters 0 and 1
+			for emitter: VfxActiveEmitter in mgr.active_emitters:
+				if emitter.emitter_index > 1:
+					continue
+				for p: VfxParticleData in emitter.particles:
+					if p.age == 0 or not p.active:
+						continue
+					var fs_idx: int = p.current_frameset
+					if fs_idx < 0 or fs_idx >= vfx_data.framesets.size():
+						continue
+					var fs: VisualEffectData.VfxFrameSet = vfx_data.framesets[fs_idx]
+					var info: String = ""
+					for fr: VisualEffectData.VfxFrame in fs.frameset:
+						var label: String = "OPAQUE" if not fr.semi_transparency_on else "SEMI(%d)" % fr.semi_transparency_mode
+						info += "[%s] " % label
+					print("[EMITTERS]   e%d uid=%d age=%d fs=%d %s" % [p.emitter_index, p.uid, p.age, fs_idx, info])
+					break  # first particle only
+
 	if not loop_checkbox.button_pressed:
 		return
 
@@ -378,3 +455,17 @@ func _on_speed_changed(value: float) -> void:
 func _on_z_bias_changed(value: float) -> void:
 	if current_instance and is_instance_valid(current_instance) and current_instance.renderer:
 		current_instance.renderer.set_z_bias(value)
+
+
+func _dump_timelines(label: String, timelines: Array[VisualEffectData.EmitterTimeline]) -> void:
+	for ch_idx in range(timelines.size()):
+		var tl: VisualEffectData.EmitterTimeline = timelines[ch_idx]
+		var spawns: Array[String] = []
+		for kf_idx in range(tl.keyframes.size()):
+			var kf: VisualEffectData.EmitterKeyframe = tl.keyframes[kf_idx]
+			if kf.emitter_id > 0:
+				spawns.append("kf[%d] t=%d eid=%d(e%d) flags=0x%04X" % [
+					kf_idx, kf.time, kf.emitter_id, kf.emitter_id - 1,
+					kf.flags.decode_u16(0) if kf.flags.size() >= 2 else 0])
+		if not spawns.is_empty():
+			print("[TIMELINE] %s ch[%d] num_kf=%d: %s" % [label, ch_idx, tl.num_keyframes, "; ".join(spawns)])

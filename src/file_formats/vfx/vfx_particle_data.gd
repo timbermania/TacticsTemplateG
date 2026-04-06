@@ -20,6 +20,7 @@ var weight: float = 0.0
 var homing_strength: float = 0.0
 var homing_target: Vector3 = Vector3.ZERO
 var homing_curve_index: int = -1
+var homing_arrival_threshold: float = 0.0
 
 # Lifetime
 var age: int = 0
@@ -45,7 +46,7 @@ var anim_offset: Vector2 = Vector2.ZERO
 # Pre-computed render state (set by animator.tick each physics frame)
 var current_frameset: int = 0
 var current_depth_mode: int = 0
-var color_modulate: float = 1.0
+var color_modulate: Vector3 = Vector3.ONE
 
 
 func initialize(
@@ -75,13 +76,14 @@ func initialize(
 	homing_strength = 0.0
 	homing_target = Vector3.ZERO
 	homing_curve_index = -1
+	homing_arrival_threshold = 0.0
 
 	anim_frame = 0
 	anim_time = 0
 	anim_offset = Vector2.ZERO
 	current_frameset = 0
 	current_depth_mode = 0
-	color_modulate = 1.0
+	color_modulate = Vector3.ONE
 
 
 func is_dead() -> bool:

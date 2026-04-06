@@ -40,8 +40,18 @@ var anchor_cursor: Vector3 = Vector3.ZERO
 var anchor_origin: Vector3 = Vector3.ZERO
 var anchor_target: Vector3 = Vector3.ZERO
 
+# Facing angle for OUTWARD_UNIT_ORIENTED velocity mode (set by caller)
+var caster_facing_angle: float = 0.0
+
 # Debug: empty = show all emitters, otherwise per-emitter toggle (true = enabled)
 var debug_emitter_mask: Array[bool] = []
+
+# Debug: color curve logging (one-shot per emitter + per-particle tracking)
+var _debug_color_logged_emitters: Dictionary = {}  # emitter_index → true
+var _debug_color_particle_frames: Dictionary = {}  # particle uid → frame count
+var debug_color_curves_enabled: bool = false
+const _DEBUG_COLOR_MAX_FRAMES: int = 25
+const _DEBUG_COLOR_MAX_PARTICLES: int = 3
 
 # Signal for action flags (Phase 6 battle integration)
 signal action_flags_triggered(flags: int, channel_index: int, frame: int)
@@ -115,8 +125,16 @@ func update(delta: float) -> void:
 		_first_update_after_init = false
 
 	tick_accumulator += delta
-	while tick_accumulator >= PHYSICS_TIMESTEP:
-		tick_accumulator -= PHYSICS_TIMESTEP
+	# Cap to one tick per frame so lifetime=1 particles (e.g. Shiva sprite) always
+	# get at least one render frame. PSX runs 1:1 tick-to-frame at 30fps.
+	if tick_accumulator >= PHYSICS_TIMESTEP:
+		tick_accumulator = fmod(tick_accumulator, PHYSICS_TIMESTEP)
+
+		# Cleanup dead particles FIRST: particles from previous tick are removed
+		# before new spawning. This lets lifetime=1 particles (e.g. Shiva sprite)
+		# survive one render frame between the tick that spawned them and the
+		# tick that cleans them up, matching PSX and godot-learning behavior.
+		_cleanup_dead_particles()
 
 		# Timeline spawns + physics in the same tick so particles are
 		# always positioned correctly before the next render.
@@ -128,8 +146,10 @@ func update(delta: float) -> void:
 
 		_physics_step()
 
-	# Cleanup dead particles and finished emitters
-	_cleanup()
+	# Remove finished emitters outside the tick loop (lightweight, safe every frame).
+	# Must be outside so emitters with temporarily-empty particle lists (between
+	# cleanup and next spawn) don't get prematurely removed, causing flicker.
+	_cleanup_finished_emitters()
 
 
 func _process_timeline_frame() -> void:
@@ -166,6 +186,14 @@ func _process_spawn_request(request: Dictionary) -> void:
 	if not debug_emitter_mask.is_empty() and emitter_idx < debug_emitter_mask.size():
 		if not debug_emitter_mask[emitter_idx]:
 			return
+
+	# PSX: action_flags & 0x7 non-zero means this is a callback-driven spawn,
+	# not a particle emitter. Skip particle spawning for callback slots.
+	var action_flags: int = request.get("action_flags", 0)
+	var callback_slot: int = action_flags & 0x7
+	if callback_slot != 0:
+		return
+
 	var spawn_counter: int = request.spawn_counter
 	var channel_idx: int = request.get("channel_index", 0)
 
@@ -205,10 +233,149 @@ func get_all_particles() -> Array[VfxParticleData]:
 
 func _physics_step() -> void:
 	for emitter: VfxActiveEmitter in active_emitters:
-		emitter.tick_particles()
+		# Homing arrival check (PSX: runs before physics integration)
+		for particle: VfxParticleData in emitter.particles:
+			_check_homing_arrival(particle)
+
+		# Physics integration (velocity, position, acceleration — but NOT age)
+		emitter.physics.update_particles(emitter.particles)
+
+		# Mid-life child spawning (PSX: runs after physics, before age increment)
+		_process_midlife_children(emitter)
+
+		# Age increment + animation tick (after mid-life check so children see post-move position)
+		for particle: VfxParticleData in emitter.particles:
+			particle.age += 1
+		for particle: VfxParticleData in emitter.particles:
+			emitter.animator.tick(particle)
+
+		# Color curve sampling
+		_sample_color_curves(emitter)
 
 
-func _cleanup() -> void:
+func _check_homing_arrival(particle: VfxParticleData) -> void:
+	if particle.homing_arrival_threshold <= 0.0:
+		return
+	if particle.lifetime == -1:
+		return  # Already animation-driven
+	# Per-axis check: all three must be within threshold
+	var threshold: float = particle.homing_arrival_threshold
+	if absf(particle.position.x - particle.homing_target.x) >= threshold:
+		return
+	if absf(particle.position.y - particle.homing_target.y) >= threshold:
+		return
+	if absf(particle.position.z - particle.homing_target.z) >= threshold:
+		return
+	# Arrived — transition to animation-driven death
+	particle.lifetime = -1
+
+
+func _process_midlife_children(emitter: VfxActiveEmitter) -> void:
+	for particle: VfxParticleData in emitter.particles:
+		if particle.child_emitter_mid_life < 0:
+			continue
+		if not particle.active or particle.is_dead():
+			continue
+		# Spawn child at particle's current (post-move) position
+		_spawn_child_emitter(
+			particle.child_emitter_mid_life,
+			particle.position,
+			particle.age,
+			particle.channel_index)
+
+
+func _sample_color_curves(emitter: VfxActiveEmitter) -> void:
+	var config: VfxEmitter = emitter.emitter
+	if not config.enable_color_curve:
+		if debug_color_curves_enabled and not _debug_color_logged_emitters.has(emitter.emitter_index):
+			_debug_color_logged_emitters[emitter.emitter_index] = true
+			print("[COLOR_CURVE] Emitter %d: enable_color_curve=FALSE — skipping" % emitter.emitter_index)
+		return
+	# Color curve indices are 0-based (unlike other curve indices which are 1-based).
+	# Use get_curve() directly without -1 offset.
+	var r_idx: int = config.interpolation_curve_indicies.get(VfxConstants.CurveParam.COLOR_R, -1)
+	var g_idx: int = config.interpolation_curve_indicies.get(VfxConstants.CurveParam.COLOR_G, -1)
+	var b_idx: int = config.interpolation_curve_indicies.get(VfxConstants.CurveParam.COLOR_B, -1)
+	if r_idx < 0 and g_idx < 0 and b_idx < 0:
+		if debug_color_curves_enabled and not _debug_color_logged_emitters.has(emitter.emitter_index):
+			_debug_color_logged_emitters[emitter.emitter_index] = true
+			print("[COLOR_CURVE] Emitter %d: all curve indices < 0 (R=%d G=%d B=%d) — skipping" % [emitter.emitter_index, r_idx, g_idx, b_idx])
+		return
+	var r_curve: VfxCurve = vfx_data.get_curve(r_idx) if r_idx >= 0 else null
+	var g_curve: VfxCurve = vfx_data.get_curve(g_idx) if g_idx >= 0 else null
+	var b_curve: VfxCurve = vfx_data.get_curve(b_idx) if b_idx >= 0 else null
+
+	# One-shot debug dump per emitter
+	if debug_color_curves_enabled and not _debug_color_logged_emitters.has(emitter.emitter_index):
+		_debug_color_logged_emitters[emitter.emitter_index] = true
+		print("[COLOR_CURVE] Emitter %d: enable_color_curve=TRUE" % emitter.emitter_index)
+		print("[COLOR_CURVE]   R idx=%d curve=%s | G idx=%d curve=%s | B idx=%d curve=%s" % [
+			r_idx, "valid" if r_curve else "NULL",
+			g_idx, "valid" if g_curve else "NULL",
+			b_idx, "valid" if b_curve else "NULL"])
+		print("[COLOR_CURVE]   Total curves available: %d" % vfx_data.curves.size())
+		if r_curve:
+			_debug_print_curve_ascii("R (curve %d)" % r_idx, r_curve)
+		if g_curve and g_idx != r_idx:
+			_debug_print_curve_ascii("G (curve %d)" % g_idx, g_curve)
+		if b_curve and b_idx != r_idx and b_idx != g_idx:
+			_debug_print_curve_ascii("B (curve %d)" % b_idx, b_curve)
+
+	for particle: VfxParticleData in emitter.particles:
+		var r: float = r_curve.sample_by_frame(particle.age) if r_curve else 1.0
+		var g: float = g_curve.sample_by_frame(particle.age) if g_curve else 1.0
+		var b: float = b_curve.sample_by_frame(particle.age) if b_curve else 1.0
+		particle.color_modulate = Vector3(r, g, b)
+
+		# Per-particle debug (limited to first N particles, M frames each)
+		if debug_color_curves_enabled:
+			var uid: int = particle.uid
+			if not _debug_color_particle_frames.has(uid):
+				if _debug_color_particle_frames.size() < _DEBUG_COLOR_MAX_PARTICLES * vfx_data.emitters.size():
+					_debug_color_particle_frames[uid] = 0
+			if _debug_color_particle_frames.has(uid):
+				var frame_count: int = _debug_color_particle_frames[uid]
+				if frame_count < _DEBUG_COLOR_MAX_FRAMES:
+					print("[COLOR_CURVE]   e%d p%d age=%d → rgb=(%.3f, %.3f, %.3f)" % [
+						emitter.emitter_index, uid, particle.age, r, g, b])
+					_debug_color_particle_frames[uid] = frame_count + 1
+
+
+func _debug_print_curve_ascii(label: String, curve: VfxCurve) -> void:
+	var num_samples: int = mini(20, curve.samples.size())
+	var max_val: float = 0.0
+	for i in range(num_samples):
+		max_val = maxf(max_val, curve.samples[i])
+	if max_val < 0.001:
+		print("[COLOR_CURVE]   %s: all zeros (first %d samples)" % [label, num_samples])
+		return
+	print("[COLOR_CURVE]   %s (first %d samples, max=%.3f):" % [label, num_samples, max_val])
+	var rows: int = 8
+	for row in range(rows, 0, -1):
+		var threshold: float = max_val * row / rows
+		var line: String = "    |"
+		for i in range(num_samples):
+			if curve.samples[i] >= threshold:
+				line += "#"
+			else:
+				line += " "
+		line += "|"
+		print("[COLOR_CURVE] %s" % line)
+	var axis: String = "    +"
+	for i in range(num_samples):
+		axis += "-"
+	axis += "+"
+	print("[COLOR_CURVE] %s" % axis)
+	var nums: String = "     "
+	for i in range(num_samples):
+		if i % 5 == 0:
+			nums += str(i)
+		else:
+			nums += " "
+	print("[COLOR_CURVE] %s" % nums)
+
+
+func _cleanup_dead_particles() -> void:
 	# Each emitter cleans its own dead particles and returns child spawn requests
 	var child_spawn_requests: Array[Dictionary] = []
 	for emitter: VfxActiveEmitter in active_emitters:
@@ -223,6 +390,8 @@ func _cleanup() -> void:
 			request.get("channel_index", 0)
 		)
 
+
+func _cleanup_finished_emitters() -> void:
 	# Remove finished emitters (only if no particles remain)
 	# In timeline mode, also remove emitters whose particles are all dead
 	# even if the emitter itself hasn't hit its duration limit — the timeline
@@ -264,7 +433,7 @@ func _spawn_child_emitter(child_emitter_index: int, parent_pos: Vector3, frame_c
 		var particle := VfxParticleData.new()
 		VfxActiveEmitter.initialize_particle_from_config(
 			particle, config, child_emitter_index, vfx_data,
-			parent_pos, child_target_anchor, frame_counter, channel_idx)
+			parent_pos, child_target_anchor, frame_counter, channel_idx, caster_facing_angle)
 		child_emitter.particles.append(particle)
 
 
@@ -285,6 +454,7 @@ func _apply_anchors(emitter: VfxActiveEmitter) -> void:
 	emitter.anchor_cursor = anchor_cursor
 	emitter.anchor_origin = anchor_origin
 	emitter.anchor_target = anchor_target
+	emitter.caster_facing_angle = caster_facing_angle
 
 
 func get_particle_data() -> Array:

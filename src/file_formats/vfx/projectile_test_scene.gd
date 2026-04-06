@@ -23,6 +23,8 @@ extends Node3D
 @export var direction_label: Label
 @export var distance_slider: HSlider
 @export var distance_label: Label
+@export var height_offset_slider: HSlider
+@export var height_offset_label: Label
 @export var info_label: RichTextLabel
 
 var target_world_pos: Vector3 = Vector3(2.5, 0, 1.5)
@@ -47,6 +49,7 @@ func _ready() -> void:
 	speed_slider.value_changed.connect(_on_speed_changed)
 	direction_slider.value_changed.connect(_on_direction_changed)
 	distance_slider.value_changed.connect(_on_distance_changed)
+	height_offset_slider.value_changed.connect(_on_height_offset_changed)
 	loop_checkbox.toggled.connect(_on_loop_toggled)
 
 	if RomReader.is_ready:
@@ -250,6 +253,12 @@ func _on_distance_changed(value: float) -> void:
 	_update_info_display()
 
 
+func _on_height_offset_changed(value: float) -> void:
+	height_offset_label.text = "%.2f" % value
+	_update_positions()
+	_update_info_display()
+
+
 # ============================================================
 #  Tile helpers
 # ============================================================
@@ -265,5 +274,5 @@ func _tile_to_world(tile: TerrainTile) -> Vector3:
 ## No tile snapping — avoids clamping to small maps that would reduce actual distance.
 func _find_attacker_pos() -> Vector3:
 	var desired: Vector3 = target_world_pos - _direction * _distance
-	desired.y = target_world_pos.y
+	desired.y = target_world_pos.y - height_offset_slider.value
 	return desired

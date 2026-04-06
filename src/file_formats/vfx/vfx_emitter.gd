@@ -23,6 +23,8 @@ var child_death_mode: int = 0
 var child_midlife_mode: int = 0
 var is_velocity_inward: bool = false
 var enable_color_curve: bool = false
+var align_to_facing: bool = false
+var homing_arrival_threshold_raw: int = 0
 
 var velocity_mode: int = 0
 
@@ -166,7 +168,8 @@ func _init(emitter_bytes: PackedByteArray = [], new_vfx_data: VisualEffectData =
 	
 	motion_type_flag = emitter_bytes.decode_u8(2)
 	align_to_velocity = motion_type_flag & 0x02 != 0
-	target_anchor_mode = motion_type_flag >> 5
+	var target_raw: int = motion_type_flag >> 5
+	target_anchor_mode = VfxConstants.TARGET_ANCHOR_MAP[target_raw]
 	
 	animation_target_flag = emitter_bytes.decode_u8(3) 
 	spread_mode = animation_target_flag & 1 # 0=sphere, 1=box
@@ -184,6 +187,8 @@ func _init(emitter_bytes: PackedByteArray = [], new_vfx_data: VisualEffectData =
 	child_midlife_mode = (emitter_flags >> 2) & 3
 	is_velocity_inward = (emitter_flags >> 4) & 1 == 1
 	enable_color_curve = (emitter_flags >> 6) & 1 == 1
+	align_to_facing = (emitter_flags >> 10) & 1 == 1
+	homing_arrival_threshold_raw = (emitter_flags >> 8) & 0x03
 
 	velocity_mode = emitter_flags & 0x0410
 
@@ -219,11 +224,11 @@ func _init(emitter_bytes: PackedByteArray = [], new_vfx_data: VisualEffectData =
 	start_position_spread = Vector3(emitter_bytes.decode_s16(0x20), emitter_bytes.decode_s16(0x22), emitter_bytes.decode_s16(0x24))
 	end_position_spread = Vector3(emitter_bytes.decode_s16(0x26), emitter_bytes.decode_s16(0x28), emitter_bytes.decode_s16(0x2a))
 
-	start_angle = Vector3(emitter_bytes.decode_u16(0x2c), emitter_bytes.decode_u16(0x2e), emitter_bytes.decode_u16(0x30))
-	end_angle = Vector3(emitter_bytes.decode_u16(0x32), emitter_bytes.decode_u16(0x34), emitter_bytes.decode_u16(0x36))
+	start_angle = Vector3(emitter_bytes.decode_s16(0x2c), emitter_bytes.decode_s16(0x2e), emitter_bytes.decode_s16(0x30))
+	end_angle = Vector3(emitter_bytes.decode_s16(0x32), emitter_bytes.decode_s16(0x34), emitter_bytes.decode_s16(0x36))
 
-	start_angle_spread = Vector3(emitter_bytes.decode_u16(0x38), emitter_bytes.decode_u16(0x3a), emitter_bytes.decode_u16(0x3c))
-	end_angle_spread = Vector3(emitter_bytes.decode_u16(0x3e), emitter_bytes.decode_u16(0x40), emitter_bytes.decode_u16(0x42))
+	start_angle_spread = Vector3(emitter_bytes.decode_s16(0x38), emitter_bytes.decode_s16(0x3a), emitter_bytes.decode_s16(0x3c))
+	end_angle_spread = Vector3(emitter_bytes.decode_s16(0x3e), emitter_bytes.decode_s16(0x40), emitter_bytes.decode_s16(0x42))
 
 	inertia_min_start = emitter_bytes.decode_u16(0x44)
 	inertia_max_start = emitter_bytes.decode_u16(0x46)

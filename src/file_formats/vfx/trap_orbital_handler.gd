@@ -168,4 +168,5 @@ func _compute_brightness() -> void:
 			# PSX: brightness = weight * brightness_scale / 128 (range 0-255, 128 = neutral)
 			# Shader multiplier: divide by 128 to get 0.0-2.0 range (1.0 = neutral)
 			var psx_brightness: float = float(weight) * float(brightness_scale) / 128.0
-			particles[particle_idx].color_modulate = psx_brightness / 128.0
+			var mod: float = psx_brightness / 128.0
+			particles[particle_idx].color_modulate = Vector3(mod, mod, mod)

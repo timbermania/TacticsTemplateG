@@ -30,6 +30,7 @@ var anchor_cursor: Vector3 = Vector3.ZERO
 var anchor_origin: Vector3 = Vector3.ZERO
 var anchor_target: Vector3 = Vector3.ZERO
 var anchor_parent: Vector3 = Vector3.ZERO
+var caster_facing_angle: float = 0.0  # Radians, Y-axis rotation for OUTWARD_UNIT_ORIENTED
 
 
 func initialize(
@@ -89,7 +90,7 @@ func _initialize_particle(particle: VfxParticleData) -> void:
 	var target_anchor: Vector3 = _get_target_anchor()
 	initialize_particle_from_config(
 		particle, emitter, emitter_index, vfx_data,
-		anchor_offset, target_anchor, elapsed_frames, channel_index)
+		anchor_offset, target_anchor, elapsed_frames, channel_index, caster_facing_angle)
 
 
 # === Shared Particle Initialization (used by both normal and child spawn paths) ===
@@ -102,13 +103,21 @@ static func initialize_particle_from_config(
 	base_position: Vector3,
 	target_anchor: Vector3,
 	frame: int,
-	channel_idx: int
+	channel_idx: int,
+	facing_angle: float = 0.0
 ) -> void:
+	var is_unit_oriented: bool = config.is_velocity_inward and config.align_to_facing
+
 	# --- Position & Spread ---
 	var pos_offset: Vector3 = _interpolate_vec3_static(CP.POSITION,
 		config.conv_position_start, config.conv_position_end, config, effect_data, frame)
 	var spread: Vector3 = _interpolate_vec3_static(CP.PARTICLE_SPREAD,
 		config.conv_spread_start, config.conv_spread_end, config, effect_data, frame)
+
+	# OUTWARD_UNIT_ORIENTED: rotate position offset and spread by facing
+	if is_unit_oriented:
+		pos_offset = _rotate_y(pos_offset, facing_angle)
+		spread = _rotate_y(spread, facing_angle)
 
 	var base_pos: Vector3 = base_position + pos_offset
 	var spread_offset: Vector3 = _apply_spread_static(spread, config)
@@ -120,15 +129,29 @@ static func initialize_particle_from_config(
 		config.conv_radial_velocity_min_end, config.conv_radial_velocity_max_end,
 		config, effect_data, frame)
 
-	# Calculate velocity based on velocity_inward flag
+	# 4-mode velocity dispatch based on velocity_inward + align_to_facing flags
 	var velocity: Vector3
-	if config.is_velocity_inward:
+	if is_unit_oriented:
+		# OUTWARD_UNIT_ORIENTED: outward (angle-based) + rotated by caster facing
+		var vel_angle: Vector3 = _interpolate_vec3_static(CP.VELOCITY_ANGLE,
+			config.conv_angle_start, config.conv_angle_end, config, effect_data, frame)
+		var vel_spread: Vector3 = _interpolate_vec3_static(CP.VELOCITY_ANGLE_SPREAD,
+			config.conv_angle_spread_start, config.conv_angle_spread_end, config, effect_data, frame)
+		var base_dir: Vector3 = VfxPhysics.angle_to_direction(vel_angle.x, vel_angle.y, vel_angle.z)
+		var final_dir: Vector3 = VfxPhysics.random_cone_direction(base_dir, vel_spread)
+		velocity = _rotate_y(final_dir * radial_vel, facing_angle)
+	elif config.is_velocity_inward:
+		# INWARD: direction from particle toward emitter center
 		var to_center: Vector3 = base_pos - final_pos
 		if to_center.length_squared() < 0.0001:
 			velocity = Vector3(0, -radial_vel, 0)
 		else:
 			velocity = to_center.normalized() * radial_vel
+	elif config.align_to_facing:
+		# SKIP: zero velocity (unimplemented in PSX, falls through)
+		velocity = Vector3.ZERO
 	else:
+		# OUTWARD: standard angle-based direction
 		var vel_angle: Vector3 = _interpolate_vec3_static(CP.VELOCITY_ANGLE,
 			config.conv_angle_start, config.conv_angle_end, config, effect_data, frame)
 		var vel_spread: Vector3 = _interpolate_vec3_static(CP.VELOCITY_ANGLE_SPREAD,
@@ -191,6 +214,10 @@ static func initialize_particle_from_config(
 			config, effect_data, frame)
 		particle.homing_target = target_anchor + target_offset
 
+	# --- Homing Arrival ---
+	var arrival_raw: int = config.homing_arrival_threshold_raw
+	particle.homing_arrival_threshold = arrival_raw * 16.0 / 28.0 if arrival_raw > 0 else 0.0
+
 	# --- Animation ---
 	particle.anim_index = config.anim_index
 	particle.channel_index = channel_idx
@@ -233,6 +260,15 @@ static func _random_box(spread: Vector3) -> Vector3:
 		randf_range(-spread.y, spread.y),
 		randf_range(-spread.z, spread.z)
 	)
+
+
+static func _rotate_y(v: Vector3, angle: float) -> Vector3:
+	## Rotate vector around Y axis. Matches PSX build_rotation_matrix with X=0,Z=0.
+	if absf(angle) < 0.001:
+		return v
+	var c: float = cos(angle)
+	var s: float = sin(angle)
+	return Vector3(v.x * c + v.z * s, v.y, -v.x * s + v.z * c)
 
 
 # === Static Interpolation Helpers ===

@@ -21,6 +21,13 @@ func initialize(vfx_data: VisualEffectData, target_position: Vector3, origin_pos
 	# anchor_target (mode 3) = target position relative to instance = (0,0,0)
 	var rel_origin: Vector3 = origin_position - target_position
 	manager.set_anchors(Vector3.ZERO, Vector3.ZERO, rel_origin, Vector3.ZERO)
+
+	# Compute caster facing angle from caster→target direction (for OUTWARD_UNIT_ORIENTED)
+	var dir: Vector3 = target_position - origin_position
+	dir.y = 0.0
+	if dir.length_squared() > 0.001:
+		manager.caster_facing_angle = atan2(dir.x, dir.z) - PI / 2.0
+
 	manager.enable_timeline()
 
 	renderer = VfxRenderer.new()
@@ -131,5 +138,5 @@ func _process(delta: float) -> void:
 	if renderer:
 		renderer.render(active_particles, manager.vfx_data)
 
-	if manager.is_done():
+	if manager.is_done() and not has_meta("test_runner_owned"):
 		queue_free()

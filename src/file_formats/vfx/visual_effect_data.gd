@@ -23,7 +23,7 @@ var curves: Array[PackedFloat64Array] = []
 var time_scale_curve: PackedByteArray = []
 
 class VfxFrameSet:
-	var flags: int = 0 # unused
+	var flags: int = 0
 	var num_frames: int = 0
 	var frameset: Array[VfxFrame] = []
 
@@ -230,10 +230,11 @@ func init_from_file() -> void:
 	header_start = RomReader.battle_bin_data.ability_vfx_header_offsets[vfx_id]
 	var entry_size = 4
 	var num_entries = 10
-	var data_bytes: PackedByteArray = vfx_bytes.slice(header_start, header_start + (entry_size * num_entries))
+	var header_bytes: PackedByteArray = vfx_bytes.slice(header_start, header_start + (entry_size * num_entries))
+	var data_bytes: PackedByteArray = header_bytes
 	section_offsets.resize(num_entries)
 	for id: int in num_entries:
-		section_offsets[id] = data_bytes.decode_u32(id * entry_size) + header_start
+		section_offsets[id] = header_bytes.decode_u32(id * entry_size) + header_start
 	
 	#### frame data (and image color depth)
 	var section_num = VfxSections.FRAMES
@@ -286,6 +287,7 @@ func init_from_file() -> void:
 			next_section_start = frame_set_offsets[frame_set_id + 1]
 		
 		var frame_set_bytes: PackedByteArray = data_bytes.slice(frame_set_offsets[frame_set_id], next_section_start)
+		frame_set.flags = frame_set_bytes.decode_u16(0)
 		var num_frames: int = frame_set_bytes.decode_u16(2)
 		frame_set.num_frames = num_frames
 		var frame_data_length: int = 0x18
@@ -301,7 +303,7 @@ func init_from_file() -> void:
 			var new_frame: VfxFrame = VfxFrame.new()
 			new_frame.parse_vram_bytes(frame_bytes)
 			new_frame.parse_geometry_bytes(frame_bytes)
-			
+
 			frame_set.frameset[frame_id] = new_frame
 		
 		framesets[frame_set_id] = frame_set
@@ -414,9 +416,14 @@ func init_from_file() -> void:
 	# Curves
 	section_num = VfxSections.CURVES
 	section_start = section_offsets[section_num]
-	var next_section_start = section_offsets[section_num + 1]
-	if next_section_start == 0:
-		next_section_start = section_offsets[section_num + 2] # skip timing speed curve if it doesn't exist
+	# TIME_SCALE_CURVE section may not exist (raw pointer = 0 in header).
+	# Check the raw pointer, not the computed offset (which has header_start added).
+	var time_scale_raw_ptr: int = header_bytes.decode_u32(VfxSections.TIME_SCALE_CURVE * entry_size)
+	var next_section_start: int
+	if time_scale_raw_ptr == 0:
+		next_section_start = section_offsets[section_num + 2]  # skip to EFFECT_FLAGS
+	else:
+		next_section_start = section_offsets[section_num + 1]
 	var curve_section_bytes = vfx_bytes.slice(section_start, next_section_start)
 
 	num_curves = curve_section_bytes.decode_u32(0)

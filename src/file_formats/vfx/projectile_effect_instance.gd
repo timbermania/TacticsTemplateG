@@ -179,8 +179,9 @@ func _process_tick() -> void:
 		_current_position = Vector3(xz_pos.x, base_y + arc_y, xz_pos.z)
 
 		# Recompute orientation from arc tangent each tick for arrow tilt
+		var slope_y: float = (_target.y - _origin.y) / _xz_distance
 		var arc_derivative: float = 4.0 * _arc_height * (1.0 - 2.0 * t) / _xz_distance
-		var tangent: Vector3 = Vector3(_xz_direction.x, arc_derivative, _xz_direction.z).normalized()
+		var tangent: Vector3 = Vector3(_xz_direction.x, slope_y + arc_derivative, _xz_direction.z).normalized()
 		_orientation = _compute_orientation(tangent * _xz_distance)
 	else:
 		# Linear interpolation
@@ -207,6 +208,38 @@ func _compute_orientation(delta_vec: Vector3) -> Basis:
 ## Matches PSX evaluate_parabolic_arc (0x801af59c) shape.
 func _evaluate_parabolic_arc(t: float) -> float:
 	return 4.0 * _arc_height * t * (1.0 - t)
+
+
+# PSX bow arc constants
+const PSX_PER_GODOT: float = 28.0
+const PSX_ARC_K: float = 4096.0
+const PSX_ARC_R: float = 336.0
+const PSX_HEIGHT_UNIT: float = 12.0  # 1h = 12 PSX world units
+
+## Compute PSX-accurate low-arc bow height (bulge above straight line).
+## Computes H from the quadratic endpoint constraint, then derives
+## arc_height = (H^2+K^2)*D^2/(4*K^3*R*ppg) — matching the B coefficient
+## between PSX's parabola and Godot's 4t(1-t) arc system.
+static func compute_psx_bow_arc(godot_xz_dist: float, godot_delta_y: float) -> float:
+	var D: float = godot_xz_dist * PSX_PER_GODOT * 64.0  # Q6 fixed-point
+	var delta_y: float = godot_delta_y * PSX_PER_GODOT / PSX_HEIGHT_UNIT  # h units
+
+	if D < 1.0:
+		return 0.0  # same-tile: no meaningful arc
+
+	var K: float = PSX_ARC_K
+	var R: float = PSX_ARC_R
+	var disc: float = R * R - 4.0 * delta_y * R - 4.0 * D * D / (K * K)
+	if disc <= 0.0:
+		return 0.0  # beyond valid range
+
+	# Low arc H (minus sign = flatter trajectory)
+	var H: float = K * K * (R - sqrt(disc)) / (2.0 * D)
+
+	# arc_height = (H^2+K^2)*D^2/(4*K^3*R*ppg) — bulge above straight line
+	var K2: float = K * K
+	var K3: float = K2 * K
+	return (H * H + K2) * D * D / (4.0 * K3 * R * PSX_PER_GODOT)
 
 
 func _update_transform() -> void:
