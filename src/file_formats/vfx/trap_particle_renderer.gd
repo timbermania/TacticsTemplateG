@@ -126,13 +126,13 @@ func _draw_particles(renderable: Dictionary, particles: Array[VfxParticleData],
 				continue
 
 			var mi_opaque: int = mesh_indices[local_slot]
-			_render_frame(_pool.meshes[mi_opaque], _pool.materials[mi_opaque], p, vfx_frame, true, draw_order, emitter_palette)
+			_render_frame(_pool.meshes[mi_opaque], _pool.materials[mi_opaque], p, vfx_frame, true, draw_order, emitter_palette, p.current_depth_mode)
 			draw_order += 1
 			local_slot += 1
 
 			var mi_semi: int = mesh_indices[local_slot]
 			if vfx_frame.semi_transparency_on:
-				_render_frame(_pool.meshes[mi_semi], _pool.materials[mi_semi], p, vfx_frame, false, draw_order, emitter_palette)
+				_render_frame(_pool.meshes[mi_semi], _pool.materials[mi_semi], p, vfx_frame, false, draw_order, emitter_palette, p.current_depth_mode)
 			else:
 				_pool.meshes[mi_semi].visible = false
 			draw_order += 1
@@ -141,22 +141,22 @@ func _draw_particles(renderable: Dictionary, particles: Array[VfxParticleData],
 
 func _render_frame(mesh_inst: MeshInstance3D, mat: ShaderMaterial, p: VfxParticleData,
 		vfx_frame: VisualEffectData.VfxFrame, is_opaque_pass: bool, draw_order: int,
-		emitter_palette: Dictionary[int, int]) -> void:
+		emitter_palette: Dictionary[int, int], depth_mode: int) -> void:
 	var t := Transform3D.IDENTITY
 	t.origin = p.position
 	mesh_inst.transform = t
 
 	var uv_rect_data := Vector4(
-		float(vfx_frame.top_left_uv.x) / _pool.texture_size.x,
-		float(vfx_frame.top_left_uv.y) / _pool.texture_size.y,
-		float(vfx_frame.uv_width) / _pool.texture_size.x,
-		float(vfx_frame.uv_height) / _pool.texture_size.y
+		(float(vfx_frame.top_left_uv.x) + 0.5) / _pool.texture_size.x,
+		(float(vfx_frame.top_left_uv.y) + 0.5) / _pool.texture_size.y,
+		(float(vfx_frame.uv_width) - signf(vfx_frame.uv_width)) / _pool.texture_size.x,
+		(float(vfx_frame.uv_height) - signf(vfx_frame.uv_height)) / _pool.texture_size.y
 	)
 
 	if is_opaque_pass:
 		mat.shader = _pool.opaque_shader
 	else:
-		var blend_mode: int = clampi(vfx_frame.semi_transparency_mode, 0, 3)
+		var blend_mode: int = clampi(vfx_frame.semi_transparency_mode, 0, VfxConstants.SemiTransMode.BACK_PLUS_QUARTER)
 		mat.shader = _pool.blend_shaders[blend_mode]
 
 	var palette_id: int = emitter_palette.get(p.emitter_index, vfx_frame.palette_id)
@@ -170,6 +170,7 @@ func _render_frame(mesh_inst: MeshInstance3D, mat: ShaderMaterial, p: VfxParticl
 	mat.set_shader_parameter("uv_rect_data", uv_rect_data)
 
 	mat.set_shader_parameter("color_modulate", p.color_modulate)
+	mat.set_shader_parameter("depth_mode", depth_mode)
 	mat.render_priority = draw_order + 1
 	mesh_inst.visible = true
 

@@ -153,7 +153,8 @@ func on_rom_loaded() -> void:
 
 	scenario_editor.populate_option_lists()
 	scenario_editor.visible = true
-	scenario_editor.init_scenario()
+	var default_scenario: Scenario = RomReader.scenarios.get("test0")
+	scenario_editor.init_scenario(default_scenario)
 
 
 func load_scenario(new_scenario: Scenario) -> void:
@@ -188,22 +189,17 @@ func load_map_chunk(map_chunk: Scenario.MapChunk) -> void:
 	# else:
 
 	var mesh_aabb: AABB = map_chunk_data.mesh.get_aabb()
-	# modify mesh based on mirroring and so bottom left corner is at (0, 0, 0)
-	# TODO handle rotation
 	if map_chunk.mirror_scale != Vector3i.ONE or mesh_aabb.position != Vector3.ZERO:
 		var surface_arrays: Array = map_chunk_data.mesh.surface_get_arrays(0)
 		var original_mesh_center: Vector3 = mesh_aabb.get_center()
+		var mirror_vec := Vector3(map_chunk.mirror_scale)
 		for vertex_idx: int in surface_arrays[Mesh.ARRAY_VERTEX].size():
 			var vertex: Vector3 = surface_arrays[Mesh.ARRAY_VERTEX][vertex_idx]
-			vertex = vertex - original_mesh_center # shift center to be at (0, 0, 0) to make moving after mirroring easy
-			vertex = vertex * Vector3(map_chunk.mirror_scale) # apply mirroring
-			vertex = vertex + (mesh_aabb.size / 2.0) # shift so mesh_aabb start will be at (0, 0, 0)
-			
+			vertex = (vertex - original_mesh_center) * mirror_vec + (mesh_aabb.size / 2.0)
 			surface_arrays[Mesh.ARRAY_VERTEX][vertex_idx] = vertex
-		
-		# var new_array_index: Array = []
-		# new_array_index.resize(surface_arrays[Mesh.ARRAY_VERTEX].size())
-		# if mirrored along an odd number of axis polygons will render with the wrong facing
+
+		var custom0_flags: int = MapData.mirror_custom0(surface_arrays, original_mesh_center, mirror_vec, mesh_aabb.size / 2.0)
+
 		var sum_scale: int = map_chunk.mirror_scale.x + map_chunk.mirror_scale.y + map_chunk.mirror_scale.z
 		if sum_scale == 1 or sum_scale == -3:
 			for idx: int in surface_arrays[Mesh.ARRAY_VERTEX].size() / 3:
@@ -216,10 +212,8 @@ func load_map_chunk(map_chunk: Scenario.MapChunk) -> void:
 				surface_arrays[Mesh.ARRAY_TEX_UV][tri_idx] = surface_arrays[Mesh.ARRAY_TEX_UV][tri_idx + 2]
 				surface_arrays[Mesh.ARRAY_TEX_UV][tri_idx + 2] = temp_uv
 
-				# TODO fix ordering of normals for mirrored mesh?
-		
 		var modified_mesh: ArrayMesh = ArrayMesh.new()
-		modified_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, surface_arrays)
+		modified_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, surface_arrays, [], {}, custom0_flags)
 		new_map_instance.mesh_instance.mesh = modified_mesh
 	else:
 		new_map_instance.mesh_instance.mesh = map_chunk_data.mesh
@@ -800,10 +794,7 @@ func process_clock_tick() -> void:
 			await get_tree().process_frame
 			if not battle_is_running: return
 		for status: StatusEffect in statuses_to_remove:
-			if not is_instance_valid(unit): break
 			unit.remove_status(status)
-
-	if not battle_is_running: return
 
 	for unit: Unit in units: # increment each units ct by speed
 		if not unit.current_statuses.any(func(status: StatusEffect) -> bool: return status.freezes_ct): # check status that prevent ct gain (stop, sleep, etc.)
@@ -812,12 +803,9 @@ func process_clock_tick() -> void:
 				ct_gain = status.passive_effect.ct_gain_modifier.apply(ct_gain)
 			unit.stats[Unit.StatType.CT].add_value(ct_gain)
 
-	if not battle_is_running: return
-
 	# execute unit turns, ties decided by unit index in units[]
 	# TODO keep looping until all units ct_current < 100
 	for unit: Unit in units:
-		if not battle_is_running: return
 		if unit.ct_current >= 100:
 			safe_to_load_map = false
 			await start_units_turn(unit)

@@ -12,13 +12,19 @@ extends Node3D
 
 # Debug UI
 @export var effect_spinbox: SpinBox
+@export var effect_name_label: Label
 @export var play_button: Button
 @export var loop_checkbox: CheckBox
 @export var speed_slider: HSlider
 @export var speed_label: Label
-@export var z_bias_spinbox: SpinBox
+@export var show_markers_checkbox: CheckBox
+@export var show_map_checkbox: CheckBox
+@export var show_background_checkbox: CheckBox
 @export var emitter_list_container: VBoxContainer
 @export var anchor_list_container: VBoxContainer
+@export var world_environment: WorldEnvironment
+@export var background_canvas: CanvasLayer
+@export var directional_light: DirectionalLight3D
 
 var current_effect_index: int = 10
 var current_instance: VfxEffectInstance = null
@@ -34,12 +40,10 @@ var solo_emitter: int = -1  # -1 = all enabled
 var enable_emitters: Array[int] = []
 # Command-line: --quit-after-loop to exit after first playthrough
 var quit_after_loop: bool = false
-# Command-line: --debug-mesh-pool to log mesh pool borrow/hide/release events
-var debug_mesh_pool: bool = false
-# Command-line: --debug-render to log per-particle render state changes
-var debug_render: bool = false
 # Command-line: --debug-emitters to log per-emitter particle counts and semi_trans state
 var debug_emitters: bool = false
+# Command-line: --debug-depth to log CUSTOM0 centroid data and enable depth visualization
+var debug_depth: bool = false
 var _debug_emitter_tick: int = 0
 var _first_play_started: bool = false
 # Command-line: --target-anchor=x,y,z to override target anchor (local space)
@@ -65,15 +69,12 @@ func _ready() -> void:
 		if arg == "--quit-after-loop":
 			quit_after_loop = true
 			print("[VfxTestScene] quit_after_loop=true")
-		if arg == "--debug-mesh-pool":
-			debug_mesh_pool = true
-			print("[VfxTestScene] debug_mesh_pool=true")
-		if arg == "--debug-render":
-			debug_render = true
-			print("[VfxTestScene] debug_render=true")
 		if arg == "--debug-emitters":
 			debug_emitters = true
 			print("[VfxTestScene] debug_emitters=true")
+		if arg == "--debug-depth":
+			debug_depth = true
+			print("[VfxTestScene] debug_depth=true")
 		if arg.begins_with("--effect="):
 			current_effect_index = int(arg.split("=")[1])
 			print("[VfxTestScene] effect=%d" % current_effect_index)
@@ -85,9 +86,12 @@ func _ready() -> void:
 				print("[VfxTestScene] target_anchor_override=%s" % target_anchor_override)
 
 	effect_spinbox.value_changed.connect(_on_effect_changed)
+	effect_spinbox.get_line_edit().gui_input.connect(_on_spinbox_gui_input)
 	play_button.pressed.connect(_on_play_pressed)
 	speed_slider.value_changed.connect(_on_speed_changed)
-	z_bias_spinbox.value_changed.connect(_on_z_bias_changed)
+	show_markers_checkbox.toggled.connect(_on_show_markers_toggled)
+	show_map_checkbox.toggled.connect(_on_show_map_toggled)
+	show_background_checkbox.toggled.connect(_on_show_background_toggled)
 
 	if RomReader.is_ready:
 		_on_rom_loaded()
@@ -104,6 +108,11 @@ func _load_map() -> void:
 	var map_node: MapChunkNodes = VfxTestUtils.load_mirrored_map(116, maps_container)
 	if map_node == null:
 		return
+
+	if debug_depth:
+		var map_mat: ShaderMaterial = map_node.mesh_instance.material_override as ShaderMaterial
+		if map_mat:
+			map_mat.set_shader_parameter("debug_depth", true)
 
 	var map_data: MapData = map_node.map_data
 
@@ -133,17 +142,17 @@ func _stop_current_effect() -> void:
 		current_instance = null
 
 
-func _play_effect() -> void:
+func _create_effect_instance() -> bool:
 	_stop_current_effect()
 
 	if current_effect_index < 0 or current_effect_index >= RomReader.vfx.size():
 		print("[VfxTestScene] Effect index %d out of range" % current_effect_index)
-		return
+		return false
 
 	var vfx_data: VisualEffectData = RomReader.vfx[current_effect_index]
 	if vfx_data == null:
 		print("[VfxTestScene] Effect %d is null" % current_effect_index)
-		return
+		return false
 
 	current_instance = VfxEffectInstance.new()
 	current_instance.name = "VfxEffect_%d" % current_effect_index
@@ -151,13 +160,37 @@ func _play_effect() -> void:
 	vfx_container.add_child(current_instance)
 	current_instance.initialize(vfx_data, target_world_pos, origin_world_pos, true)
 	current_instance.tree_exiting.connect(_on_effect_instance_finished)
-	current_instance.renderer.set_z_bias(z_bias_spinbox.value)
-	if debug_mesh_pool:
-		current_instance.renderer.debug_mesh_pool_enabled = true
-	if debug_render:
-		current_instance.renderer.debug_particle_render_enabled = true
+	if debug_depth:
+		current_instance.renderer.debug_depth_enabled = true
 
-	# Dump parsed timeline data when debug_emitters is on
+	if target_anchor_overridden:
+		var m: VfxEffectManager = current_instance.manager
+		m.set_anchors(m.anchor_world, m.anchor_cursor, m.anchor_origin, target_anchor_override)
+
+	_loop_delay = 0.0
+
+	if not show_markers_checkbox.button_pressed:
+		_on_show_markers_toggled(false)
+
+	return true
+
+
+func _play_effect() -> void:
+	if not _create_effect_instance():
+		return
+
+	var vfx_data: VisualEffectData = RomReader.vfx[current_effect_index]
+
+	if debug_depth:
+		for ai in range(vfx_data.animations.size()):
+			var anim: VisualEffectData.VfxAnimation = vfx_data.animations[ai]
+			var depth_modes: Dictionary = {}
+			for af: VisualEffectData.VfxAnimationFrame in anim.animation_frames:
+				if af.frameset_id <= VfxConstants.MAX_FRAMESET_ID:
+					depth_modes[af.byte_02] = depth_modes.get(af.byte_02, 0) + 1
+			if not depth_modes.is_empty():
+				print("[DEPTH_DEBUG] Animation %d depth_modes (byte_02): %s" % [ai, depth_modes])
+
 	if debug_emitters:
 		var mgr: VfxEffectManager = current_instance.manager
 		print("[TIMELINE] phase1_duration=%d phase2_offset=%d" % [mgr.phase1_duration, mgr.phase2_start])
@@ -165,14 +198,12 @@ func _play_effect() -> void:
 		_dump_timelines("animate_tick", vfx_data.child_emitter_timelines)
 		_dump_timelines("phase2", vfx_data.phase2_emitter_timelines)
 
-	# Override target anchor if requested
 	if target_anchor_overridden:
-		var m: VfxEffectManager = current_instance.manager
-		m.set_anchors(m.anchor_world, m.anchor_cursor, m.anchor_origin, target_anchor_override)
 		print("[VfxTestScene] anchors after override: world=%s cursor=%s origin=%s target=%s" % [
-			m.anchor_world, m.anchor_cursor, m.anchor_origin, m.anchor_target])
+			current_instance.manager.anchor_world, current_instance.manager.anchor_cursor,
+			current_instance.manager.anchor_origin, current_instance.manager.anchor_target])
 
-	# Populate checkboxes first, then apply mask
+	_update_effect_name_label()
 	_populate_emitter_list(vfx_data)
 	_apply_emitter_mask()
 	if anchor_spinboxes.is_empty():
@@ -182,7 +213,6 @@ func _play_effect() -> void:
 		_apply_anchor_mask()
 
 	_first_play_started = true
-	_loop_delay = 0.0
 
 
 func _populate_emitter_list(vfx_data: VisualEffectData) -> void:
@@ -301,35 +331,11 @@ func _on_anchor_spinbox_changed(_value: float, index: int) -> void:
 
 
 func _play_effect_preserving_checkboxes() -> void:
-	_stop_current_effect()
-
-	if current_effect_index < 0 or current_effect_index >= RomReader.vfx.size():
+	if not _create_effect_instance():
 		return
-
-	var vfx_data: VisualEffectData = RomReader.vfx[current_effect_index]
-	if vfx_data == null:
-		return
-
-	current_instance = VfxEffectInstance.new()
-	current_instance.name = "VfxEffect_%d" % current_effect_index
-	current_instance.position = target_world_pos
-	vfx_container.add_child(current_instance)
-	current_instance.initialize(vfx_data, target_world_pos, origin_world_pos, true)
-	current_instance.tree_exiting.connect(_on_effect_instance_finished)
-	current_instance.renderer.set_z_bias(z_bias_spinbox.value)
-	if debug_mesh_pool:
-		current_instance.renderer.debug_mesh_pool_enabled = true
-	if debug_render:
-		current_instance.renderer.debug_particle_render_enabled = true
-
-	if target_anchor_overridden:
-		var m: VfxEffectManager = current_instance.manager
-		m.set_anchors(m.anchor_world, m.anchor_cursor, m.anchor_origin, target_anchor_override)
-
 	_apply_anchor_positions_from_spinboxes()
 	_apply_emitter_mask()
 	_apply_anchor_mask()
-	_loop_delay = 0.0
 
 
 func _apply_emitter_mask() -> void:
@@ -374,8 +380,9 @@ func _apply_anchor_positions_from_spinboxes() -> void:
 func _apply_anchor_mask() -> void:
 	if not current_instance or not is_instance_valid(current_instance):
 		return
+	var markers_on: bool = show_markers_checkbox.button_pressed
 	for i in range(mini(anchor_checkboxes.size(), current_instance._debug_anchor_markers.size())):
-		current_instance._debug_anchor_markers[i].visible = anchor_checkboxes[i].button_pressed
+		current_instance._debug_anchor_markers[i].visible = markers_on and anchor_checkboxes[i].button_pressed
 
 
 func _on_effect_instance_finished() -> void:
@@ -435,6 +442,7 @@ func _process(delta: float) -> void:
 
 func _on_effect_changed(value: float) -> void:
 	current_effect_index = int(value)
+	_update_effect_name_label()
 	# Clear anchor UI so the new effect gets fresh defaults
 	anchor_spinboxes.clear()
 	anchor_checkboxes.clear()
@@ -443,8 +451,20 @@ func _on_effect_changed(value: float) -> void:
 	_play_effect()
 
 
+func _update_effect_name_label() -> void:
+	if current_effect_index >= 0 and current_effect_index < RomReader.vfx.size():
+		var vfx: VisualEffectData = RomReader.vfx[current_effect_index]
+		var names: String = vfx.ability_names.strip_edges() if vfx else ""
+		effect_name_label.text = names if not names.is_empty() else "(no ability)"
+	else:
+		effect_name_label.text = ""
+
+
 func _on_play_pressed() -> void:
-	_play_effect()
+	if emitter_checkboxes.is_empty():
+		_play_effect()
+	else:
+		_play_effect_preserving_checkboxes()
 
 
 func _on_speed_changed(value: float) -> void:
@@ -452,9 +472,36 @@ func _on_speed_changed(value: float) -> void:
 	speed_label.text = "%.1fx" % value
 
 
-func _on_z_bias_changed(value: float) -> void:
-	if current_instance and is_instance_valid(current_instance) and current_instance.renderer:
-		current_instance.renderer.set_z_bias(value)
+func _on_spinbox_gui_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed:
+		var key: Key = event.keycode
+		if key == KEY_Q or key == KEY_E or key == KEY_W or key == KEY_A or key == KEY_S or key == KEY_D or key == KEY_ESCAPE:
+			effect_spinbox.get_line_edit().release_focus()
+
+
+func _on_show_markers_toggled(on: bool) -> void:
+	origin_marker.visible = on
+	target_marker.visible = on
+	if current_instance and is_instance_valid(current_instance):
+		current_instance.debug_markers_visible = on
+		for marker: MeshInstance3D in current_instance._debug_anchor_markers:
+			marker.visible = on
+		for marker: MeshInstance3D in current_instance._debug_emitter_markers:
+			marker.visible = on
+
+
+func _on_show_map_toggled(on: bool) -> void:
+	maps_container.visible = on
+
+
+func _on_show_background_toggled(on: bool) -> void:
+	if on:
+		background_canvas.get_child(0).texture.gradient.colors = PackedColorArray([
+			Color(0.1332, 0.14724, 0.18, 1), Color(0.39, 0.695, 1, 1)])
+	else:
+		background_canvas.get_child(0).texture.gradient.colors = PackedColorArray([
+			Color.BLACK, Color.BLACK])
+	directional_light.visible = on
 
 
 func _dump_timelines(label: String, timelines: Array[VisualEffectData.EmitterTimeline]) -> void:

@@ -20,8 +20,11 @@ var _particle_meshes: Dictionary = {}  # int (uid) → Array[Dictionary]
 # Cached per-emitter align_to_velocity flags
 var _emitter_align_flags: Array[bool] = []
 
+# Debug: visualize depth values as heat map colors
+var debug_depth_enabled: bool = false
 
-func initialize(vfx_data: VisualEffectData, _initial_pool_size: int = 0) -> void:
+
+func initialize(vfx_data: VisualEffectData) -> void:
 	_vfx_data = vfx_data
 
 	_shared_quad = QuadMesh.new()
@@ -50,7 +53,6 @@ func render(particles: Array[VfxParticleData], vfx_data: VisualEffectData) -> vo
 
 	var frame_camera: Camera3D = get_viewport().get_camera_3d()
 
-	# Step 1: Collect renderable particles
 	var renderable_uids: Dictionary = {}  # uid → particle index
 	var uid_mesh_need: Dictionary = {}    # uid → mesh count needed
 
@@ -70,7 +72,6 @@ func render(particles: Array[VfxParticleData], vfx_data: VisualEffectData) -> vo
 		renderable_uids[p.uid] = pi
 		uid_mesh_need[p.uid] = frameset.frameset.size() * 2
 
-	# Step 2: Free meshes for particles that died
 	var stale_uids: Array[int] = []
 	for uid: int in _particle_meshes:
 		if not renderable_uids.has(uid):
@@ -82,7 +83,6 @@ func render(particles: Array[VfxParticleData], vfx_data: VisualEffectData) -> vo
 			entry.mesh.queue_free()
 		_particle_meshes.erase(uid)
 
-	# Step 3: Create meshes for new particles, resize for frameset changes
 	for uid: int in renderable_uids:
 		var needed: int = uid_mesh_need[uid]
 		var entries: Array = _particle_meshes.get(uid, [])
@@ -98,7 +98,6 @@ func render(particles: Array[VfxParticleData], vfx_data: VisualEffectData) -> vo
 			for i in range(needed, have):
 				entries[i].mesh.visible = false
 
-	# Step 4: Render all particles
 	for uid: int in renderable_uids:
 		var pi: int = renderable_uids[uid]
 		var p: VfxParticleData = particles[pi]
@@ -114,14 +113,14 @@ func render(particles: Array[VfxParticleData], vfx_data: VisualEffectData) -> vo
 			# Opaque pass
 			var opaque_entry: Dictionary = entries[slot]
 			opaque_entry.mat.render_priority = 0
-			_render_frame(opaque_entry.mesh, opaque_entry.mat, p, vfx_frame, true, frame_camera, align)
+			_render_frame(opaque_entry.mesh, opaque_entry.mat, p, vfx_frame, true, frame_camera, align, p.current_depth_mode)
 			slot += 1
 
 			# Semi-transparent pass
 			var semi_entry: Dictionary = entries[slot]
 			if vfx_frame.semi_transparency_on:
 				semi_entry.mat.render_priority = 1
-				_render_frame(semi_entry.mesh, semi_entry.mat, p, vfx_frame, false, frame_camera, align)
+				_render_frame(semi_entry.mesh, semi_entry.mat, p, vfx_frame, false, frame_camera, align, p.current_depth_mode)
 			else:
 				semi_entry.mesh.visible = false
 			slot += 1
@@ -146,7 +145,7 @@ func _create_mesh_entry() -> Dictionary:
 
 func _render_frame(mesh: MeshInstance3D, mat: ShaderMaterial, p: VfxParticleData,
 		vfx_frame: VisualEffectData.VfxFrame, is_opaque_pass: bool,
-		frame_camera: Camera3D, align_to_velocity: bool) -> void:
+		frame_camera: Camera3D, align_to_velocity: bool, depth_mode: int) -> void:
 	var anim_offset: Vector2 = p.anim_offset
 	var tl_x: float = float(vfx_frame.top_left_xy.x) + anim_offset.x
 	var tl_y: float = float(vfx_frame.top_left_xy.y) + anim_offset.y
@@ -185,18 +184,20 @@ func _render_frame(mesh: MeshInstance3D, mat: ShaderMaterial, p: VfxParticleData
 	t.origin = p.position
 	mesh.transform = t
 
+	# Map UVs to texel centers (not edges) for correct filter_nearest sampling.
+	# Prevents seam artifacts where mirrored frames meet (e.g., E485 circle).
 	var uv_rect_data := Vector4(
-		float(vfx_frame.top_left_uv.x) / _texture_size.x,
-		float(vfx_frame.top_left_uv.y) / _texture_size.y,
-		float(vfx_frame.uv_width) / _texture_size.x,
-		float(vfx_frame.uv_height) / _texture_size.y
+		(float(vfx_frame.top_left_uv.x) + 0.5) / _texture_size.x,
+		(float(vfx_frame.top_left_uv.y) + 0.5) / _texture_size.y,
+		(float(vfx_frame.uv_width) - signf(vfx_frame.uv_width)) / _texture_size.x,
+		(float(vfx_frame.uv_height) - signf(vfx_frame.uv_height)) / _texture_size.y
 	)
 
 	if is_opaque_pass:
 		mat.shader = _opaque_shader
 		mat.set_shader_parameter("semi_trans_on", vfx_frame.semi_transparency_on)
 	else:
-		var blend_mode: int = clampi(vfx_frame.semi_transparency_mode, 0, 3)
+		var blend_mode: int = clampi(vfx_frame.semi_transparency_mode, 0, VfxConstants.SemiTransMode.BACK_PLUS_QUARTER)
 		mat.shader = _blend_shaders[blend_mode]
 
 	mat.set_shader_parameter("corner_tl", Vector2(tl_x, tl_y))
@@ -205,14 +206,11 @@ func _render_frame(mesh: MeshInstance3D, mat: ShaderMaterial, p: VfxParticleData
 	mat.set_shader_parameter("corner_br", Vector2(br_x, br_y))
 	mat.set_shader_parameter("uv_rect_data", uv_rect_data)
 	mat.set_shader_parameter("color_modulate", p.color_modulate)
+	mat.set_shader_parameter("depth_mode", depth_mode)
+	if debug_depth_enabled:
+		mat.set_shader_parameter("debug_depth", true)
 
 	mesh.visible = true
-
-
-func set_z_bias(value: float) -> void:
-	for uid: int in _particle_meshes:
-		for entry: Dictionary in _particle_meshes[uid]:
-			entry.mat.set_shader_parameter("z_bias", value)
 
 
 func _free_all_meshes() -> void:

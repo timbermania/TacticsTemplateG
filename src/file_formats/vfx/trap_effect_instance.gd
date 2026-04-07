@@ -194,11 +194,6 @@ func is_playing() -> bool:
 	return _is_playing
 
 
-func set_z_bias(value: float) -> void:
-	if _mesh_pool != null:
-		_mesh_pool.set_z_bias(value)
-
-
 # ============================================================
 #  _process — fixed-timestep tick loop
 # ============================================================
@@ -455,7 +450,7 @@ static func init_trap_animation(p: VfxParticleData, emitter: TrapEffectData.Trap
 		return
 
 	var first: VisualEffectData.VfxAnimationFrame = animation.animation_frames[0]
-	if first.frameset_id < 0x80:
+	if first.frameset_id <= VfxConstants.MAX_FRAMESET_ID:
 		p.current_frameset = first.frameset_id
 		p.anim_time = first.duration
 		if first.duration == 0:

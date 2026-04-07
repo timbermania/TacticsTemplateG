@@ -22,12 +22,13 @@ static func load_mirrored_map(map_index: int, container: Node3D) -> MapChunkNode
 	var mesh_aabb: AABB = map_data.mesh.get_aabb()
 	var surface_arrays: Array = map_data.mesh.surface_get_arrays(0)
 	var original_mesh_center: Vector3 = mesh_aabb.get_center()
+
 	for vertex_idx: int in surface_arrays[Mesh.ARRAY_VERTEX].size():
 		var vertex: Vector3 = surface_arrays[Mesh.ARRAY_VERTEX][vertex_idx]
-		vertex = vertex - original_mesh_center
-		vertex = vertex * mirror_scale
-		vertex = vertex + (mesh_aabb.size / 2.0)
+		vertex = (vertex - original_mesh_center) * mirror_scale + (mesh_aabb.size / 2.0)
 		surface_arrays[Mesh.ARRAY_VERTEX][vertex_idx] = vertex
+
+	var custom0_flags: int = MapData.mirror_custom0(surface_arrays, original_mesh_center, mirror_scale, mesh_aabb.size / 2.0)
 
 	# Flip winding order for odd-axis mirror
 	for idx: int in surface_arrays[Mesh.ARRAY_VERTEX].size() / 3:
@@ -40,7 +41,7 @@ static func load_mirrored_map(map_index: int, container: Node3D) -> MapChunkNode
 		surface_arrays[Mesh.ARRAY_TEX_UV][tri_idx + 2] = temp_uv
 
 	var modified_mesh: ArrayMesh = ArrayMesh.new()
-	modified_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, surface_arrays)
+	modified_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, surface_arrays, [], {}, custom0_flags)
 	new_map_instance.mesh_instance.mesh = modified_mesh
 
 	new_map_instance.set_mesh_shader(map_data.albedo_texture_indexed, map_data.texture_palettes)

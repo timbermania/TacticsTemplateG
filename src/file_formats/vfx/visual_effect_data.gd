@@ -21,6 +21,10 @@ var num_curves: int = 0
 var curves_bytes: Array[PackedByteArray] = []
 var curves: Array[PackedFloat64Array] = []
 var time_scale_curve: PackedByteArray = []
+var time_scale_outer: PackedInt32Array = []    ## 600 per-frame pacing values for phase1
+var time_scale_for_each: PackedInt32Array = [] ## 600 per-frame pacing values for animate_tick
+var time_scale_pattern1: bool = false  ## Enable outer_phases time scaling (during phase1)
+var time_scale_pattern2: bool = false  ## Enable for_each time scaling (during animate_tick)
 
 class VfxFrameSet:
 	var flags: int = 0
@@ -96,15 +100,7 @@ class VfxAnimation:
 class VfxAnimationFrame:
 	var frameset_id: int
 	var duration: int
-	var byte_02: int # depth mode
-
-	# Depth Modes
-	# Mode 0: Z >> 2 (standard depth-based)
-	# Mode 1: Z >> 2 - 8 (pulled forward)
-	# Mode 2: Fixed at 8 (very front)
-	# Mode 3: Fixed at 0x17E (very back)
-	# Mode 4: Fixed at 0x10 (near front)
-	# Mode 5: Z >> 2 - 0x10 (strongly forward)
+	var byte_02: int  ## Depth mode — see VfxConstants.DepthMode
 
 # 128 bytes, 25 keyframes
 class EmitterTimeline:
@@ -205,7 +201,7 @@ enum VfxSections {
 	TEXTURE = 9,
 	}
 
-const ANIM_OPCODE_LOOP: int = 0x81
+const ANIM_OPCODE_LOOP: int = VfxConstants.AnimOpcode.LOOP  ## Alias for backward compat
 
 
 func get_curve(index: int) -> VfxCurve:
@@ -329,7 +325,7 @@ func init_from_file() -> void:
 		var byte_index: int = 0
 		while byte_index < anim_bytes.size():
 			var opcode: int = anim_bytes.decode_u8(byte_index)
-			if opcode <= 0x7F:
+			if opcode <= VfxConstants.MAX_FRAMESET_ID:
 				# FRAME: 3 bytes (frameset_id, duration, depth_mode)
 				if byte_index + 3 > anim_bytes.size():
 					break
@@ -345,7 +341,7 @@ func init_from_file() -> void:
 				anim_frame_data.frameset_id = ANIM_OPCODE_LOOP
 				animation.animation_frames.append(anim_frame_data)
 				break
-			elif opcode == 0x82:
+			elif opcode == VfxConstants.AnimOpcode.SET_OFFSET:
 				# SET_OFFSET: 5 bytes (opcode, s16 x, s16 y)
 				if byte_index + 5 > anim_bytes.size():
 					break
@@ -353,12 +349,12 @@ func init_from_file() -> void:
 					anim_bytes.decode_s16(byte_index + 1),
 					anim_bytes.decode_s16(byte_index + 3))
 				byte_index += 5
-			elif opcode == 0x83:
+			elif opcode == VfxConstants.AnimOpcode.ADD_OFFSET:
 				# ADD_OFFSET: 3 bytes (opcode, s8 dx, s8 dy)
 				if byte_index + 3 > anim_bytes.size():
 					break
 				var anim_frame_data := VfxAnimationFrame.new()
-				anim_frame_data.frameset_id = 0x83
+				anim_frame_data.frameset_id = VfxConstants.AnimOpcode.ADD_OFFSET
 				anim_frame_data.duration = anim_bytes.decode_s8(byte_index + 1)
 				anim_frame_data.byte_02 = anim_bytes.decode_u8(byte_index + 2)
 				animation.animation_frames.append(anim_frame_data)
@@ -441,19 +437,28 @@ func init_from_file() -> void:
 			new_curve[byte_idx] = curves_bytes[curve_idx][byte_idx] / 255.0 # convert to percentage
 		curves[curve_idx] = new_curve
 
-	# Timing Curve
+	# Time scale curve — packed nibbles (2 pacing values per byte, 300 bytes per region)
 	section_num = VfxSections.TIME_SCALE_CURVE
 	section_start = section_offsets[section_num]
-	if section_start != 0: # skip this section if it doesn't exist
+	if section_start != 0:
 		time_scale_curve = vfx_bytes.slice(section_start, section_offsets[section_num + 1])
+		time_scale_outer.resize(600)
+		time_scale_for_each.resize(600)
+		for frame in range(600):
+			var byte_val: int = time_scale_curve[frame / 2]
+			time_scale_outer[frame] = (byte_val & 0x0F) if (frame % 2 == 0) else (byte_val >> 4)
+		for frame in range(600):
+			var byte_val: int = time_scale_curve[300 + frame / 2]
+			time_scale_for_each[frame] = (byte_val & 0x0F) if (frame % 2 == 0) else (byte_val >> 4)
 
-	### TODO timer header data
+	# Effect flags
 	section_num = VfxSections.EFFECT_FLAGS
 	section_start = section_offsets[section_num]
 	timer_data_header_bytes = vfx_bytes.slice(section_start, section_offsets[section_num + 1])
-	
-	# Phase timing read below from TIMELINES section header (not EFFECT_FLAGS)
 	child_spawn_delay = timer_data_header_bytes.decode_u16(6)
+	var effect_flags_byte: int = timer_data_header_bytes.decode_u8(0)
+	time_scale_pattern1 = (effect_flags_byte & 0x20) != 0
+	time_scale_pattern2 = (effect_flags_byte & 0x40) != 0
 
 	### TODO timeline data
 	section_num = VfxSections.TIMELINES

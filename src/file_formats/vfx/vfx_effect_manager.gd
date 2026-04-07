@@ -31,6 +31,12 @@ var phase2_started: bool = false
 # Single accumulator — timeline + physics tick atomically to stay in sync
 var tick_accumulator: float = 0.0
 
+# Time scaling — per-frame pacing from effect data creates slow-motion moments
+var time_scale_factor: float = 1.0
+var _current_pacing: int = 2
+const BASE_PACING: int = 2
+var _phase1_was_finished_last_frame: bool = false
+
 # First-update flag to prevent large delta jumps on init/reset
 var _first_update_after_init: bool = true
 
@@ -48,10 +54,7 @@ var debug_emitter_mask: Array[bool] = []
 
 # Debug: color curve logging (one-shot per emitter + per-particle tracking)
 var _debug_color_logged_emitters: Dictionary = {}  # emitter_index → true
-var _debug_color_particle_frames: Dictionary = {}  # particle uid → frame count
 var debug_color_curves_enabled: bool = false
-const _DEBUG_COLOR_MAX_FRAMES: int = 25
-const _DEBUG_COLOR_MAX_PARTICLES: int = 3
 
 # Signal for action flags (Phase 6 battle integration)
 signal action_flags_triggered(flags: int, channel_index: int, frame: int)
@@ -124,7 +127,7 @@ func update(delta: float) -> void:
 		delta = minf(delta, PHYSICS_TIMESTEP)
 		_first_update_after_init = false
 
-	tick_accumulator += delta
+	tick_accumulator += delta * time_scale_factor
 	# Cap to one tick per frame so lifetime=1 particles (e.g. Shiva sprite) always
 	# get at least one render frame. PSX runs 1:1 tick-to-frame at 30fps.
 	if tick_accumulator >= PHYSICS_TIMESTEP:
@@ -179,6 +182,7 @@ func _process_timeline_frame() -> void:
 		_process_spawn_request(request)
 
 	effect_frame += 1
+	_update_time_scale()
 
 
 func _process_spawn_request(request: Dictionary) -> void:
@@ -267,6 +271,7 @@ func _check_homing_arrival(particle: VfxParticleData) -> void:
 	if absf(particle.position.z - particle.homing_target.z) >= threshold:
 		return
 	# Arrived — transition to animation-driven death
+	particle.animation_held = false  # Clear hold so terminal frame can trigger death
 	particle.lifetime = -1
 
 
@@ -305,21 +310,9 @@ func _sample_color_curves(emitter: VfxActiveEmitter) -> void:
 	var g_curve: VfxCurve = vfx_data.get_curve(g_idx) if g_idx >= 0 else null
 	var b_curve: VfxCurve = vfx_data.get_curve(b_idx) if b_idx >= 0 else null
 
-	# One-shot debug dump per emitter
 	if debug_color_curves_enabled and not _debug_color_logged_emitters.has(emitter.emitter_index):
 		_debug_color_logged_emitters[emitter.emitter_index] = true
-		print("[COLOR_CURVE] Emitter %d: enable_color_curve=TRUE" % emitter.emitter_index)
-		print("[COLOR_CURVE]   R idx=%d curve=%s | G idx=%d curve=%s | B idx=%d curve=%s" % [
-			r_idx, "valid" if r_curve else "NULL",
-			g_idx, "valid" if g_curve else "NULL",
-			b_idx, "valid" if b_curve else "NULL"])
-		print("[COLOR_CURVE]   Total curves available: %d" % vfx_data.curves.size())
-		if r_curve:
-			_debug_print_curve_ascii("R (curve %d)" % r_idx, r_curve)
-		if g_curve and g_idx != r_idx:
-			_debug_print_curve_ascii("G (curve %d)" % g_idx, g_curve)
-		if b_curve and b_idx != r_idx and b_idx != g_idx:
-			_debug_print_curve_ascii("B (curve %d)" % b_idx, b_curve)
+		print("[COLOR_CURVE] Emitter %d: R=%d G=%d B=%d" % [emitter.emitter_index, r_idx, g_idx, b_idx])
 
 	for particle: VfxParticleData in emitter.particles:
 		var r: float = r_curve.sample_by_frame(particle.age) if r_curve else 1.0
@@ -327,52 +320,31 @@ func _sample_color_curves(emitter: VfxActiveEmitter) -> void:
 		var b: float = b_curve.sample_by_frame(particle.age) if b_curve else 1.0
 		particle.color_modulate = Vector3(r, g, b)
 
-		# Per-particle debug (limited to first N particles, M frames each)
-		if debug_color_curves_enabled:
-			var uid: int = particle.uid
-			if not _debug_color_particle_frames.has(uid):
-				if _debug_color_particle_frames.size() < _DEBUG_COLOR_MAX_PARTICLES * vfx_data.emitters.size():
-					_debug_color_particle_frames[uid] = 0
-			if _debug_color_particle_frames.has(uid):
-				var frame_count: int = _debug_color_particle_frames[uid]
-				if frame_count < _DEBUG_COLOR_MAX_FRAMES:
-					print("[COLOR_CURVE]   e%d p%d age=%d → rgb=(%.3f, %.3f, %.3f)" % [
-						emitter.emitter_index, uid, particle.age, r, g, b])
-					_debug_color_particle_frames[uid] = frame_count + 1
 
+func _update_time_scale() -> void:
+	var new_pacing: int = BASE_PACING
 
-func _debug_print_curve_ascii(label: String, curve: VfxCurve) -> void:
-	var num_samples: int = mini(20, curve.samples.size())
-	var max_val: float = 0.0
-	for i in range(num_samples):
-		max_val = maxf(max_val, curve.samples[i])
-	if max_val < 0.001:
-		print("[COLOR_CURVE]   %s: all zeros (first %d samples)" % [label, num_samples])
-		return
-	print("[COLOR_CURVE]   %s (first %d samples, max=%.3f):" % [label, num_samples, max_val])
-	var rows: int = 8
-	for row in range(rows, 0, -1):
-		var threshold: float = max_val * row / rows
-		var line: String = "    |"
-		for i in range(num_samples):
-			if curve.samples[i] >= threshold:
-				line += "#"
-			else:
-				line += " "
-		line += "|"
-		print("[COLOR_CURVE] %s" % line)
-	var axis: String = "    +"
-	for i in range(num_samples):
-		axis += "-"
-	axis += "+"
-	print("[COLOR_CURVE] %s" % axis)
-	var nums: String = "     "
-	for i in range(num_samples):
-		if i % 5 == 0:
-			nums += str(i)
-		else:
-			nums += " "
-	print("[COLOR_CURVE] %s" % nums)
+	if vfx_data.time_scale_pattern1 and not phase1_finished:
+		var frame: int = phase1_controller.current_frame if phase1_controller else effect_frame
+		if frame >= 0 and frame < vfx_data.time_scale_outer.size():
+			new_pacing = vfx_data.time_scale_outer[frame]
+
+	if vfx_data.time_scale_pattern2 and phase1_finished:
+		var frame: int = animate_tick_controller.current_frame if animate_tick_controller else 0
+		if frame >= 0 and frame < vfx_data.time_scale_for_each.size():
+			new_pacing = vfx_data.time_scale_for_each[frame]
+
+	# Reset to normal speed when phase1 just finished
+	if phase1_finished and not _phase1_was_finished_last_frame:
+		new_pacing = BASE_PACING
+	_phase1_was_finished_last_frame = phase1_finished
+
+	if new_pacing >= 1 and new_pacing <= 9 and new_pacing > BASE_PACING:
+		_current_pacing = new_pacing
+		time_scale_factor = float(BASE_PACING) / float(_current_pacing)
+	elif new_pacing >= 1 and new_pacing <= BASE_PACING:
+		_current_pacing = BASE_PACING
+		time_scale_factor = 1.0
 
 
 func _cleanup_dead_particles() -> void:

@@ -26,6 +26,23 @@ const TARGET_ANCHOR_MAP: Array[int] = [
 ]
 enum SpreadMode { SPHERE = 0, BOX = 1 }
 enum AnimOpcode { LOOP = 0x81, SET_OFFSET = 0x82, ADD_OFFSET = 0x83 }
+const MAX_FRAMESET_ID: int = 0x7F  ## frameset_id <= this is a frame; above is an opcode
+
+enum DepthMode {
+	STANDARD = 0,        ## Z >> 2 (no bias)
+	PULL_FORWARD_8 = 1,  ## Z >> 2 - 8 (pulled forward ~1 tile)
+	FIXED_FRONT = 2,     ## Fixed at front (highest priority)
+	FIXED_BACK = 3,      ## Fixed at back (lowest priority)
+	FIXED_16 = 4,        ## Fixed near front, behind FIXED_FRONT
+	PULL_FORWARD_16 = 5, ## Z >> 2 - 16 (strongly forward ~2 tiles)
+}
+
+enum SemiTransMode {
+	HALF_BACK_HALF_FORE = 0, ## 50% back + 50% fore (blend_mix, alpha=0.5)
+	BACK_PLUS_FORE = 1,      ## back + fore (blend_add)
+	BACK_MINUS_FORE = 2,     ## back - fore (blend_sub)
+	BACK_PLUS_QUARTER = 3,   ## back + 25% fore (blend_add, color*0.25)
+}
 
 static func resolve_anchor(mode: int, world: Vector3, cursor: Vector3,
 		origin: Vector3, target: Vector3, parent: Vector3 = Vector3.ZERO) -> Vector3:

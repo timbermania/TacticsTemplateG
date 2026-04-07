@@ -8,6 +8,7 @@ var renderer: VfxRenderer
 # Debug anchor/emitter markers (used by VfxTestScene UI)
 var _debug_anchor_markers: Array[MeshInstance3D] = []
 var _debug_emitter_markers: Array[MeshInstance3D] = []
+var debug_markers_visible: bool = true
 
 
 func initialize(vfx_data: VisualEffectData, target_position: Vector3, origin_position: Vector3 = Vector3.ZERO, debug_markers: bool = false) -> void:
@@ -130,10 +131,10 @@ func _process(delta: float) -> void:
 
 	var active_particles: Array[VfxParticleData] = manager.get_all_particles()
 
-	# Update emitter marker visibility based on debug mask
+	# Update emitter marker visibility based on debug mask and master toggle
 	var mask: Array[bool] = manager.debug_emitter_mask
 	for ei in range(_debug_emitter_markers.size()):
-		_debug_emitter_markers[ei].visible = mask.is_empty() or (ei < mask.size() and mask[ei])
+		_debug_emitter_markers[ei].visible = debug_markers_visible and (mask.is_empty() or (ei < mask.size() and mask[ei]))
 
 	if renderer:
 		renderer.render(active_particles, manager.vfx_data)

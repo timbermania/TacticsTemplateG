@@ -17,7 +17,6 @@ var _shared_quad: QuadMesh
 var _pool_size: int = 0
 var _free_mesh_indices: Array[int] = []
 var _palette_textures: Dictionary[int, Texture2D] = {} # palette_id -> Texture2D
-var _z_bias: float = 0.001
 var is_initialized: bool = false
 
 
@@ -46,12 +45,6 @@ func initialize() -> void:
 		_free_mesh_indices.append(i)
 
 	is_initialized = true
-
-
-func set_z_bias(value: float) -> void:
-	_z_bias = value
-	for mat: ShaderMaterial in materials:
-		mat.set_shader_parameter("z_bias", value)
 
 
 func get_palette_texture(palette_id: int) -> Texture2D:
@@ -98,7 +91,7 @@ func _grow_pool(new_size: int) -> void:
 		var mat := ShaderMaterial.new()
 		mat.shader = opaque_shader
 		mat.render_priority = 1
-		mat.set_shader_parameter("z_bias", _z_bias)
+		mat.set_shader_parameter("depth_mode", VfxConstants.DepthMode.PULL_FORWARD_8)
 		if not _palette_textures.is_empty():
 			mat.set_shader_parameter("effect_texture", _palette_textures[0])
 			mat.set_shader_parameter("texture_size", texture_size)

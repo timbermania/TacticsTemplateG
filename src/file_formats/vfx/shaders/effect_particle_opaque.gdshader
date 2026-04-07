@@ -28,6 +28,7 @@ void fragment() {
 		discard;
 	}
 
-	ALBEDO = modulated;
-	DEPTH = tile_center_depth + z_bias;
+	float d = compute_particle_depth(tile_center_depth, tile_clip_w, depth_mode);
+	ALBEDO = debug_depth ? depth_to_heatmap(d) : modulated;
+	DEPTH = d;
 }
