@@ -1,8 +1,11 @@
 shader_type spatial;
-render_mode unshaded, cull_disabled, depth_draw_opaque;
+render_mode blend_add, unshaded, cull_disabled, depth_draw_never;
 
-uniform sampler2D sprite_texture : source_color, filter_nearest;
-uniform vec3 unit_tint = vec3(0.0, 0.0, 0.0);
+// Colored tile overlay. Multiplies surface by overlay_color.
+// overlay_opacity controls tint strength (0 = no change, 1 = full tint).
+
+uniform vec4 overlay_color : source_color = vec4(0.0, 0.0, 1.0, 1.0);
+uniform float overlay_opacity : hint_range(0.0, 1.0) = 0.4;
 
 #include "res://src/shaders/psx_depth_common.gdshaderinc"
 
@@ -22,11 +25,7 @@ void vertex() {
 }
 
 void fragment() {
-	vec4 tex = texture(sprite_texture, UV);
-	vec4 col = tex * COLOR;
-	if (col.a < 0.5) {
-		discard;
-	}
-	ALBEDO = clamp(col.rgb + unit_tint, vec3(0.0), vec3(1.0));
+	ALBEDO = overlay_color.rgb;
+	ALPHA = overlay_opacity;
 	DEPTH = computed_depth;
 }

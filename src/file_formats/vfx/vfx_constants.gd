@@ -42,14 +42,17 @@ const DEPTH_BIAS_FIXED_BACK: float = -100.0  ## Large backward shift — always 
 const DEPTH_BIAS_FIXED_16: float = 80.0      ## Near front but behind FIXED_FRONT (PSX: bucket 16)
 const DEPTH_BIAS_UNIT: float = 0.1           ## Unit sprite: slightly in front of its tile
 const DEPTH_BIAS_SHADOW: float = 0.1         ## Shadow: slightly in front of its tile
+const DEPTH_BIAS_TILE_OVERLAY: float = 0.05  ## Tile highlights: between tile and unit
 
 enum DepthMode {
-	STANDARD = 0,        ## Z >> 2 (no bias)
-	PULL_FORWARD_8 = 1,  ## Z >> 2 - 8 (pulled forward ~1 tile)
-	FIXED_FRONT = 2,     ## Fixed at front (highest priority)
-	FIXED_BACK = 3,      ## Fixed at back (lowest priority)
-	FIXED_16 = 4,        ## Fixed near front, behind FIXED_FRONT
-	PULL_FORWARD_16 = 5, ## Z >> 2 - 16 (strongly forward ~2 tiles)
+	STANDARD = 0,        ## No bias — sorts at natural depth
+	PULL_FORWARD_8 = 1,  ## PSX: base - 8 OT buckets (~3 world units forward)
+	FIXED_FRONT = 2,     ## Always near camera (100 world units forward)
+	FIXED_BACK = 3,      ## Always far from camera (100 world units backward)
+	FIXED_16 = 4,        ## Near front, behind FIXED_FRONT (80 world units forward)
+	PULL_FORWARD_16 = 5, ## PSX: base - 16 OT buckets (~6 world units forward)
+	UNIT = 6,            ## Small forward bias for units/shadows (0.1 world units)
+	TILE_OVERLAY = 7,    ## Tile highlights — between tile surface and unit (0.05 world units)
 }
 
 enum SemiTransMode {

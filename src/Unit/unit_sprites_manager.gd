@@ -20,12 +20,12 @@ var _weapon_material: ShaderMaterial
 func _ready() -> void:
 	_primary_material = ShaderMaterial.new()
 	_primary_material.shader = UNIT_SPRITE_SHADER
-	_primary_material.set_shader_parameter("depth_bias", VfxConstants.DEPTH_BIAS_UNIT)
+	_primary_material.set_shader_parameter("depth_mode", VfxConstants.DepthMode.UNIT)
 	sprite_primary.material_override = _primary_material
 
 	_weapon_material = ShaderMaterial.new()
 	_weapon_material.shader = UNIT_SPRITE_SHADER
-	_weapon_material.set_shader_parameter("depth_bias", VfxConstants.DEPTH_BIAS_UNIT)
+	_weapon_material.set_shader_parameter("depth_mode", VfxConstants.DepthMode.UNIT)
 	sprite_weapon.material_override = _weapon_material
 
 
