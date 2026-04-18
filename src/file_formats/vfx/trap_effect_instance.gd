@@ -294,6 +294,7 @@ func _update_and_cull_particles(trap_data: TrapEffectData) -> int:
 	for p: VfxParticleData in _particles:
 		_physics.update_particle(p)
 		_tick_trap_animation(p, trap_data)
+		p.age += 1
 	var prev_count: int = _particles.size()
 	_particles = _particles.filter(
 		func(p: VfxParticleData) -> bool: return p.active and not p.is_dead())
