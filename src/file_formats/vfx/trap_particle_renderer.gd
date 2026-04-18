@@ -126,13 +126,13 @@ func _draw_particles(renderable: Dictionary, particles: Array[VfxParticleData],
 				continue
 
 			var mi_opaque: int = mesh_indices[local_slot]
-			_render_frame(_pool.meshes[mi_opaque], _pool.materials[mi_opaque], p, vfx_frame, true, draw_order, emitter_palette, p.current_depth_mode)
+			_render_frame(_pool.meshes[mi_opaque], _pool.materials[mi_opaque], p, vfx_frame, true, draw_order, emitter_palette)
 			draw_order += 1
 			local_slot += 1
 
 			var mi_semi: int = mesh_indices[local_slot]
 			if vfx_frame.semi_transparency_on:
-				_render_frame(_pool.meshes[mi_semi], _pool.materials[mi_semi], p, vfx_frame, false, draw_order, emitter_palette, p.current_depth_mode)
+				_render_frame(_pool.meshes[mi_semi], _pool.materials[mi_semi], p, vfx_frame, false, draw_order, emitter_palette)
 			else:
 				_pool.meshes[mi_semi].visible = false
 			draw_order += 1
@@ -141,7 +141,7 @@ func _draw_particles(renderable: Dictionary, particles: Array[VfxParticleData],
 
 func _render_frame(mesh_inst: MeshInstance3D, mat: ShaderMaterial, p: VfxParticleData,
 		vfx_frame: VisualEffectData.VfxFrame, is_opaque_pass: bool, draw_order: int,
-		emitter_palette: Dictionary[int, int], depth_mode: int) -> void:
+		emitter_palette: Dictionary[int, int]) -> void:
 	var t := Transform3D.IDENTITY
 	t.origin = p.position
 	mesh_inst.transform = t
@@ -170,7 +170,7 @@ func _render_frame(mesh_inst: MeshInstance3D, mat: ShaderMaterial, p: VfxParticl
 	mat.set_shader_parameter("uv_rect_data", uv_rect_data)
 
 	mat.set_shader_parameter("color_modulate", p.color_modulate)
-	mat.set_shader_parameter("depth_mode", depth_mode)
+	mat.set_shader_parameter("depth_mode", VfxConstants.DepthMode.PULL_FORWARD_8)
 	mat.render_priority = draw_order + 1
 	mesh_inst.visible = true
 
