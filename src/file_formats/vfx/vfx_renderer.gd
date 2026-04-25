@@ -119,7 +119,7 @@ func render(particles: Array[VfxParticleData], vfx_data: VisualEffectData) -> vo
 
 			var semi_entry: Dictionary = entries[slot]
 			if vfx_frame.semi_transparency_on:
-				semi_entry.mat.render_priority = num_frames + fi
+				semi_entry.mat.render_priority = (2 * num_frames) - fi - 1
 				_render_frame(semi_entry.mesh, semi_entry.mat, p, vfx_frame, false, frame_camera, align, p.current_depth_mode)
 			else:
 				semi_entry.mesh.visible = false
