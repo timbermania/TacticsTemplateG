@@ -115,16 +115,18 @@ class EmitterTimeline:
 
 	func _init(new_bytes: PackedByteArray):
 		bytes = new_bytes
-		# Layout: 25×u16 times (0x00), 25×u8 emitter_ids (0x31), 25×u16 action_flags (0x4A), u16 num_kf (0x7E)
-		action_flags = bytes.slice(0x4A, 0x4A + 50)
+		# Layout: 25×u16 times (0x00), 25×u8 emitter_ids (0x32), 25×u16 action_flags (0x4b), u16 num_kf (0x7E)
+		action_flags = bytes.slice(0x4b, 0x4b + 50)
 		num_keyframes = bytes.decode_s16(0x7E)
 
 		for idx in 25:
 			var time: int = bytes.decode_u16(idx * 2)
 			times.append(time)
 
-			var emitter_id: int = bytes.decode_u8(0x31 + idx)
-			emitter_ids.append(emitter_id)
+			var emitter_id: int = 0
+			if idx > 0:
+				emitter_id = bytes.decode_u8(0x32 + idx - 1)
+				emitter_ids.append(emitter_id)
 
 			var action_flag: int = action_flags.decode_u16(idx * 2)
 			# if not [0, 0x1000, 0x2000, 0x3000, 0x4000, 0x5000, 0x6000, 0x7000].has(action_flag):
