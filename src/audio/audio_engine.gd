@@ -22,19 +22,21 @@ var sfx_spu: Spu
 var ready_ok: bool = false
 
 
-## Builds the shared waveset + SPUs from the currently loaded ROM. Safe to call
-## repeatedly; only does work the first time it succeeds. Returns false if no
-## ROM is loaded yet (WAVESET.WD missing) or the native core fails.
+## Builds the shared waveset + SPUs from the loaded ROM or, if no ROM is
+## loaded, from an imported sound cache (GameData). Safe to call repeatedly;
+## only does work the first time it succeeds. Returns false if neither source
+## has sound data or the native core fails.
 func ensure_ready() -> bool:
 	if ready_ok:
 		return true
 
-	if not RomReader.file_records.has(WAVESET_FILE_NAME):
-		push_error("AudioEngine: %s not found — load a ROM before playing sound." % WAVESET_FILE_NAME)
+	var waveset_file_bytes: PackedByteArray = waveset_bytes()
+	if waveset_file_bytes.is_empty():
+		push_error("AudioEngine: no waveset available — load a ROM or import a sound cache first.")
 		return false
 
 	waveset = WavesetParser.new()
-	if not waveset.parse(RomReader.get_file_data(WAVESET_FILE_NAME)):
+	if not waveset.parse(waveset_file_bytes):
 		push_error("AudioEngine: failed to parse %s." % WAVESET_FILE_NAME)
 		return false
 
@@ -56,3 +58,33 @@ func reset() -> void:
 	waveset = null
 	music_spu = null
 	sfx_spu = null
+
+
+# --- Raw sound byte accessors ---
+# Each prefers the loaded ROM (RomReader); if no ROM is loaded, it falls back to
+# the imported sound cache (GameData). Returns an empty array if neither has it.
+
+func waveset_bytes() -> PackedByteArray:
+	if RomReader.file_records.has(WAVESET_FILE_NAME):
+		return RomReader.get_file_data(WAVESET_FILE_NAME)
+	return GameData.sound_waveset_bytes
+
+
+func smd_bytes(file_name: String) -> PackedByteArray:
+	if RomReader.file_records.has(file_name):
+		return RomReader.get_file_data(file_name)
+	return GameData.sound_smd_bytes.get(file_name, PackedByteArray())
+
+
+func sfx_bank_bytes(file_name: String) -> PackedByteArray:
+	if RomReader.file_records.has(file_name):
+		return RomReader.get_file_data(file_name)
+	return GameData.sound_sfx_bank_bytes.get(file_name, PackedByteArray())
+
+
+## Raw FEDS section bytes for an effect, keyed by its unique_name (e.g. "E042").
+func feds_bytes(effect_unique_name: String) -> PackedByteArray:
+	for vfx_data: VisualEffectData in RomReader.vfx:
+		if vfx_data.unique_name == effect_unique_name:
+			return RomReader.get_feds_bytes(vfx_data)
+	return GameData.sound_feds_bytes.get(effect_unique_name, PackedByteArray())

@@ -29,12 +29,14 @@ func play_slot(slot: int) -> bool:
 	return play_file("MUSIC_%02d.SMD" % slot)
 
 
-## Play an SMD by its ISO file name (e.g. "MUSIC_04.SMD").
+## Play an SMD by its file name (e.g. "MUSIC_04.SMD"). Sourced from the loaded
+## ROM or, if none, the imported sound cache (via AudioEngine).
 func play_file(file_name: String) -> bool:
-	if not RomReader.file_records.has(file_name):
-		push_error("MusicPlayer: %s not found in ROM." % file_name)
+	var smd_file_bytes: PackedByteArray = AudioEngine.smd_bytes(file_name)
+	if smd_file_bytes.is_empty():
+		push_error("MusicPlayer: %s not available (no ROM loaded and not in sound cache)." % file_name)
 		return false
-	var smd_file: SMDParser.SMDFile = SMDParser.parse(RomReader.get_file_data(file_name))
+	var smd_file: SMDParser.SMDFile = SMDParser.parse(smd_file_bytes)
 	if smd_file == null:
 		push_error("MusicPlayer: failed to parse %s." % file_name)
 		return false

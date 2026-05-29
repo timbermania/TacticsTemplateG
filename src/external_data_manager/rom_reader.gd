@@ -1364,6 +1364,7 @@ func export_data(save_path: String) -> void:
 	await export_unit_animations(save_path)
 	await export_maps(save_path)
 	await export_vfx(save_path)
+	await export_sound(save_path)
 
 
 func export_unit_spritesheets(save_path: String) -> void:
@@ -1611,6 +1612,47 @@ func export_vfx(save_path: String) -> void:
 		new_mesh_instance.name = "projectile_" + ProjectileEffectInstance.ProjectileType.keys()[model_id]
 		GltfManager.save_node(new_mesh_instance, vfx_path, ".projectile.glb")
 		new_mesh_instance.queue_free()
+
+
+## Exports the raw sound bytes to the cache so the game can play sound without
+## re-reading the ISO. The exmateria_sound addon parses these bytes directly
+## (WAVESET/SMD/feds blobs), so the cache stores the raw bytes rather than the
+## project-native parsed resources (which hold non-serializable event objects).
+func export_sound(save_path: String) -> void:
+	message.emit("Exporting sound...")
+	await get_tree().process_frame
+
+	var sound_path: String = save_path + "/sound/"
+	DirAccess.make_dir_recursive_absolute(sound_path)
+
+	# Instrument bank (WAVESET.WD), shared by music + effect sounds.
+	if file_records.has(waveset_data.file_name):
+		_save_raw_bytes(sound_path.path_join(waveset_data.file_name), get_file_data(waveset_data.file_name))
+
+	# Music sequences (MUSIC_##.SMD).
+	for smd: SmdData in smds_array:
+		_save_raw_bytes(sound_path.path_join(smd.file_name), get_file_data(smd.file_name))
+
+	# Global SFX banks (SYSTEM.SED / ENV.SED).
+	for sfx_bank: FedsBankData in sfx_banks_array:
+		_save_raw_bytes(sound_path.path_join(sfx_bank.file_name), get_file_data(sfx_bank.file_name))
+
+	# Per-effect FEDS sections sliced from each E###.BIN (saved as E###.feds).
+	var feds_path: String = sound_path + "feds/"
+	DirAccess.make_dir_recursive_absolute(feds_path)
+	for vfx_data: VisualEffectData in vfx:
+		var feds_bytes: PackedByteArray = get_feds_bytes(vfx_data)
+		if not feds_bytes.is_empty():
+			_save_raw_bytes(feds_path.path_join(vfx_data.unique_name + ".feds"), feds_bytes)
+
+
+func _save_raw_bytes(file_path: String, bytes: PackedByteArray) -> void:
+	var file: FileAccess = FileAccess.open(file_path, FileAccess.WRITE)
+	if file == null:
+		push_warning("error saving sound file " + file_path + ": " + str(FileAccess.get_open_error()))
+		return
+	file.store_buffer(bytes)
+	file.close()
 
 
 class SpritesheetRegionData:
