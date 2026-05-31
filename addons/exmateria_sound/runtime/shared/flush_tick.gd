@@ -241,6 +241,25 @@ func emit_koff_now(mask: int) -> void:
 	_emit_kon_koff_mask_trace(0, mask)
 
 
+func reset_voice_routing(mask: int) -> void:
+	## Clear per-voice SPU noise + FMod (pitch-mod) routing for the voices in
+	## `mask`. Mirrors FFT FUN_800137d8 (slot allocator @ 0x80013834), which
+	## zeroes the per-entity noise mask (slot+0x6c) — and the FMod mask
+	## (slot+0x68) — at slot allocation. FFT rebuilds the SPU NON/PMON registers
+	## each IRQ from those masks, so zeroing at alloc means a REUSED voice does
+	## not carry the prior effect's noise/pitch-mod mode into the next sound
+	## (e.g. an ice summon's noise voice reused by a later effect). We write the
+	## SPU registers directly at alloc instead of via a per-IRQ mask rebuild.
+	if mask == 0:
+		return
+	for voice in range(_pool.SPU_VOICE_BASE,
+			_pool.SPU_VOICE_BASE + _pool.POOL_SLOT_COUNT):
+		if (mask & (1 << voice)) == 0:
+			continue
+		_mixer.set_voice_noise(voice, false)
+		_mixer.set_voice_fmod(voice, 0)
+
+
 func flush_koff_post_loop() -> void:
 	## FFT spu_updater_tick post-loop KOFF flush (PC 0x80014E04-0x80014EF0).
 	## Walks every active slot, accumulates the FLAG_KOFF_PENDING mask,

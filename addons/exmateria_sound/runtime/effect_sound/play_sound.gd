@@ -183,6 +183,12 @@ var _diag_mixer: Spu = null
 # RERAISE_KON_KOFF_IDLE_TIMEOUT_FAITHFUL_PORT_PLAN.md §3.1.
 var _flush_tick: _FlushTick = null
 
+# Entity list this play pushes its effect entity onto. Defaults to the process
+# singleton (single-SPU / parity harness). A multi-SPU game engine injects a
+# PER-UNIT list via set_entity_list() so each SPU's Runtime walks only its own
+# entities (otherwise one unit's Runtime would drive every unit's entities).
+var _entity_list = null
+
 # Entity-level catch-up state — one per pair allocation (mirrors FFT's
 # linked-list of effect-entity slots; cure spell allocates 1 effect entity).
 # Type via the preloaded const (`_EntityCatchup`) rather than the global
@@ -233,8 +239,8 @@ var _waveset: WavesetParser = null
 func _init(pool: _Pool, waveset: WavesetParser = null) -> void:
 	_pool = pool
 	_waveset = waveset
-	_dispatchers.resize(_Pool.POOL_SLOT_COUNT)
-	_channels.resize(_Pool.POOL_SLOT_COUNT)
+	_dispatchers.resize(_pool.POOL_SLOT_COUNT)
+	_channels.resize(_pool.POOL_SLOT_COUNT)
 
 
 func set_mixer_for_diagnostics(mixer: Spu) -> void:
@@ -242,6 +248,14 @@ func set_mixer_for_diagnostics(mixer: Spu) -> void:
 	## Optional — when unset, the emit is skipped (legacy callers that
 	## don't run the envelope-tail diag keep working unchanged).
 	_diag_mixer = mixer
+
+
+func set_entity_list(entity_list) -> void:
+	_entity_list = entity_list
+
+
+func _list():
+	return _entity_list if _entity_list != null else _SharedEntityList.get_singleton()
 
 
 func set_flush_tick(flush: _FlushTick) -> void:
@@ -329,7 +343,7 @@ func _seed_entities_from_state() -> bool:
 	# walks _silent_entities itself.
 	_entity_catchup.owning_play_sound = self
 	_entity_catchup.is_done = false
-	_SharedEntityList.get_singleton().push(_entity_catchup)
+	_list().push(_entity_catchup)
 	return true
 
 
@@ -379,12 +393,12 @@ func _promote_next_silent_entity() -> bool:
 		# _seed_entities_from_state set on the original active entity.
 		if _entity_catchup != null:
 			_entity_catchup.is_done = true
-			_SharedEntityList.get_singleton().unlink(_entity_catchup)
+			_list().unlink(_entity_catchup)
 		ent.owning_play_sound = self
 		ent.is_done = false
 		_entity_catchup = ent
 		_silent_entities.remove_at(i)
-		_SharedEntityList.get_singleton().push(_entity_catchup)
+		_list().push(_entity_catchup)
 		return true
 	return false
 
@@ -537,7 +551,7 @@ func play_feds_pair(feds: FedsBank, pair_idx: int, slot_idx: int,
 	# play_sound_callee_12d40 exit. Sign-extend note_duration to s16
 	# to match PCSX's `lh` semantics.
 	_diag_slot2_init_state_count += 1
-	for _diag_slot in range(_Pool.POOL_SLOT_COUNT):
+	for _diag_slot in range(_pool.POOL_SLOT_COUNT):
 		var _ch = _channels[_diag_slot]
 		var _cw0: int = 0
 		var _nd: int = 0
@@ -715,7 +729,7 @@ func _bind_slot(slot: _SS, events: Array, resource_id: int,
 	dispatcher.bind(events, _waveset)
 	_dispatchers[slot.slot_idx] = dispatcher
 
-	var channel := SharedChannelState.new(slot.slot_idx, _Pool.voice_for_slot(slot.slot_idx))
+	var channel := SharedChannelState.new(slot.slot_idx, _pool.voice_for_slot(slot.slot_idx))
 	channel.opcode_pos = 0
 	# Mirror FFT play_sound init order: L80013CB0-CD0 writes 0x409 (=
 	# CHAN0_KON_ARM | CHAN0_HAS_TONES | 0x001) to chan_word_0 BEFORE the
@@ -855,7 +869,7 @@ func _prestage_first_instrument(channel: _CH, slot: _SS, events: Array) -> void:
 	_Trace.emit("prestage_first_instrument", {
 		"call_index": _probe_prestage_first_instrument_count,
 		"slot_idx": slot.slot_idx,
-		"voice": _Pool.voice_for_slot(slot.slot_idx),
+		"voice": _pool.voice_for_slot(slot.slot_idx),
 		"idx": idx,
 		"source": prestage_source,
 		"first_ac_param": (first_ac.params[0] \
@@ -1264,19 +1278,19 @@ func _run_entity_catchup() -> bool:
 				# probe_spu_slot_loop (Layer 3 paired). PCSX BP at PC
 				# 0x80014CCC = LAB_80014CCC fires once per entity-loop
 				# sub-iteration. PCSX cure: 207.
-				if _cadence_anchored:
+				if _cadence_anchored and _Trace.is_enabled():
 					_probe_spu_slot_loop_count += 1
 					_Trace.emit("spu_slot_loop", {
 						"call_index": _probe_spu_slot_loop_count,
 					})
 				# fire cadence_body for ALL primary channels (FFT per_channel_tick × 8)
-				for slot_idx in range(_Pool.POOL_SLOT_COUNT):
+				for slot_idx in range(_pool.POOL_SLOT_COUNT):
 					var ch_b = _channels[slot_idx]
 					# probe_per_channel_tick_entry — paired with PCSX BP @
 					# PC 0x80015198. FFT iterates all 8 chan struct
 					# positions per per_channel_tick call regardless of
 					# which are active.
-					if _cadence_anchored:
+					if _cadence_anchored and _Trace.is_enabled():
 						_probe_per_channel_tick_entry_count += 1
 						var _pct_cw0: int = 0
 						var _pct_nd: int = 0
@@ -1293,13 +1307,13 @@ func _run_entity_catchup() -> bool:
 							"chan_78": _pct_idle,
 						})
 					if ch_b == null:
-						if _cadence_anchored:
+						if _cadence_anchored and _Trace.is_enabled():
 							_Dispatcher.emit_smd_interpreter_inactive(slot_idx)
 							_Dispatcher.emit_lfo_handler_inactive(slot_idx, _slot_residue.get(slot_idx, {}))
 						continue
 					var slot_b := _pool.get_slot(slot_idx)
 					if slot_b == null:
-						if _cadence_anchored:
+						if _cadence_anchored and _Trace.is_enabled():
 							_Dispatcher.emit_smd_interpreter_inactive(slot_idx)
 							_Dispatcher.emit_lfo_handler_inactive(slot_idx, _slot_residue.get(slot_idx, {}))
 						continue
@@ -1360,7 +1374,7 @@ func _run_entity_catchup() -> bool:
 		# narrow check with a scan of all currently-busy slots.
 		if _cure_slot_10 < 0:
 			var all_allocated_done: bool = true
-			for slot_i in range(_Pool.POOL_SLOT_COUNT):
+			for slot_i in range(_pool.POOL_SLOT_COUNT):
 				if _pool.is_free(slot_i):
 					continue
 				var sl: _SS = _pool.get_slot(slot_i)
@@ -1372,7 +1386,7 @@ func _run_entity_catchup() -> bool:
 			# cad 0 before any sound starts, which would silence the
 			# entire render).
 			var any_allocated: bool = false
-			for slot_i in range(_Pool.POOL_SLOT_COUNT):
+			for slot_i in range(_pool.POOL_SLOT_COUNT):
 				if not _pool.is_free(slot_i):
 					any_allocated = true
 					break
@@ -1427,7 +1441,7 @@ func _tick_extra_bindings(current_sub_tick: int, cadence_fired_this_irq: bool) -
 
 func _tick_primary_dispatchers(cadence_fired_this_irq: bool) -> void:
 	## Walk the primary 1:1 dispatchers indexed by slot_idx.
-	for slot_idx in range(_Pool.POOL_SLOT_COUNT):
+	for slot_idx in range(_pool.POOL_SLOT_COUNT):
 		var disp = _dispatchers[slot_idx]
 		if disp == null:
 			continue
@@ -1487,7 +1501,7 @@ func _drain_prestage_all_slots() -> void:
 		_Trace.emit("fun80017118_entry", {
 			"call_index": _probe_fun80017118_entry_count,
 		})
-	for slot_idx in range(_Pool.POOL_SLOT_COUNT):
+	for slot_idx in range(_pool.POOL_SLOT_COUNT):
 		# probe_fun80017118_iter (Layer 4 paired). PCSX BP at PC 0x80017194
 		# = the inner per-slot iteration gate. FFT iterates all 8 slots
 		# per FUN_80017118 call regardless of whether the slot is active —
@@ -1666,7 +1680,7 @@ func _drain_prestage_all_slots() -> void:
 			_probe_pitch_inputs_count += 1
 			var pitch_base_u16: int = (d_channel.pre_pitch_acc_u32 >> 16) & 0xFFFF
 			var pitch_bend_u16: int = d_channel.pitch_bend & 0xFFFF
-			var voice_idx: int = _Pool.voice_for_slot(slot_idx)
+			var voice_idx: int = _pool.voice_for_slot(slot_idx)
 			_Trace.emit("pitch_inputs", {
 				"call_index": _probe_pitch_inputs_count,
 				"voice":      voice_idx,
@@ -1731,7 +1745,7 @@ func play_silent_driver_pair(feds: FedsBank, pair_idx: int,
 	if pair_idx < 0 or pair_idx >= feds.num_pairs:
 		push_warning("EffectPlaySound: silent driver pair %d out of range" % pair_idx)
 		return false
-	if target_slot_idx < 0 or target_slot_idx + 1 >= _Pool.POOL_SLOT_COUNT:
+	if target_slot_idx < 0 or target_slot_idx + 1 >= _pool.POOL_SLOT_COUNT:
 		push_warning("EffectPlaySound: silent target %d out of range" % target_slot_idx)
 		return false
 	# Verify the target slots are already allocated by a primary pair —
@@ -1766,7 +1780,7 @@ func play_silent_driver_pair(feds: FedsBank, pair_idx: int,
 		var events: Array = events_a if off == 0 else events_b
 		var disp := _Dispatcher.new()
 		disp.bind(events, _waveset)
-		var ch := SharedChannelState.new(sidx, _Pool.voice_for_slot(sidx))
+		var ch := SharedChannelState.new(sidx, _pool.voice_for_slot(sidx))
 		ch.opcode_pos = 0
 		_apply_chan_92_init(ch, feds, sound_id)
 		# Mark this channel as silent-driver so its end-of-stream path
@@ -1794,3 +1808,36 @@ func free_pair(slot_idx: int) -> void:
 	if slot_idx + 1 < _dispatchers.size():
 		_dispatchers[slot_idx + 1] = null
 	_pool.free_pair(slot_idx)
+
+
+func is_sequencing_done() -> bool:
+	## True once every pair this play dispatched has hit EndBar (its channel's
+	## active_word bit-0 cleared) — i.e. the FEDS sequence has played out (voices
+	## now in their natural release). False until at least one pair was dispatched.
+	## A game engine uses this to reap an ORPHANED cast (whose visual ended) only
+	## after its sound finishes, instead of cutting it short.
+	var any := false
+	for slot_i in range(_pool.POOL_SLOT_COUNT):
+		if _dispatchers[slot_i] == null:
+			continue
+		any = true
+		var sl: _SS = _pool.get_slot(slot_i)
+		if sl != null and (sl.active_word & 0x1) != 0:
+			return false
+	return any
+
+
+func release_and_free() -> void:
+	## End this cast cleanly: key-OFF every voice this play has bound (so a held
+	## mid-sustain note enters its ADSR release and decays to a natural tail
+	## instead of droning forever) and free its pool slots. Other casts' slots
+	## are untouched — only slots this play owns (its non-null _dispatchers
+	## entries) are released. The release tail finishes on the SPU's own clock.
+	for slot_i in range(_pool.POOL_SLOT_COUNT):
+		if _dispatchers[slot_i] == null:
+			continue
+		var sl: _SS = _pool.get_slot(slot_i)
+		if sl != null and _flush_tick != null and sl.voice_mask != 0:
+			_flush_tick.emit_koff_now(sl.voice_mask)
+		_dispatchers[slot_i] = null
+		_pool.free_slot(slot_i)

@@ -46,7 +46,7 @@ func play_file(file_name: String) -> bool:
 ## Play one FEDS effect-sound pair through the MUSIC pipeline (sequencer + SPU),
 ## wrapped as a synthetic SMD. `feds_bytes` is a raw "feds" blob (an E### sound
 ## section or an SFX bank). This is the simpler music-path audition; the
-## disassembly-faithful SFX path lives in EffectSoundPlayer.
+## disassembly-faithful SFX path lives in EffectSfxEngine.
 func play_feds_bytes(feds_bytes: PackedByteArray, pair_idx: int = 0) -> bool:
 	var feds_bank: FedsBank = FedsBank.parse(feds_bytes)
 	if feds_bank == null:

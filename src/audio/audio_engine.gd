@@ -5,7 +5,8 @@ extends Node
 ##   - waveset:   one WavesetParser (the WAVESET.WD instrument bank)
 ##   - music_spu: the native SPU core that plays music (driven by MusicPlayer)
 ##   - sfx_spu:   the native SPU core that plays effect sounds (E### FEDS + the
-##                global SFX banks, driven by EffectSoundPlayer)
+##                global SFX banks, driven by EffectSfxEngine — the one always-on
+##                SFX driver)
 ##
 ## Two SPUs = 48 voices total, each with its own reverb tank, sharing one
 ## instrument bank. Unlike godot-learning (which loads WAVESET.WD off disk at

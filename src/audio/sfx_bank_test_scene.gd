@@ -5,23 +5,17 @@ extends AudioTestBase
 ## noises, menu blips, etc. Pick a bank, click a sound id to play it.
 ##   Godot --path . res://src/audio/sfx_bank_test_scene.tscn
 
-const EffectSoundPlayerScript := preload("res://src/audio/effect_sound_player.gd")
-
 var _bank_option: OptionButton
 var _sound_list: ItemList
 var _now_playing: Label
-var _no_seed_check: CheckBox
+var _mode_option: OptionButton
 
-var _sfx: Node
+var _sfx_token: int = 0
 var _current_sounds: Array = []  # FedsBankData.FedsSound for the selected bank
 
 
 func _ready() -> void:
 	build_scaffold("SFX Bank Player (SYSTEM / ENV)")
-
-	_sfx = EffectSoundPlayerScript.new()
-	_sfx.name = "EffectSoundPlayer"
-	add_child(_sfx)
 
 	var controls: HBoxContainer = HBoxContainer.new()
 	content_box.add_child(controls)
@@ -31,9 +25,14 @@ func _ready() -> void:
 	_bank_option = OptionButton.new()
 	_bank_option.item_selected.connect(_on_bank_selected)
 	controls.add_child(_bank_option)
-	_no_seed_check = CheckBox.new()
-	_no_seed_check.text = "No entity seed"
-	controls.add_child(_no_seed_check)
+	var mode_label: Label = Label.new()
+	mode_label.text = "Voices:"
+	controls.add_child(mode_label)
+	_mode_option = OptionButton.new()
+	_mode_option.add_item("Unlimited (scaling)", EffectSfxEngine.VoiceMode.UNLOCKED)
+	_mode_option.add_item("Legacy (FFT-faithful)", EffectSfxEngine.VoiceMode.FAITHFUL)
+	_mode_option.item_selected.connect(_on_mode_selected)
+	controls.add_child(_mode_option)
 	var stop_button: Button = Button.new()
 	stop_button.text = "Stop"
 	stop_button.pressed.connect(_on_stop)
@@ -89,21 +88,27 @@ func _on_sound_clicked(index: int, _at_position: Vector2, mouse_button_index: in
 	_play(index)
 
 
+func _on_mode_selected(_item_index: int) -> void:
+	EffectSfxEngine.set_voice_mode(_mode_option.get_selected_id())
+
+
 func _on_stop() -> void:
-	_sfx.stop()
+	EffectSfxEngine.end_effect(_sfx_token)  # ring-out on the continuous SPU
+	_sfx_token = 0
 	_set_now_playing("Stopped")
 
 
 func _play(index: int) -> void:
-	_sfx.stop()
+	EffectSfxEngine.end_effect(_sfx_token)  # end the previous audition first
+	_sfx_token = 0
 	var bank_index: int = _bank_option.get_selected_id()
 	if bank_index < 0 or bank_index >= RomReader.sfx_banks_array.size():
 		return
 	var sfx_bank: FedsBankData = RomReader.sfx_banks_array[bank_index]
 	var sound: FedsBankData.FedsSound = _current_sounds[index]
 	var bank_bytes: PackedByteArray = RomReader.get_file_data(sfx_bank.file_name)
-	var entity_seed: Variant = null if _no_seed_check.button_pressed else EffectSoundPlayerScript.SYNTHETIC_SEED
-	if _sfx.play_bank_sound_bytes(bank_bytes, sound.index, entity_seed):
+	_sfx_token = EffectSfxEngine.audition_bank_bytes(bank_bytes, sound.index)
+	if _sfx_token != 0:
 		_set_now_playing("%s — id 0x%02X (%d)" % [sfx_bank.unique_name, sound.index, sound.index])
 	else:
 		_set_now_playing("FAILED: %s id 0x%02X" % [sfx_bank.unique_name, sound.index])

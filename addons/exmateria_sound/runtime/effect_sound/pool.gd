@@ -17,9 +17,21 @@ class_name EffectSoundPool
 
 const _SS = preload("res://addons/exmateria_sound/runtime/shared/slot_state.gd")
 
-const POOL_SLOT_COUNT := 8
-const SPU_VOICE_BASE := 16
+# FFT-faithful defaults: 8 slots, SFX voices start at 16, slots 0-5 usable
+# (6-7 reserved for music). `_Pool.new()` with no args reproduces these exactly,
+# so the parity harness is unchanged. The game's EffectSfxEngine constructs an
+# "unlocked" pool (e.g. new(24, 0, 24)) to use all 24 voices of its dedicated
+# SFX SPU. Kept as class consts (capitalised) so static reads like
+# `_SfxPoolInner.SPU_VOICE_BASE_DEFAULT` still resolve.
+const POOL_SLOT_COUNT_DEFAULT := 8
+const SPU_VOICE_BASE_DEFAULT := 16
+const USABLE_SLOTS_DEFAULT := 6
 
+# Per-instance config (UPPER-cased so existing `_pool.SPU_VOICE_BASE` /
+# `_pool.POOL_SLOT_COUNT` instance reads in flush_tick/walker keep working).
+var POOL_SLOT_COUNT: int = POOL_SLOT_COUNT_DEFAULT
+var SPU_VOICE_BASE: int = SPU_VOICE_BASE_DEFAULT
+var _usable_slots: int = USABLE_SLOTS_DEFAULT
 
 var _slots: Array = []                            # Array[_SS]
 var _slot_free: PackedByteArray = PackedByteArray()  # 1 = free, 0 = in use
@@ -39,7 +51,14 @@ var _bind_tick_counter: int = 0
 var _flush_tick = null
 
 
-func _init() -> void:
+func _init(p_slot_count: int = POOL_SLOT_COUNT_DEFAULT,
+		p_voice_base: int = SPU_VOICE_BASE_DEFAULT,
+		p_usable_slots: int = -1) -> void:
+	POOL_SLOT_COUNT = p_slot_count
+	SPU_VOICE_BASE = p_voice_base
+	# Default usable = all slots (use the whole pool); FAITHFUL passes 6 to keep
+	# slots 6-7 reserved for the music sequencer.
+	_usable_slots = p_usable_slots if p_usable_slots >= 0 else p_slot_count
 	_slots.resize(POOL_SLOT_COUNT)
 	_slot_free.resize(POOL_SLOT_COUNT)
 	for i in range(POOL_SLOT_COUNT):
@@ -51,8 +70,8 @@ func set_flush_tick(flush_tick) -> void:
 	_flush_tick = flush_tick
 
 
-static func voice_for_slot(slot_idx: int) -> int:
-	## Pool slot N is bound to SPU voice 16 + N (deterministic).
+func voice_for_slot(slot_idx: int) -> int:
+	## Pool slot N is bound to SPU voice SPU_VOICE_BASE + N (deterministic).
 	return SPU_VOICE_BASE + slot_idx
 
 
@@ -101,7 +120,9 @@ func find_free_pair_slot(pair_size: int = 2) -> Dictionary:
 	# (6 slots); slots 6-7 are reserved for the music sequencer. So the
 	# highest valid stereo-pair-start is slot 4 (slots 4+5). Verified at
 	# scus_decompilation.c:848 (FUN_80012D40 line `uVar4 = 6 - param_2`).
-	var start_slot_init: int = 6 - pair_size
+	# `_usable_slots` defaults to 6 (FAITHFUL); an unlocked pool sets it to the
+	# full slot count to hand out every pair (e.g. 24 -> highest start = 22).
+	var start_slot_init: int = _usable_slots - pair_size
 	# Build a bitmap of busy slots. A slot is "busy" iff
 	#   _slot_free[i] == 0  AND  slot.active_word & 1 != 0
 	# Mirrors FFT play_sound_callee_12d40 Pass 2 (PC 0x80012E04):
@@ -192,6 +213,11 @@ func allocate_pair(start_slot_idx: int) -> Array:
 	b.reset()
 	a.voice_mask = 1 << voice_for_slot(start_slot_idx)
 	b.voice_mask = 1 << voice_for_slot(start_slot_idx + 1)
+	# Mirror FFT FUN_800137d8's slot+0x6c=0 (noise) / +0x68 (fmod) clear at slot
+	# allocation: a reused voice must not carry the prior effect's noise/pitch-mod
+	# mode into this fresh sound. A bytecode 0xB4 (Noise) re-enables it if needed.
+	if _flush_tick != null:
+		_flush_tick.reset_voice_routing(a.voice_mask | b.voice_mask)
 	_bind_tick_counter += 1
 	a.bind_tick = _bind_tick_counter
 	b.bind_tick = _bind_tick_counter

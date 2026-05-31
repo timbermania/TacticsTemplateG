@@ -56,6 +56,22 @@ var _irq_walker: _SharedIrqWalker = null
 var _unified_pool: UnifiedSlotPool = null
 var _sample_acc: int = 0
 
+# Opt-in: process ONLY SFX (_EffectEntity) entries from the shared list,
+# skipping _MusicEntityState. The shared entity list is a process-wide
+# singleton holding both music + SFX entities (Sequencer pushes music_entity
+# there even when it drives music via its own legacy tick). A game-side SFX
+# driver that owns a SEPARATE SPU (e.g. EffectSfxEngine on AudioEngine.sfx_spu)
+# must not run music catchup / flush music slots against its own mixer, so it
+# sets this true. Default false preserves the unified-driver + parity-harness
+# behaviour (process every entity).
+var sfx_only: bool = false
+
+# Entity list this Runtime walks. Defaults to the process singleton (single-SPU
+# / parity). A multi-SPU game engine injects a PER-UNIT list so each SPU's
+# Runtime drives only its own entities. Set the matching list on each
+# EffectPlaySound (set_entity_list) so seeded entities land in the right list.
+var entity_list = null
+
 
 func _init(p_mixer: Spu, p_flush_tick: _SharedFlushTick = null,
 		p_irq_walker: _SharedIrqWalker = null) -> void:
@@ -137,8 +153,14 @@ func tick(abs_sub: int = 0) -> bool:
 	# ordering). Calling commit twice eager-drains the deferred buffer
 	# so same-IRQ KON commit matches legacy behavior.
 	var any_alive := false
-	var ll = _SharedEntityList.get_singleton()
+	var ll = entity_list if entity_list != null else _SharedEntityList.get_singleton()
 	var entities: Array = ll.walk()
+
+	# Game SFX driver: ignore music entities entirely (they're driven by the
+	# legacy Sequencer.tick on a separate SPU). Filtering here keeps every
+	# downstream loop (probes, catchup, KON/KOFF scan) SFX-only in one place.
+	if sfx_only:
+		entities = entities.filter(func(e): return e is _EffectEntity)
 
 	# Pass 10.C — per-entity walk probes for music entities. Mirrors
 	# EffectPlaySound._run_entity_catchup's per_entity_iter +
@@ -598,5 +620,8 @@ class UnifiedSlotPool:
 				var ps = ent.owning_play_sound
 				for slot in ps._pool.active_slots():
 					out.append(slot)
-					_slot_to_voice[slot.slot_idx] = _SfxPoolInner.SPU_VOICE_BASE + slot.slot_idx
+					# Use the play's actual pool base (instance-configurable now)
+					# instead of the static default, so an unlocked base-0 pool
+					# resolves correctly here too.
+					_slot_to_voice[slot.slot_idx] = ps._pool.voice_for_slot(slot.slot_idx)
 		return out

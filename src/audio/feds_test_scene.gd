@@ -1,28 +1,23 @@
 extends AudioTestBase
 ## Test scene: lists every effect (E###.BIN) that has a FEDS sound section and
-## plays the selected effect's sound pair through the disassembly-faithful SFX
-## path (EffectSoundPlayer). Click an effect to play pair 0; use the Pair
-## spinner to audition other pairs.
+## auditions the selected effect's sound pair through the one always-on
+## EffectSfxEngine (the same continuous SFX SPU the game uses). Click an effect
+## to play pair 0; use the Pair spinner to audition other pairs; toggle the
+## voice mode to A/B legacy (FFT-faithful) vs unlimited (scaling) playback.
 ##   Godot --path . res://src/audio/feds_test_scene.tscn
-
-const EffectSoundPlayerScript := preload("res://src/audio/effect_sound_player.gd")
 
 var _effect_list: ItemList
 var _pair_spin: SpinBox
 var _now_playing: Label
-var _no_seed_check: CheckBox
+var _mode_option: OptionButton
 
 var _effects: Array[VisualEffectData] = []
-var _sfx: Node
+var _sfx_token: int = 0
 var _suppress_pair_signal: bool = false
 
 
 func _ready() -> void:
 	build_scaffold("FEDS Effect-Sound Player")
-
-	_sfx = EffectSoundPlayerScript.new()
-	_sfx.name = "EffectSoundPlayer"
-	add_child(_sfx)
 
 	_effect_list = ItemList.new()
 	_effect_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -38,9 +33,14 @@ func _ready() -> void:
 	_pair_spin.min_value = 0
 	_pair_spin.value_changed.connect(_on_pair_changed)
 	controls.add_child(_pair_spin)
-	_no_seed_check = CheckBox.new()
-	_no_seed_check.text = "No entity seed"
-	controls.add_child(_no_seed_check)
+	var mode_label: Label = Label.new()
+	mode_label.text = "Voices:"
+	controls.add_child(mode_label)
+	_mode_option = OptionButton.new()
+	_mode_option.add_item("Unlimited (scaling)", EffectSfxEngine.VoiceMode.UNLOCKED)
+	_mode_option.add_item("Legacy (FFT-faithful)", EffectSfxEngine.VoiceMode.FAITHFUL)
+	_mode_option.item_selected.connect(_on_mode_selected)
+	controls.add_child(_mode_option)
 	var stop_button: Button = Button.new()
 	stop_button.text = "Stop"
 	stop_button.pressed.connect(_on_stop)
@@ -97,17 +97,23 @@ func _on_pair_changed(value: float) -> void:
 	_play(selected[0], int(value))
 
 
+func _on_mode_selected(_item_index: int) -> void:
+	EffectSfxEngine.set_voice_mode(_mode_option.get_selected_id())
+
+
 func _on_stop() -> void:
-	_sfx.stop()
+	EffectSfxEngine.end_effect(_sfx_token)  # ring-out; tail decays on the SPU clock
+	_sfx_token = 0
 	_set_now_playing("Stopped")
 
 
 func _play(index: int, pair_idx: int) -> void:
-	_sfx.stop()
+	EffectSfxEngine.end_effect(_sfx_token)  # end the previous audition first
+	_sfx_token = 0
 	var vfx_data: VisualEffectData = _effects[index]
 	var feds_bytes: PackedByteArray = RomReader.get_feds_bytes(vfx_data)
-	var entity_seed: Variant = null if _no_seed_check.button_pressed else EffectSoundPlayerScript.SYNTHETIC_SEED
-	if _sfx.play_feds_bytes(feds_bytes, pair_idx, entity_seed):
+	_sfx_token = EffectSfxEngine.audition_feds_bytes(feds_bytes, pair_idx)
+	if _sfx_token != 0:
 		_set_now_playing("%s — pair %d" % [vfx_data.unique_name, pair_idx])
 	else:
 		_set_now_playing("FAILED: %s pair %d" % [vfx_data.unique_name, pair_idx])
