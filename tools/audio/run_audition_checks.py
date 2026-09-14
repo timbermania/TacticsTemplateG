@@ -31,7 +31,7 @@ def main():
                 env, log, "AUDITION_REGRESSION: PASS")
             if "APPLICATION_SHUTDOWN: drained" not in log.read_text():
                 raise RuntimeError(f"Shutdown did not drain: {log}")
-        for mode in ("active", "stopped", "window"):
+        for mode in ("active", "stopped", "window", "cache-active", "cache-stopped", "cache-window"):
             log = logs / f"disc-{mode}.log"
             run([godot, "--path", str(source), "--verbose", "--script",
                  "res://tools/audio/disc_audio_regression.gd", "--", str(data), mode],

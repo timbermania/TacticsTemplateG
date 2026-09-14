@@ -27,7 +27,7 @@ static func put(image: PackedByteArray, lba: int, data: PackedByteArray, offset:
 		var at := offset + i
 		image[(lba + at / BLOCK) * RAW + 24 + at % BLOCK] = data[i]
 
-static func make(waveset: PackedByteArray, smd: PackedByteArray, feds: PackedByteArray, sed: PackedByteArray) -> PackedByteArray:
+static func make(waveset: PackedByteArray, smd: PackedByteArray, feds: PackedByteArray, sed: PackedByteArray, include_environment: bool = false, include_empty_effect: bool = false) -> PackedByteArray:
 	var image := PackedByteArray()
 	image.resize(780 * RAW)
 	for sector in range(780):
@@ -61,13 +61,19 @@ static func make(waveset: PackedByteArray, smd: PackedByteArray, feds: PackedByt
 	sound.append_array(record("MUSIC_00.SMD;1".to_ascii_buffer(), 32, smd.size()))
 	sound.append_array(record("MUSIC_01.SMD;1".to_ascii_buffer(), 36, 7))
 	sound.append_array(record("SYSTEM.SED;1".to_ascii_buffer(), 34, sed.size()))
-	# ENV is deliberately missing. Effect names deliberately out of order.
+	# ENV is missing by default; cache UI fixtures can include it.
+	if include_environment:
+		sound.append_array(record("ENV.SED;1".to_ascii_buffer(), 35, sed.size()))
+		put(image, 35, sed)
+	# Effect names deliberately out of order.
 	put(image, 22, sound)
 	var effect_dir := record(PackedByteArray([0]), 23, BLOCK, true)
 	effect_dir.append_array(record(PackedByteArray([1]), 20, BLOCK, true))
 	effect_dir.append_array(record("E001.BIN;1".to_ascii_buffer(), 750, 0x7f0 + 0x28 + feds.size()))
 	effect_dir.append_array(record("E000.BIN;1".to_ascii_buffer(), 755, 0x28 + feds.size()))
 	effect_dir.append_array(record("E002.BIN;1".to_ascii_buffer(), 760, 0x28))
+	if include_empty_effect:
+		effect_dir.append_array(record("E003.BIN;1".to_ascii_buffer(), 761, 0))
 	put(image, 23, effect_dir)
 	put(image, 30, waveset)
 	put(image, 32, smd)

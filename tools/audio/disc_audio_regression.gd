@@ -28,7 +28,8 @@ func _run() -> void:
 		quit(1)
 		return
 	check(AudioServer.get_driver_name() != "Dummy", "real mixer required")
-	var base := args[0]
+	var base := args[0] + "/disc-" + args[1]
+	DirAccess.make_dir_recursive_absolute(base)
 	var pcm := PackedInt32Array()
 	for i in range(448):
 		pcm.append(int(12000 * sin(TAU * float(i) / 56.0)))
@@ -208,6 +209,7 @@ func _run() -> void:
 	check(not reader._walk({"lba": 20, "length": 2048}, "", 0), "directory entry count bounded")
 	reader._visited.clear()
 	check(not reader._walk({"lba": 20, "length": 2048}, "", Reader.MAX_DEPTH + 1), "recursion depth bounded")
+	await preload("res://tools/audio/cache_audio_regression.gd").run(base, path, waveset, smd, feds, sed, check)
 	# Actual scene controls and public APIs, with the same orderly quit boundary.
 	var engine = root.get_node("ExMateriaAudioEngine")
 	engine.initialized.connect(func(): initialized_count += 1)
@@ -216,28 +218,31 @@ func _run() -> void:
 	scene._paths.disc.text = bad_path
 	scene.load_disc()
 	check(not engine.ready_ok and initialized_count == 0, "missing WAVESET does not initialize engine")
-	scene._paths.disc.text = path
-	scene.load_disc()
+	var from_cache := args[1].begins_with("cache-")
+	if from_cache:
+		root.get_node("GameData").external_data_paths["IMPORT_PATH"] = base + "/with-env"
+		scene.load_cache()
+	else:
+		scene._paths.disc.text = path
+		scene.load_disc()
 	check(engine.ready_ok and initialized_count == 1 and scene._disc_button.disabled, "disc UI initializes exactly once")
-	check(scene._disc_music.item_count == 2 and scene._disc_sfx.item_count == 5 and scene._disc_sfx.is_item_disabled(1), "UI auto-populates and disables missing banks")
+	check(scene._disc_music.item_count == 2 and scene._disc_sfx.item_count == 3 and scene._environment_button.disabled == (not from_cache) and not scene._system_button.disabled, "UI auto-populates and disables missing banks")
 	var original = scene._catalog
 	scene.load_disc()
-	scene.initialize_bank()
+	scene.load_cache()
 	check(scene._catalog == original and initialized_count == 1 and scene._status.text.contains("Restart"), "disc/bank replacement rejected after init")
 	check(engine.initialize_from_bytes(waveset) == ERR_ALREADY_IN_USE and initialized_count == 1, "native engine once-only contract preserved")
 	scene._disc_music.select(0)
 	scene.play_disc_music()
 	check(scene._music != null and scene._music.is_playing(), "disc music plays")
-	scene._disc_sfx.select(0)
-	scene.load_disc_sfx()
-	check(scene._choice.item_count == 4 and scene._choice.is_item_disabled(1) and not scene._sound_id.editable, "global original IDs/holes populated")
-	scene.load_disc_sfx()
+	scene.load_global_sfx(0)
+	check(scene._choice.item_count == 4 and scene._choice.is_item_disabled(1) and not scene._choice.get_item_text(0).contains("pair"), "global original IDs/holes populated")
+	scene.load_global_sfx(0)
 	check(scene._choice.item_count == 4 and scene._catalog.globals[0].result.choices.size() == 4,
 		"reloading global bank preserves cached choices")
-	scene._disc_sfx.select(3)
+	scene._disc_sfx.select(1)
 	scene.load_disc_sfx()
-	scene._disc_sfx.select(0)
-	scene.load_disc_sfx()
+	scene.load_global_sfx(0)
 	check(scene._choice.item_count == 4 and scene._choice.is_item_disabled(1) and not scene._sfx_button.disabled,
 		"global to effect to global retains original playable IDs and holes")
 	scene.stop_music()
@@ -246,23 +251,35 @@ func _run() -> void:
 	AudioServer.add_bus_effect(0, capture)
 	for index in [0, 2, 3]:
 		capture.clear_buffer()
-		scene._pair.value = index
+		scene._choice.select(index)
+		scene._choice.item_selected.emit(index)
 		scene.play_pair()
-		check(scene._token > 0 and int(scene._sound_id.value) == index + 1, "single/both-channel global play via original ID")
+		check(scene._token > 0 and scene._choices[scene._choice.selected].sound_id == index + 1, "single/both-channel global play via original ID")
 		check(await _heard_audio(capture), "generated global-bank notes reach the real mixer")
 		scene.stop_sfx()
 		check(scene._token == 0, "global token released")
+		var stopped_stats: Dictionary = root.get_node("ExMateriaEffectSfx").debug_snapshot()
+		check(stopped_stats.has("rail") and stopped_stats.sessions == 0, "stopped debug snapshot remains usable")
 		await create_timer(0.2).timeout
+	if from_cache:
+		scene._environment_button.pressed.emit()
+		check(scene._global_bank and scene._choice.item_count == 4 and scene._status.text.begins_with("Environment"), "Environment button directly loads original global IDs")
+		capture.clear_buffer()
+		scene._sfx_button.pressed.emit()
+		check(scene._token > 0 and await _heard_audio(capture), "indexed Environment audio reaches mixer without disc")
+		scene.stop_sfx()
+		scene._system_button.pressed.emit()
+		check(scene._choice.item_count == 4, "Environment to Game/System preserves cached choices")
 	AudioServer.remove_bus_effect(0, capture_index)
-	scene._pair.value = 1
+	scene._choice.select(1)
+	scene._choice.item_selected.emit(1)
 	scene.play_pair()
-	check(scene._token == 0 and scene._sfx_button.disabled, "hole cannot play even via spinbox")
-	scene._disc_sfx.select(4)
+	check(scene._token == 0 and scene._sfx_button.disabled, "hole cannot play even via programmatic selection")
+	scene._disc_sfx.select(2)
 	scene.load_disc_sfx()
-	check(scene._bank == null and scene._disc_sfx.is_item_disabled(4), "corrupt lazy effect disabled in UI")
-	scene._disc_sfx.select(3)
+	check(scene._bank == null and scene._disc_sfx.is_item_disabled(2), "corrupt lazy effect disabled in UI")
+	scene._disc_sfx.select(1)
 	scene.load_disc_sfx()
-	scene._sound_id.value = -1
 	scene.play_pair()
 	check(scene._token > 0 and not scene._global_bank, "lazy effect pair plays")
 	scene.stop_all()
@@ -271,9 +288,9 @@ func _run() -> void:
 	scene.play_pair()
 	await create_timer(0.25).timeout
 	print("DISC_AUDIO_REGRESSION: " + ("PASS" if failures.is_empty() else "FAIL"))
-	if args[1] == "stopped":
+	if args[1].ends_with("stopped"):
 		scene.stop_all()
-	if args[1] == "window":
+	if args[1].ends_with("window"):
 		root.get_node("ApplicationShutdown").notification(Node.NOTIFICATION_WM_CLOSE_REQUEST)
 	else:
 		root.get_node("ApplicationShutdown").request_quit(0 if failures.is_empty() else 1)
@@ -281,6 +298,10 @@ func _run() -> void:
 func _heard_audio(capture: AudioEffectCapture) -> bool:
 	for attempt in range(60):
 		await create_timer(0.025).timeout
+		var sfx := root.get_node("ExMateriaEffectSfx")
+		var snapshot: Dictionary = sfx.debug_snapshot()
+		check(snapshot.has("rail") and snapshot.rail.samples >= 0, "live debug snapshot serializes native reads")
+		sfx.reset_audio_stats() # Same scheduler -> mixer ordering as snapshots.
 		for frame in capture.get_buffer(capture.get_frames_available()):
 			if maxf(absf(frame.x), absf(frame.y)) > 0.0001:
 				return true

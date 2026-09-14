@@ -112,7 +112,17 @@ func export_data() -> void:
 	push_warning("data export complete " + export_time + ": " + GameData.external_data_paths["EXPORT_PATH"])
 
 	RomReader.message.disconnect(show_export_message)
-	export_data_button.text = _default_export_button_text
+	var audio_result := RomReader.last_audio_export_result
+	if audio_result.has("error"):
+		export_data_button.text = "Assets exported; audio failed (see tooltip)"
+		export_data_button.tooltip_text = audio_result.error
+		push_warning("Audio cache export failed: " + audio_result.error)
+	elif not audio_result.get("diagnostics", []).is_empty():
+		export_data_button.text = "Assets exported; some audio unavailable (see tooltip)"
+		export_data_button.tooltip_text = "\n".join(audio_result.diagnostics)
+	else:
+		export_data_button.text = _default_export_button_text
+		export_data_button.tooltip_text = "Audio cache exported. Import assets to refresh the cached catalog."
 	
 	export_data_button.disabled = false
 	rom_find_button.disabled = false

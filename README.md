@@ -76,14 +76,16 @@ In the scenario editor, unit can be drag and dropped with the mouse.
 ...
 
 # Building From Source
-This project is built with Godot 4.7 (audio validation: official 4.7.2)
+This project targets Godot 4.7 / GL Compatibility; audio integration is tested with official Godot 4.7.2.
 https://godotengine.org/
 
 ## Audio addons and distribution
 
 ExMateria Sound + SPU are installed with deferred, explicit content initialization.
-ROM provisioning and effect-audio wiring are not connected yet. Ordinary Godot
-audio and GL Compatibility remain unchanged.
+The existing asset export/import workflow includes a private audio cache, and
+`src/audio_test/audio_test.tscn` auditions cached or explicitly selected disc audio.
+Gameplay music/effect routing is not connected. Ordinary Godot audio and GL
+Compatibility remain unchanged.
 
 See [audio installation, builds, tests, and release packaging](docs/audio-installation.md).
 The audio-enabled combined distribution follows GPL-3.0 terms; the original MIT

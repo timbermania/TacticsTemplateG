@@ -11,6 +11,11 @@ var external_data_paths: Dictionary [String, String] = {
 	"EXPORT_PATH" : "",
 }
 
+const AudioCatalog = preload("res://src/audio_test/extracted_audio_catalog.gd")
+var audio_catalog: AudioCatalog
+var audio_import_error := ""
+var _audio_import_path := ""
+
 var is_ready: bool = false
 var lazy_load_data: bool = true
 
@@ -95,7 +100,28 @@ func save_data_paths() -> void:
 	json_file.close()
 
 
+# Import only metadata/global banks here; music/effect bytes remain lazy.
+func import_audio_data(directory_path: String) -> void:
+	audio_catalog = null
+	_audio_import_path = directory_path
+	var candidate := AudioCatalog.new()
+	if candidate.open_private(directory_path):
+		audio_catalog = candidate
+		audio_import_error = ""
+	else:
+		audio_import_error = candidate.error
+
+func get_audio_catalog() -> AudioCatalog:
+	var path: String = external_data_paths["IMPORT_PATH"]
+	if audio_catalog == null or _audio_import_path != path:
+		import_audio_data(path)
+	return audio_catalog
+
+
 func clear_data() -> void:
+	audio_catalog = null
+	_audio_import_path = ""
+	audio_import_error = ""
 	is_ready = false
 	shps = {} 
 	seqs = {} 
@@ -139,6 +165,7 @@ func clear_data() -> void:
 
 func index_data(directory_path: String) -> void:
 	clear_data()
+	import_audio_data(directory_path)
 
 	for slope_type: TerrainTile.SlopeType in TerrainTile.SlopeType.values():
 		var mesh_name: String = TerrainTile.SlopeType.keys()[slope_type].to_lower()

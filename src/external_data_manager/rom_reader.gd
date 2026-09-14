@@ -56,6 +56,8 @@ var abilities: Dictionary[String, Ability] = {} # [unique_name, Ability]
 var scenarios: Dictionary[String, Scenario] = {} # [unique_name, Scenario]
 
 var rom_load_times: Array[Dictionary] = [] # [{name: String, time_ms: int}]
+var _audio_rom_path := ""
+var last_audio_export_result: Dictionary = {}
 
 var battle_bin_data: BattleBinData = BattleBinData.new() # BATTLE.BIN tables
 var scus_data: ScusData = ScusData.new() # SCUS.942.41 tables
@@ -80,6 +82,7 @@ func _profile_section(section_name: String, start_ms: int) -> int:
 
 
 func on_load_rom_dialog_file_selected(path: String) -> void:
+	_audio_rom_path = path
 	var start_time: int = Time.get_ticks_msec()
 	rom = FileAccess.get_file_as_bytes(path)
 	push_warning("Time to load file (ms): " + str(Time.get_ticks_msec() - start_time))
@@ -814,6 +817,7 @@ func export_data(save_path: String) -> void:
 
 	DirAccess.make_dir_recursive_absolute(save_path)
 
+	last_audio_export_result = export_sound(save_path)
 	await export_unit_spritesheets(save_path)
 	await export_other_images(save_path)
 	await export_text(save_path)
@@ -821,6 +825,11 @@ func export_data(save_path: String) -> void:
 	await export_maps(save_path) # needs to be before data tables so maps will be initialized
 	await export_data_tables(save_path)
 	await export_vfx(save_path)
+
+
+func export_sound(save_path: String) -> Dictionary:
+	message.emit("Exporting sound to private asset cache...")
+	return preload("res://src/audio_test/extracted_audio_catalog.gd").export_disc(_audio_rom_path, save_path)
 
 
 func export_unit_spritesheets(save_path: String) -> void:

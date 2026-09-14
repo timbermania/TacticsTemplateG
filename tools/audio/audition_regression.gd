@@ -125,32 +125,32 @@ func _run() -> void:
 	waveset[0x2c] = 15
 	waveset.append_array(sample.data)
 	var base := args[0]
-	save_bytes(base + "/synthetic.wd", waveset)
-	save_bytes(base + "/synthetic.smd", smd)
-	save_bytes(base + "/synthetic.feds", feds)
+	DirAccess.make_dir_recursive_absolute(base + "/legacy/sound/feds")
+	save_bytes(base + "/legacy/sound/WAVESET.WD", waveset)
+	save_bytes(base + "/legacy/sound/MUSIC_00.SMD", smd)
+	save_bytes(base + "/legacy/sound/feds/E000.feds", feds)
+	var game_data := root.get_node("GameData")
+	game_data.external_data_paths["IMPORT_PATH"] = base + "/legacy"
+	await game_data.index_data(base + "/legacy")
+	var imported = game_data.audio_catalog
+	check(imported != null, "existing import workflow loads legacy audio catalog")
 	var scene = load("res://src/audio_test/audio_test.tscn").instantiate()
 	root.add_child(scene)
 	check(scene._music_button.disabled and scene._sfx_button.disabled, "uninitialized controls disabled")
-	scene.play_music()
+	scene.play_disc_music()
 	check(scene._music == null, "uninitialized play refused")
-	scene._paths.waveset.text = base + "/synthetic.wd"
-	scene.initialize_bank()
+	scene.load_cache()
+	check(scene._catalog == imported, "UI reuses GameData imported catalog")
+	check(scene._paths.size() == 1 and scene._paths.has("disc"), "manual file controls removed")
 	check(root.get_node("ExMateriaAudioEngine").ready_ok, "UI initializes engine")
-	check(scene._initialize_button.disabled, "bank replacement disabled")
-	scene._paths.music.text = base + "/synthetic.smd"
-	scene.play_music()
+	check(scene._cache_button.disabled, "bank replacement disabled")
+	scene.play_disc_music()
 	check(scene._music != null and scene._music.is_playing(), "UI starts music")
-	scene._paths.feds.text = base + "/synthetic.feds"
-	scene.load_sfx_bank()
-	check(not scene._sfx_button.disabled and scene._pair.max_value == 0, "pair range configured")
+	scene._disc_sfx.select(0)
+	scene.load_disc_sfx()
+	check(not scene._sfx_button.disabled and scene._choice.item_count == 1, "pair range configured")
 	scene.play_pair()
 	check(scene._token > 0, "UI creates SFX session")
-	var original_token: int = scene._token
-	scene._sound_id.value = 6
-	scene.play_pair()
-	check(scene._token == original_token and scene._status.text.begins_with("Sound ID is outside"),
-		"invalid sound ID reports error without stopping current audition")
-	scene._sound_id.value = -1
 	var sfx = root.get_node("ExMateriaEffectSfx")
 	sfx._audio_mutex.lock()
 	var entity_lifetime: WeakRef = weakref(sfx._sessions[scene._token]["play"]._entity_catchup)
@@ -161,13 +161,12 @@ func _run() -> void:
 	check(entity_lifetime.get_ref() == null or entity_lifetime.get_ref().owning_play_sound == null,
 		"stopped SFX entity no longer owns its cast")
 	check(scene._token == 0 and not scene._music.is_playing(), "stop clears session and music")
-	scene._paths.feds.text = base + "/missing"
-	scene.load_sfx_bank()
+	scene.load_global_sfx(1)
 	check(scene._bank == null and scene._sfx_button.disabled, "failed replacement clears stale bank")
-	scene._paths.feds.text = base + "/synthetic.feds"
-	scene.load_sfx_bank()
+	scene._disc_sfx.select(0)
+	scene.load_disc_sfx()
 	scene.play_pair()
-	scene.play_music()
+	scene.play_disc_music()
 	await create_timer(0.25).timeout
 	print("AUDITION_REGRESSION: " + ("PASS" if failures.is_empty() else "FAIL"))
 	if args[1] == "stopped":
