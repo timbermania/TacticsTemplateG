@@ -1,0 +1,5 @@
+# Local packaging adjustment: keep the upstream source-only framework metadata.
+# No compiled example binaries are included.
+!bin/
+!bin/**/
+!bin/**/*.plist

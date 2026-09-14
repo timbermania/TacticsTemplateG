@@ -29,7 +29,9 @@ func play_animations(local_map_data: MapData) -> void:
 	frame_positions.resize(num_texture_animations)
 	frame_idxs.resize(num_texture_animations)
 	
-	var texture_size: Vector2 = GameData.textures[local_map_data.unique_name].get_size()
+	var map_shader_material: ShaderMaterial = mesh_instance.material_override as ShaderMaterial
+	var map_texture: Texture2D = map_shader_material.get_shader_parameter("albedo_texture_color_indicies")
+	var texture_size: Vector2 = map_texture.get_size()
 	# var num_palettes: float = 16.0
 	for anim_id: int in num_texture_animations:
 		if [0x01, 0x02, 0x05, 0x15].has(local_map_data.texture_animations[anim_id].anim_technique):
@@ -40,7 +42,6 @@ func play_animations(local_map_data: MapData) -> void:
 			frame_positions[anim_id] = Vector2(local_map_data.texture_animations[anim_id].frame1_position.x / texture_size.x, 
 					(local_map_data.texture_animations[anim_id].frame1_position.y) / texture_size.y)
 	
-	var map_shader_material: ShaderMaterial = mesh_instance.material_override as ShaderMaterial
 	map_shader_material.set_shader_parameter("canvas_pos", canvas_positions)
 	map_shader_material.set_shader_parameter("canvas_size", canvas_sizes)
 	map_shader_material.set_shader_parameter("frame_pos", frame_positions)

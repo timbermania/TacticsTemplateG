@@ -1,6 +1,6 @@
 extends Control
 
-const SAVE_DIR: String = Scenario.SAVE_DIRECTORY_PATH
+const SAVE_DIR: String = "user://overrides/" + Scenario.SAVE_FOLDER
 
 @export var load_rom_button: LoadRomButton
 @export var rom_path_label: Label
@@ -18,7 +18,7 @@ func _ready() -> void:
 	auto_load_checkbox.toggled.connect(_on_auto_load_toggled)
 	clear_path_button.pressed.connect(_on_clear_path_pressed)
 	extract_button.pressed.connect(_on_extract_pressed)
-	close_button.pressed.connect(func() -> void: get_tree().quit())
+	close_button.pressed.connect(func() -> void: ApplicationShutdown.request_quit())
 
 	if RomReader.is_ready:
 		_on_rom_loaded()

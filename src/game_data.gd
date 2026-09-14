@@ -43,21 +43,26 @@ func _ready() -> void:
 
 
 func _get_saved_data_paths() -> Dictionary [String, String]:
+	var paths: Dictionary[String, String] = {"IMPORT_PATH": "", "ROM_PATH": "", "EXPORT_PATH": ""}
 	var file: FileAccess = FileAccess.open(DATA_PATH_CONFIG, FileAccess.READ)
 	if file == null:
 		var err: Error = FileAccess.get_open_error()
-		push_error(err)
-		return {
-			"IMPORT_PATH" : "",
-			"ROM_PATH" : "",
-			"EXPORT_PATH" : "",
-		}
+		if err != ERR_FILE_NOT_FOUND:
+			push_error("Cannot read data path configuration: " + error_string(err))
+		return paths
 
-	var file_text: String = file.get_as_text()
-	var untyped_dict : Dictionary = JSON.parse_string(file_text)
-	var typed_dict : Dictionary[String, String] = {}
-	typed_dict.assign(untyped_dict)
-	return typed_dict
+	var json: JSON = JSON.new()
+	if json.parse(file.get_as_text()) != OK or not json.data is Dictionary:
+		push_warning("Invalid data path configuration; using empty paths without overwriting the file")
+		return paths
+	for key: String in paths:
+		if not json.data.has(key):
+			continue
+		if json.data[key] is String:
+			paths[key] = json.data[key]
+		else:
+			push_warning("Ignoring non-string data path: " + key)
+	return paths
 
 
 func save_data_paths() -> void:

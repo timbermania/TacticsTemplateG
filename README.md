@@ -78,3 +78,14 @@ In the scenario editor, unit can be drag and dropped with the mouse.
 # Building From Source
 This project is built with Godot 4.6.1
 https://godotengine.org/
+
+## Audio addons and distribution
+
+ExMateria Sound + SPU are installed with deferred, explicit content initialization.
+ROM provisioning and effect-audio wiring are not connected yet. Ordinary Godot
+audio and GL Compatibility remain unchanged.
+
+See [audio installation, builds, tests, and release packaging](docs/audio-installation.md).
+The audio-enabled combined distribution follows GPL-3.0 terms; the original MIT
+grant in `LICENSE.txt` remains intact. Read `THIRD_PARTY_NOTICES.txt` and distribute
+matching corresponding source alongside binaries. Do not distribute ROM content.

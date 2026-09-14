@@ -117,7 +117,7 @@ func _load_map() -> void:
 		if map_mat:
 			map_mat.set_shader_parameter("debug_depth", true)
 
-	var map_data: FftMapData = map_node.map_data
+	var map_data: MapData = map_node.map_data
 
 	# Find tile positions
 	for tile: TerrainTile in map_data.terrain_tiles:
@@ -393,7 +393,7 @@ func _on_effect_instance_finished() -> void:
 	current_instance = null
 	if quit_after_loop:
 		print("[VfxTestScene] first loop done — quitting")
-		get_tree().quit()
+		ApplicationShutdown.request_quit()
 		return
 	_loop_delay = 0.0
 

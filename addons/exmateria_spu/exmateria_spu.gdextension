@@ -1,0 +1,12 @@
+[configuration]
+
+entry_symbol = "exmateria_spu_library_init"
+; Local distribution, 2026-09-13: Godot 4.6 project baseline, x86_64 only.
+compatibility_minimum = "4.6"
+
+[libraries]
+
+linux.debug.x86_64 = "res://addons/exmateria_spu/bin/libexmateria_spu.linux.template_debug.x86_64.so"
+linux.release.x86_64 = "res://addons/exmateria_spu/bin/libexmateria_spu.linux.template_release.x86_64.so"
+windows.debug.x86_64 = "res://addons/exmateria_spu/bin/libexmateria_spu.windows.template_debug.x86_64.dll"
+windows.release.x86_64 = "res://addons/exmateria_spu/bin/libexmateria_spu.windows.template_release.x86_64.dll"

@@ -9,13 +9,15 @@ static func load_mirrored_map(map_index: int, container: Node3D) -> MapChunkNode
 		push_warning("[VfxTestUtils] Map index %d out of range" % map_index)
 		return null
 
-	var map_data: FftMapData = RomReader.maps_array[map_index]
-	if not map_data.is_initialized:
-		map_data.init_map()
+	var fft_map_data: FftMapData = RomReader.maps_array[map_index]
+	if not fft_map_data.is_initialized:
+		fft_map_data.init_map()
+	var map_data: MapData = MapData.init_from_fft_map_data(fft_map_data)
+	map_data.mesh = fft_map_data.mesh
 
 	var new_map_instance: MapChunkNodes = MapChunkNodes.instantiate()
 	new_map_instance.map_data = map_data
-	new_map_instance.name = map_data.unique_name
+	new_map_instance.name = fft_map_data.unique_name
 
 	# Apply Y-mirror
 	var mirror_scale := Vector3(1, -1, 1)
@@ -44,7 +46,7 @@ static func load_mirrored_map(map_index: int, container: Node3D) -> MapChunkNode
 	modified_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, surface_arrays, [], {}, custom0_flags)
 	new_map_instance.mesh_instance.mesh = modified_mesh
 
-	new_map_instance.set_mesh_shader(map_data.albedo_texture_indexed, map_data.texture_palettes)
+	new_map_instance.set_mesh_shader(fft_map_data.albedo_texture_indexed, fft_map_data.texture_palettes)
 	new_map_instance.collision_shape.shape = new_map_instance.mesh_instance.mesh.create_trimesh_shape()
 	new_map_instance.play_animations(map_data)
 	container.add_child(new_map_instance)
