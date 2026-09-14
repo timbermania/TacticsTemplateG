@@ -518,6 +518,9 @@ func _exit_tree() -> void:
 		_audio_mutex.unlock()
 	_sched_thread.wait_to_finish()
 	_sched_thread = null
+	# Local lifecycle fix: unlink active casts and release their ownership cycles
+	# after the scheduler joins, before detaching the native streams.
+	_stop_all_locked()
 	_detach_units_locked(_all_units())
 	# Local modification, 2026-09-13: break pool -> flush -> pool ownership
 	# cycles only after the scheduler has stopped using them.
@@ -1270,6 +1273,8 @@ func _end_effect_locked(token: int) -> void:
 		if entity != null:
 			entity.is_done = true
 			u["list"].unlink(entity)
+			# Local lifecycle fix: Play -> Entity -> Play otherwise retains the cast.
+			entity.owning_play_sound = null
 		u["session_count"] = maxi(0, int(u["session_count"]) - 1)
 		u["last_active_sub"] = _abs_sub
 	_sessions.erase(token)
@@ -1809,6 +1814,8 @@ func _stop_all_locked() -> void:
 		if u != null and session["entity"] != null:
 			session["entity"].is_done = true
 			u["list"].unlink(session["entity"])
+			# Local lifecycle fix, also required for active casts at shutdown.
+			session["entity"].owning_play_sound = null
 	_sessions.clear()
 	_click_token = 0
 	for u in _units:

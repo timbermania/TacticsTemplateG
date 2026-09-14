@@ -13,9 +13,10 @@ Missing user content is normal: neither autoload starts playback or allocates
 SPUs/streams at boot. The SPU addon does not take over the audio device or change
 ordinary WAV importing. Existing `Utilities.play_audio_one_shot` is unchanged.
 
-**Not connected:** ROM provisioning, music selection, UI/game-event sound
-routing, or effects. No legacy VFX files were changed. The host owns buses and
-volume policy; absent `Music`, `SFX`, or `Ambient` buses fall back to Master.
+**Not connected to gameplay:** ROM audio provisioning, music selection,
+UI/game-event sound routing, or effects. The standalone audition scene below
+now supports an explicit private raw-disc selection. No legacy VFX files were
+changed. The host owns buses and volume policy; absent `Music`, `SFX`, or `Ambient` buses fall back to Master.
 No new bus layout, gain boost, or limiter is installed in this phase.
 
 ## Deferred initialization
@@ -33,8 +34,9 @@ if result != OK:
 
 This installation does **not** make that call for the game. No automatic search,
 project setting, hardcoded `res://assets/music/` path, or ROM extraction is used
-by these autoloads. The upstream demo's separate `AssetPaths` search remains
-available to developers; it does not configure autoload initialization.
+by these autoloads. The standalone host audition scene can extract audio bytes
+on explicit user selection, without calling the gameplay ROM loader. The upstream
+demo's separate `AssetPaths` search remains available to developers; it does not configure autoload initialization.
 
 The interface returns `OK` on success, `ERR_INVALID_DATA` for malformed/empty
 input or banks exceeding the native SPU's `MAX_BANK_BYTES` capacity, `ERR_CANT_CREATE` for native instrument upload failure,
@@ -49,9 +51,113 @@ existing SPUs. Restart the application to choose another bank. Do not call
 `_ready()` manually. The parser validates the descriptor area and sample spans
 before allocating or reading descriptors. No private bytes are saved to disk.
 
-Effect playback will additionally require privately provisioned FEDS/effect
-artifacts and a later effects adapter. Installing this module does not supply
-them or create a second effect-schedule walker.
+Effect playback requires privately provisioned FEDS/effect artifacts. The host
+now has the pair-audition scene below; timed effect/gameplay integration still
+needs a later adapter. No second effect-schedule walker is installed.
+
+## Real-content audition scene
+
+Open `src/audio_test/audio_test.tscn` in the original project using official
+Godot 4.6.1 and press **F6**. The main game scene is unchanged.
+
+1. Browse to a privately obtained raw disc image **outside the project**, then
+   click **Read audio catalog / initialize from disc**. Only raw **2352-byte
+   Mode2/Form1 sectors with a 24-byte header and 2048-byte payload** are supported.
+   Cooked 2048-byte ISOs, Mode1/Form2 data, truncated images, interleaved or
+   multi-extent files, and multi-volume layouts are rejected explicitly.
+2. The scene reads an audio-only catalog and initializes the existing engine
+   from `SOUND/WAVESET.WD`. Choose disc music and **Play selected disc music**,
+   or select SYSTEM / ENV / E### and **Load selected disc SYSTEM / ENV / effect**.
+   Music and effect bytes are lazy: corrupt choices are diagnosed and disabled
+   when selected; global SED tables are checked at catalog load. Missing banks
+   do not crash the scene. Without WAVESET, the catalog remains available but
+   playback stays gated until a valid instrument bank is supplied manually.
+3. Select a sound choice and **Play pair**. Global SYSTEM/ENV choices show the
+   **original sound ID N**, mapped to addon pair **N-1**, with original gain
+   lookup. Empty IDs remain disabled holes, and single-channel entries play
+   only channel 0 or 1. The host bank adapter returns empty bytes for absent
+   channels because the installed public `play_pair(..., single_track)` decodes
+   both tracks before muting one. No bank bytes or native code are rewritten.
+   A nonempty global ID 0 is diagnosed as unsupported rather than remapped.
+4. Manual file controls remain: initialize with `WAVESET.WD`, load/play an SMD,
+   or load `SYSTEM.SED`, `ENV.SED`, raw FEDS, or E###.BIN. Global semantics are
+   selected by the exact SYSTEM.SED/ENV.SED basename (case-insensitive). Raw
+   effect pairs use zero-based indexes; sound ID `-1` uses the engine default.
+   An explicit resolved effect sound ID controls gain lookup, not a timeline.
+5. Music and SFX can play together. **Stop SFX** releases the audition token;
+   **Stop all** stops music and releases SFX. Release/reverb tails may remain.
+6. Initialization is once per **application run**. Disc or WAVESET replacement
+   after success is rejected; stop and rerun F6 to select another instrument
+   bank. Use **Quit safely** or close the application window; editor force-stop
+   and process termination bypass graceful shutdown.
+
+Nothing is copied, cached persistently, or saved, including selected paths.
+No unattended disc-path search, full effect timelines/JSON, gameplay loading,
+or gameplay event routing is installed. Keep private files physically outside
+this repository (do not use symlinks to bypass the path check).
+
+The host reader validates ISO9660 CD001 primary volume descriptors and reads
+only directory metadata, SOUND files, the known BATTLE effect header-pointer
+table, and selected effect header/sound spans. It never reads a whole disc or
+constructs gameplay/VFX objects. Limits: 1 GiB image, 32 MiB individual file,
+256 KiB individual directory, 4 MiB total directory data, 8192 directory
+records, eight directory levels. File reads return exactly declared bytes
+across sector boundaries. Referenced sectors are checked for raw sync,
+Mode2/Form1, and duplicated subheaders; this is not ECC/EDC verification.
+
+Effect extraction uses the existing `BattleBinData` executable layout:
+**0x14d8d0, 511 contiguous u32 pointers, minus 0x801c2500**. Its old comment
+says eight bytes per entry, but executable code uses four. `E000.BIN` maps to
+index 0, `E001.BIN` to 1, independently of directory order. The table is read
+once; only a selected effect's ten-word header and bounded sound section are
+read subsequently. There is no heuristic CODE-header scan in the disc path.
+Other game revisions/layouts are **not assumed supported**: invalid table
+pointers or missing FEDS sections disable choices with diagnostics. This
+structural check is not revision fingerprinting or real-disc compatibility QA.
+The existing manual E### input retains its bounded header heuristic.
+
+Discovery, global SED semantics and sound-section extraction selectively adapt
+[timbermania's PR #3](https://github.com/mrgudenheim/TacticsTemplateG/pull/3),
+commit `0ebc36fcbaac56dd30e02bf1b2707c71140bc2d0`. Its MIT provenance is retained
+in `THIRD_PARTY_NOTICES.txt` and root `LICENSE.txt`. Its old addon, native
+binaries, gameplay ROM pipeline and disk cache were **not** imported.
+
+Container/table validation is not a sandbox for hostile sound bytecode, and
+pair playback is not proof of FFT timing or sound parity.
+
+`src/audio_test/audition_music.gd` adapts the captured music player's lifecycle:
+it breaks the unused sequencer's pool back-reference before shared-engine
+attachment, unlinks its music entity and breaks back-references on exit, and
+avoids calling a player already freed by `ApplicationShutdown`. It depends on
+captured addon internals and must be reviewed when updating that addon.
+A narrow local GDScript fix in `effect_sfx_engine.gd` clears entity-to-cast
+ownership after unlinking stopped casts and stops remaining casts after joining
+the scheduler on exit. These fixes were exposed by actual SMD/FEDS API calls
+with synthetic files; no native sources, binaries, or receipts changed.
+
+```sh
+python tools/audio/run_audition_checks.py --godot /path/to/Godot_v4.6.1-stable_linux.x86_64
+```
+
+This stages allowlisted source and synthetic inputs under temporary directories
+with isolated user data. Checks cover malformed/missing inputs, raw/DATA/CODE
+FEDS containers, initialization gating, music/SFX start-stop-reload, unused
+music-player lifetime, and active/stopped/window-close shutdown. Additional
+synthetic raw-disc runs cover cross-sector exact reads, descriptors and sector
+layouts, XA system-use fields and multi-block directory padding, malformed
+directory extents/cycles/budgets, missing banks, original SED IDs/gains/holes/
+single channels, lazy BATTLE-based effects, automatic selector population,
+repeated bank loads and global/effect/global switching, music/SFX play-stop,
+and once-only disc initialization.
+All disc images are generated from synthetic bytes inside temporary staging;
+no real user path or private content is accessed by these tests. Verbose logs
+under `.build/audition-check-logs/` must contain PASS and drained markers and no
+script errors or leaked resources. Music/effect fixtures use rests for control
+flow and lifecycle; global-bank fixtures additionally contain generated notes
+and a generated ADPCM instrument, checked for nonzero real-mixer output with
+music stopped. This is **not real-content listening or channel/gain parity**.
+`run_smoke.py` separately checks synthetic WAV/SPU mixer coexistence.
+Real-content listening and newer-engine compatibility still require manual QA.
 
 ## Native source and builds
 

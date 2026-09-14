@@ -20,11 +20,23 @@ Snapshot: 4ca5c30abdb8423931155d44dd38f9b4fa76cb0e, exmateria-sound/
 Published project: https://github.com/timbermania/ExMateria-Sound
 Upstream license: GPL-3.0 (LICENSES/GPL-3.0.txt).
 Local modifications dated 2026-09-13: deferred content initialization, WAVESET
-input validation, live SFX teardown cycle fix, plugin documentation, platform
+input validation, live SFX teardown and stopped/active cast ownership fixes,
+plugin documentation, platform
 support descriptor, and distribution/build integration. Original native code
 is preserved; only the build profile reduces unused godot-cpp bindings.
 Detailed origins and binary/source hashes: tools/audio/upstream.json and
  tools/audio/builds/*.json in the accompanying source.
+
+Host disc-audio catalog selective port
+-------------------------------------
+Source: https://github.com/mrgudenheim/TacticsTemplateG/pull/3, timbermania,
+commit 0ebc36fcbaac56dd30e02bf1b2707c71140bc2d0 (origin/add-sound-clean).
+Original project MIT grant: Copyright (c) 2025 mrgudenheim; full license in
+LICENSE.txt. The host audio_test catalog adapts audio discovery, global SED
+sound-ID semantics and per-effect FEDS section extraction. New bounded
+read-only validation replaces the PR's whole-ROM/cache pipeline. No old addon
+or native binary was imported. The installed addon retains its GPL provenance
+above; the host absent-channel bank adapter subclasses its FEDS parser.
 
 PCSX-derived SPU algorithms and tables (not the MIT encoder)
 -----------------------------------------------------------

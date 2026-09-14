@@ -1207,3 +1207,14 @@ tools/audio/host_regression.gd
 tools/audio/run_host_checks.py
 src/utilities/application_shutdown.gd
 tools/audio/run_shutdown_checks.py
+src/audio_test/audio_test.tscn
+src/audio_test/audio_test.gd
+src/audio_test/audition_inputs.gd
+src/audio_test/audition_music.gd
+tools/audio/audition_regression.gd
+tools/audio/run_audition_checks.py
+src/audio_test/raw_disc_reader.gd
+src/audio_test/disc_audio_catalog.gd
+src/audio_test/audition_feds_bank.gd
+tools/audio/synthetic_disc.gd
+tools/audio/disc_audio_regression.gd
