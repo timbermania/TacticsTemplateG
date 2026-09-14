@@ -11,12 +11,16 @@ import json
 from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import zipfile
 
 import godot_cpp
 from build_native import RECIPE_INPUTS
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "effects"))
+from verify_installation import verify as verify_effects
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "tools/audio/distribution-files.txt"
@@ -127,6 +131,7 @@ def stage(root, destination, manifest, *, include_dependency=False, offline=Fals
         dependency = godot_cpp.provision(root, offline=offline)
         shutil.copytree(dependency, destination / godot_cpp.RELATIVE)
     verify_native(destination, require_dependency=include_dependency)
+    verify_effects(destination)
 
 
 def zip_tree(destination, root, paths):

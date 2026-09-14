@@ -1,7 +1,7 @@
-TacticsTemplateG audio-enabled distribution
-==========================================
+TacticsTemplateG audio/Effects-enabled distribution
+=================================================
 
-The combined game/audio distribution is distributed under GNU GPL version 3.
+The combined game/audio/Effects distribution is distributed under GNU GPL version 3.
 See LICENSES/GPL-3.0.txt. This does not revoke or replace the original MIT
 license grants: LICENSE.txt remains the original TacticsTemplateG MIT license.
 Third-party works retain their own notices and applicable licenses below.
@@ -26,6 +26,25 @@ support descriptor, and distribution/build integration. Original native code
 is preserved; only the build profile reduces unused godot-cpp bindings.
 Detailed origins and binary/source hashes: tools/audio/upstream.json and
  tools/audio/builds/*.json in the accompanying source.
+
+ExMateria Effects selected native-GL profile and shared dependencies
+------------------------------------------------------------------
+Source: https://github.com/timbermania/fft-monorepo
+Snapshot: 7933d1d42a89f1e81a99cb15ed61ce363314d12a, godot-learning/
+225 unchanged committed files selected from addons/exmateria_effects/,
+addons/exmateria_platform/, addons/exmateria_render/ and addons/exmateria_schema/.
+Upstream root LICENSE is GPL-3.0, reproduced exactly in LICENSES/GPL-3.0.txt
+(SHA-256 3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986).
+Exact source/destination/revision/byte hashes and selection roles are recorded
+in tools/effects/manifest.json; profile limits and origin in upstream.json there.
+Local host configuration, verification and synthetic tests accompany the source;
+no upstream addon bytes or existing audio binaries/receipts were replaced.
+This is not the full fork/plugin distribution or a native/fold parity claim.
+Optional fold resources remain unmodified and unsupported on stock Godot.
+See docs/effects-installation.md for pending host work and source-delivery scope.
+No upstream game/editor media, almanac/battlefield package or private effect
+payload is included. The existing combined GPL source-delivery policy applies;
+the audio-only installer ZIP is not an Effects installer.
 
 Host disc-audio catalog selective port
 -------------------------------------

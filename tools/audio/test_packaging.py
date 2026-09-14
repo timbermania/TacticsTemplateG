@@ -110,6 +110,23 @@ class DistributionTests(unittest.TestCase):
     def test_native_receipts_match_checkout(self):
         release.verify_native(release.ROOT)
 
+    def test_effects_selection_is_required_and_verified_by_staging(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            release.stage(release.ROOT, root / "source", release.MANIFEST)
+            source = root / "source"
+            effect = source / "addons/exmateria_effects/exmateria_effects.gd"
+            original = effect.read_bytes()
+            effect.write_bytes(original + b"changed")
+            with self.assertRaisesRegex(ValueError, "Effects source hash mismatch"):
+                release.stage(source, root / "mutated", source / "tools/audio/distribution-files.txt")
+            effect.write_bytes(original)
+            manifest = root / "incomplete.txt"
+            manifest.write_text(release.MANIFEST.read_text().replace(
+                "addons/exmateria_effects/exmateria_effects.gd\n", ""))
+            with self.assertRaisesRegex(ValueError, "Missing Effects input"):
+                release.stage(source, root / "incomplete", manifest)
+
     def test_source_and_binary_mutation_block_distribution(self):
         with tempfile.TemporaryDirectory() as tmp:
             staged = Path(tmp)
@@ -181,19 +198,30 @@ class DistributionTests(unittest.TestCase):
                 self.assertIn("THIRD_PARTY_NOTICES.txt", names)
                 self.assertIn(release.digest(source_archive), archive.read("SOURCE.txt").decode())
                 self.assertFalse(any("fft_smd.gdextension" in p or "/bin/libfftsmd" in p for p in names))
+                # Existing audio-only installer scope is deliberately unchanged.
+                self.assertFalse(any(p.startswith("addons/exmateria_effects/") for p in names))
             with tarfile.open(source_archive) as archive:
                 names = {p.removeprefix("TacticsTemplateG-source/") for p in archive.getnames()}
                 for name in ("src/utilities/utilities.gd", "project.godot", "FILES.sha256",
                              "tools/audio/build_native.py", "tools/audio/distribution-files.txt",
                              "third_party/exmateria-sound/src/shared/detail/fft_gauss_table.inc",
                              "third_party/exmateria-sound/extern/godot-cpp/gdextension/extension_api.json",
-                             "docs/audio-installation.md"):
+                             "docs/audio-installation.md", "docs/effects-installation.md",
+                             "tools/effects/manifest.json", "tools/effects/upstream.json",
+                             "tools/effects/verify_installation.py", "tools/effects/run_checks.py",
+                             "tools/effects/native_regression.gd"):
                     self.assertIn(name, names)
                 self.assertIn("tools/audio/godot_cpp.lock.json", names)
                 self.assertIn("tools/audio/builds/original-build_native.py.txt", names)
                 extracted = Path(tmp) / "extracted"
                 archive.extractall(extracted, filter="data")
                 complete = extracted / "TacticsTemplateG-source"
+                lock = release.verify_effects(complete)
+                effects = json.loads((complete / lock["manifest"]).read_text())
+                self.assertEqual(len(effects), 225)
+                self.assertTrue({row["destination"] for row in effects} <= names)
+                self.assertIn("7933d1d42a89f1e81a99cb15ed61ce363314d12a",
+                              (complete / "THIRD_PARTY_NOTICES.txt").read_text())
                 with patch("godot_cpp.open_https", side_effect=AssertionError("network")):
                     release.verify_native(complete, require_dependency=True)
                     hashes, work, _ = build_native.prepare_build(complete, "linux", "template_debug", offline=True)

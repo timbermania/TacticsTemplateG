@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/timbermania/fft-monorepo",
+  "revision": "7933d1d42a89f1e81a99cb15ed61ce363314d12a",
+  "source_prefix": "godot-learning/",
+  "target_baseline": "3a9cdffc128fbe9caa13ba8fa3b9cb721bc647b6",
+  "manifest": "tools/effects/manifest.json",
+  "manifest_sha256": "5706f4c690326516824a994268a9bd79d28b4bed5a4d35d5ec55b096008c8214",
+  "file_count": 225,
+  "total_bytes": 965928,
+  "selection_evidence_sha256": "01dcfc567acdd17a92d51cb9cd2efd84de060c42bada4aec12c0a1fdfcfd447f",
+  "license": {
+    "source": "LICENSE",
+    "installed": "LICENSES/GPL-3.0.txt",
+    "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+  },
+  "profile": {
+    "name": "selected-native-gl",
+    "engine_version": "4.7.2.stable.official.ed1daf0bf",
+    "engine_linux_x86_64_sha256": "8d106cbe6144c2dc7e881d61d2429c1a8a76e6b22ef48bd5e48dcf934953f71e",
+    "engine_archive_url": "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip",
+    "engine_archive_sha512": "9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65",
+    "renderer": "gl_compatibility",
+    "autoloads": {
+      "EffectMultiMeshPool": "addons/exmateria_effects/render/EffectMultiMeshPool.gd",
+      "ScreenEffectOverlay": "addons/exmateria_effects/overlay/ScreenEffectOverlay.gd",
+      "TintedSurfaces": "addons/exmateria_effects/overlay/TintedSurfaces.gd"
+    },
+    "shader_globals": {
+      "pixel_aspect": 1.0,
+      "psx_fx_stretch": 1.0,
+      "psx_cursor_stretch": 1.0
+    },
+    "new_plugins_enabled": false,
+    "production_producer_setup": false,
+    "supported_boundary": "Selected-source cold import, idle host startup and synthetic checked setup_native pool/callback rendering; not full addon or gameplay parity.",
+    "unsupported": [
+      "Fold CompositorRenderLayer resource and compositor_layer shaders on stock Godot",
+      "Full plugin/editor workflow, Windows/export validation and native/fold visual parity"
+    ],
+    "host_pending": [
+      "Explicit private content root/layout and content provisioning (no content importer installed)",
+      "Ability/action routing and real timeline/callback/TRAP playback",
+      "Owning playback scene with checked setup_native(in_tree_camera)",
+      "Camera/terrain-column/SelectionArea occlusion adapters",
+      "Map/unit receiving tint and depth shaders (explicit approval pending)",
+      "Gameplay audio/timing integration and active-audio lifecycle QA"
+    ]
+  },
+  "audio_policy": "Existing sound/SPU scripts, four native binaries, receipts, dependency lock and cache behavior are unchanged. See tools/audio/upstream.json and docs/audio-installation.md; no audio refresh or native build.",
+  "distribution_policy": "Combined GPL-3.0 source delivery via tools/audio/package_release.py; original MIT and third-party notices retained. Audio-only installer ZIP stays audio-only. No release approval."
+}
