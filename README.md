@@ -76,5 +76,16 @@ In the scenario editor, unit can be drag and dropped with the mouse.
 ...
 
 # Building From Source
-This project is built with Godot 4.6.1
+This project is built with Godot 4.7 (audio validation: official 4.7.2)
 https://godotengine.org/
+
+## Deferred audio addons
+
+The ExMateria audio addons and native binaries are supplied with provenance,
+licenses, reproducible input records and guarded source packaging. Host autoload
+wiring and private-content provisioning are separate steps.
+
+The audio extension binaries for Windows/Linux x86_64 are committed: cloning and
+running does not download build dependencies. Native rebuilding or preparing a
+complete source bundle provisions checksum-pinned `godot-cpp`; source bundles
+include it for offline rebuilding. See [audio build instructions](docs/audio-installation.md#native-source-and-builds).
