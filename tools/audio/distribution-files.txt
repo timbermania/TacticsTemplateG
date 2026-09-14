@@ -756,6 +756,7 @@ src/ttg_icon.ico
 src/ttg_icon.png
 src/ttg_icon.png.import
 src/ui_theme.tres
+src/utilities/application_shutdown.gd
 src/utilities/gltf_manager.gd
 src/utilities/gltf_manager.gd.uid
 src/utilities/modifier.gd
@@ -830,7 +831,10 @@ tools/audio/builds/linux-template_release.json
 tools/audio/builds/windows-template_debug.json
 tools/audio/builds/windows-template_release.json
 tools/audio/engine_notices.gd
+tools/audio/host_regression.gd
 tools/audio/package_release.py
+tools/audio/run_host_checks.py
+tools/audio/run_shutdown_checks.py
 tools/audio/run_smoke.py
 tools/audio/smoke.gd
 tools/audio/smoke.gd.uid

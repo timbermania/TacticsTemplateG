@@ -19,10 +19,14 @@ config/icon="uid://b05fn7pqo1rrn"
 
 [autoload]
 
+ApplicationShutdown="*res://src/utilities/application_shutdown.gd"
+
+ExMateriaAudioEngine="*res://addons/exmateria_sound/runtime/audio_engine.gd"
+ExMateriaEffectSfx="*res://addons/exmateria_sound/runtime/effect_sfx_engine.gd"
 RomReader="*res://src/external_data_manager/rom_reader.gd"
 Raycaster="*res://src/utilities/raycaster.gd"
 Utilities="*res://src/utilities/utilities.gd"
-GameData="*uid://dswmqkavcf0yp"
+GameData="*res://src/game_data.gd"
 
 [debug]
 
@@ -39,7 +43,7 @@ window/size/viewport_height=864
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/Todo_Manager/plugin.cfg", "res://addons/script-ide/plugin.cfg")
+enabled=PackedStringArray("res://addons/Todo_Manager/plugin.cfg", "res://addons/script-ide/plugin.cfg", "res://addons/exmateria_spu/plugin.cfg", "res://addons/exmateria_sound/plugin.cfg")
 
 [gui]
 

@@ -1,16 +1,69 @@
-# Audio engine source and distribution
+# Audio installation
 
-This commit installs the self-contained ExMateria sound/SPU addons and matching
-native source from upstream `4ca5c30abdb8423931155d44dd38f9b4fa76cb0e`, with local
-deferred-initialization and lifetime hardening. Host autoload wiring is separate.
-No ROM content or private cache is included. The optional native SMD accelerator
-is absent. Linux and Windows x86_64 debug/release SPU binaries have matching
-source/build receipts under `tools/audio/builds/`; no native inputs were changed
-for the upstream Godot 4.7 port.
+## Upstream integration validation
 
-Native diagnostics are serialized with the audio mixer. The shipped binaries
-and their historical matching-source receipts are unchanged. Host integration
-and audition regression coverage are introduced by the following commits.
+Ported onto upstream `815d4b8` with its Godot 4.7 settings, lazy resource
+loading, VFX MapData adapters and export options preserved. Official Godot
+4.7.2 (archive verified against the official SHA-512 sums) passes Linux
+content-free real-mixer smoke and isolated host regression/startup checks.
+Native source, four binaries and their receipts are unchanged. Historical
+4.6.1/Wine release results below do not establish current exported-game,
+Windows, or real-content compatibility. No release is approved.
+
+## Installed scope
+
+`addons/exmateria_sound/` and `addons/exmateria_spu/` are real, self-contained
+files captured from upstream commit `4ca5c30abdb8423931155d44dd38f9b4fa76cb0e`.
+There is no dependency on a developer's monorepo checkout. The native SPU is
+rebuilt from the recorded source inputs; the optional native SMD accelerator is absent.
+The committed binaries require no dependency download to open/run Godot; only
+explicit native builds and complete-source packaging provision godot-cpp.
+
+The project retains upstream **Godot 4.7 / GL Compatibility**. Both plugins are enabled,
+and `ExMateriaAudioEngine` precedes `ExMateriaEffectSfx` in the autoload list.
+Missing user content is normal: neither autoload starts playback or allocates
+SPUs/streams at boot. The SPU addon does not take over the audio device or change
+ordinary WAV importing. Existing `Utilities.play_audio_one_shot` is unchanged.
+
+**Not connected:** ROM provisioning, music selection, UI/game-event sound
+routing, or effects. No legacy VFX files were changed. The host owns buses and
+volume policy; absent `Music`, `SFX`, or `Ambient` buses fall back to Master.
+No new bus layout, gain boost, or limiter is installed in this phase.
+
+## Deferred initialization
+
+On the main thread, after autoloads enter the scene tree, supply privately
+obtained WAVESET.WD bytes explicitly:
+
+```gdscript
+var bytes := FileAccess.get_file_as_bytes(private_waveset_path)
+var result := ExMateriaAudioEngine.initialize_from_bytes(bytes)
+if result != OK:
+    # Report the content/setup failure in the host's UI.
+    print("Audio initialization failed: ", error_string(result))
+```
+
+This installation does **not** make that call for the game. No automatic search,
+project setting, hardcoded `res://assets/music/` path, or ROM extraction is used
+by these autoloads. The upstream demo's separate `AssetPaths` search remains
+available to developers; it does not configure autoload initialization.
+
+The interface returns `OK` on success, `ERR_INVALID_DATA` for malformed/empty
+input or banks exceeding the native SPU's `MAX_BANK_BYTES` capacity, `ERR_CANT_CREATE` for native instrument upload failure,
+`ERR_UNCONFIGURED` outside the tree, or `ERR_UNAUTHORIZED` off the main thread.
+Failures leave the engine idle and may be retried. Success sets `ready_ok` and
+emits `initialized` once; the SFX autoload initializes in response. Consumers
+should check both autoloads' `ready_ok` before playback.
+
+Once ready, a further call returns `ERR_ALREADY_IN_USE`, even for identical
+bytes. Live bank replacement is deliberately unsupported: audio threads own the
+existing SPUs. Restart the application to choose another bank. Do not call
+`_ready()` manually. The parser validates the descriptor area and sample spans
+before allocating or reading descriptors. No private bytes are saved to disk.
+
+Effect playback will additionally require privately provisioned FEDS/effect
+artifacts and a later effects adapter. Installing this module does not supply
+them or create a second effect-schedule walker.
 
 ## Native source and builds
 
@@ -117,16 +170,158 @@ apply to this build.
 
 ## Validation
 
-Use official Godot 4.7.2 for the content-free addon smoke test:
+Use the official Godot 4.7.2 binary, **without `--headless`**. The tests open a
+small real window and exercise the real audio mixer; a dummy audio driver is
+not evidence for the mixer assertions.
 
 ```sh
 python tools/audio/run_smoke.py --godot /path/to/Godot_v4.7.2-stable_linux.x86_64
-python -m unittest discover -s tools/audio -p test_dependency.py
-python -m unittest discover -s tools/audio -p test_packaging.py
+python tools/audio/test_exports.py \
+  --godot /path/to/Godot_v4.7.2-stable_linux.x86_64 \
+  --templates /path/to/extracted/templates --wine /usr/bin/wine
+python -m unittest discover -s tools/audio -p 'test_packaging.py'
 ```
 
-No real-disc, Windows runtime, matching-template game export, or release
-approval is implied by the source or synthetic checks.
+The first command copies only the two addons and the test into an isolated
+project. It loads their scripts, rejects absent/malformed content, retries with
+synthetic WAVESET data, checks one-time initialization and SFX readiness, renders
+nonzero native PCM, and measures WAV/SPU output through AudioEffectCapture on
+the same Godot bus. All samples are synthesized, not ROM-derived.
+
+The second exports that **test scene**, not the game, using official matching
+Linux/Windows debug/release templates. Wine uses `.build/audio-wine`, never the
+user's default prefix. Passing Windows under Wine is not Windows-hardware QA.
+The test explicitly rejects the Dummy audio driver. It frees its players/SFX
+fixture and allows 200 ms for Godot's audio-thread fade-out cleanup before exit;
+the runner rejects leaked-instance warnings as well as errors and missing PASS.
+Logs are retained in `.build/audio-test-logs/` and `.build/audio-export-logs/`.
+`--host` on the first command additionally checks the full host project and is
+strict: existing host import errors make it fail rather than disappear.
+
+### Historical 4.6.1 release-readiness follow-up
+
+Cold full-game import and Windows export now pass after repairing the GameData
+UID registration, obsolete scenario save-path constant, legacy map-data adapter,
+and Vector3iEdit's pre-ready exported property access.
+
+The isolated no-content main scene now exits without errors or ObjectDB leaks.
+GameData treats a missing configuration as first-run state, validates partial or
+malformed JSON without overwriting it, and retains diagnostics for unreadable
+files. FftAnimation no longer owns a strong reference to itself; a lifetime
+regression covers this host leak independently of the audio addon.
+
+Run the clean public-source host checks without touching normal user data:
+
+```sh
+python tools/audio/run_host_checks.py --godot /path/to/Godot_v4.7.2-stable_linux.x86_64
+```
+
+Logs are under `.build/host-check-logs/`. The runner rejects script errors,
+missing regression PASS markers, and ObjectDB leak warnings. Existing empty-BMP
+and unconfigured ActionButton construction warnings remain; these are not leak
+or error diagnostics. The six packaging checks and standalone Linux/Windows
+(Wine) debug/release audio smoke tests were rerun successfully.
+
+**Underlying abrupt-exit risk:** a minimal synthetic native-stream `stop()` followed
+immediately by `quit()` still crashed in three of five verbose trials (one
+additional trial leaked without crashing). Logs: `.build/audio-exit-probes/`.
+Host first-run fixes alone do not resolve this separate active-audio/engine
+cleanup risk. The approved normal-quit boundary below addresses orderly host
+exit; native binaries and engine remain unchanged. The actual Windows
+release executable from `dist/game-readiness-03/` was launched with a fresh
+`.build/host-wine` prefix and `--quit-after 120 --verbose`: exit code 0, no script
+errors or leaked resources; the two construction warnings above remain.
+Log: `.build/host-check-logs/windows-startup.log`. This is a bounded no-content
+startup check, not gameplay validation or Windows hardware QA. Repackage after
+remaining fixes; this candidate is not approved for publication.
+
+### Normal application shutdown
+
+The host now owns `ApplicationShutdown` (`src/utilities/application_shutdown.gd`).
+Window close and existing host quit buttons/runners call `request_quit()`.
+Repeated requests are ignored. It pauses scene processing, records weak
+references to current in-tree player playbacks, removes the SFX producer (whose
+exit hook joins its scheduler and detaches native mixers), stops/frees remaining
+players, and waits until the recorded playback objects are actually released.
+There is no fixed success delay. After five seconds of retained playback it
+emits `shutdown_failed`, logs an error, and leaves the application paused rather
+than forcing unsafe teardown. Callers must not retain playback objects across
+shutdown. No automatic recovery or resume-after-shutdown is supported.
+
+This covers ordinary AudioStreamPlayer/2D/3D nodes owned by the scene tree.
+Future detached players, custom audio producers, capture instances or retained
+playback handles require explicit integration. Forced process termination and
+direct `SceneTree.quit()` (including CLI `--quit-after`) bypass this boundary;
+the underlying engine/native abrupt-exit behavior is not claimed fixed.
+
+```sh
+python tools/audio/run_shutdown_checks.py --godot /path/to/Godot_v4.7.2-stable_linux.x86_64
+python tools/audio/test_exports.py --shutdown \
+  --godot /path/to/Godot_v4.7.2-stable_linux.x86_64 \
+  --templates /path/to/templates --wine /usr/bin/wine
+```
+
+Fifteen verbose real-mixer runs passed across active playback, already-stopped
+playback and close notification. A retained-playback negative test confirms
+that timeout refuses exit; the fixture then releases its handle before exiting.
+Linux and Windows-under-Wine debug/release exported shutdown fixtures also pass.
+Logs: `.build/shutdown-check-logs/` and `.build/shutdown-export-logs/`.
+Windows hardware and content-loaded gameplay still require manual QA.
+
+**Candidate 04 remains QA-blocked:** final Windows-under-Wine game checks found
+40 `GL_INVALID_VALUE` shader/program-handle errors on warm-cache startup.
+Moving only the isolated test prefix's shader cache yields a clean cold run;
+the immediate next run reproduces all 40 errors. Candidate 03 also reproduces
+them, independently of the shutdown change. Logs:
+`.build/host-check-logs/cache-cold.log`, `cache-warm.log`, and
+`game-readiness-03-repeat.log`. No production cache policy was changed and no
+user cache was removed. `dist/game-candidate-04/QA-PENDING.txt` records the block;
+its archives passed SHA256SUMS verification but are not approved for publication.
+
+### Historical installation results (2026-09-13)
+
+The following records the installation before the release-readiness fixes above.
+
+- Standalone 4.6.1 editor import and content-free audio/mixer smoke: **pass**;
+  five consecutive verbose runs passed after explicit fixture drain.
+- Six packaging/runner regression checks: **pass**. Source archive extracted,
+  per-file checksums verified, and Linux debug rebuilt from that standalone
+  source tree with the same binary SHA256.
+- Linux x86_64 exported debug and release smoke: **pass**.
+- Windows x86_64 exported debug and release smoke under Wine: **pass**.
+- No unresolved ExMateria/FFTSpu/fftshared symbols in Linux libraries. Windows
+  imports are UCRT and KERNEL32, with no additional non-system DLL required.
+- Host smoke scene reaches `AUDIO_SMOKE: PASS` and calls the unchanged Utilities
+  helper. Full-host startup is **not clean**: baseline data-path/empty-BMP errors
+  and shutdown resource leaks remain.
+- Full project import fails in both this tree and an untouched `816ad4d` copy:
+  initial GameData UID resolution, missing `Scenario.SAVE_DIRECTORY_PATH`, and
+  legacy `MapData`/`FftMapData` test-script mismatches. These are not audio changes.
+- **Full-game release remains blocked** by these baseline errors; no clean
+  full-game export or Windows hardware run is claimed. Private FFT music/effect
+  playback and sound parity were not tested. No ROM content was copied.
+
+A native pool/flush reference cycle found by the standalone shutdown check was
+fixed locally after stopping the SFX scheduler; the standalone test now exits
+without leaked-resource diagnostics **after draining its fixture as described
+above**. That is separate from the host's existing leaks. Upstream parity
+algorithms and native sources were not changed.
+
+**Abrupt exit remains a known runtime risk:** repeatedly calling `stop()` and
+immediately `SceneTree.quit()` on Godot 4.6.1 leaked pending playback objects;
+with native playbacks, verbose ObjectDB cleanup sometimes crashed. A separate
+plain-WAV-only project (no addons) reproduced the leaked WAV/playback references
+in 3 of 4 runs. Freeing the test fixture and allowing fade-out cleanup avoided
+the race in repeated checks. This installation does not change the host's quit
+policy or claim to fix the engine's exit ordering. Resolve graceful application
+shutdown before enabling live audio in the full game/releasing it. The default
+no-content autoloads are idle. Diagnostic logs from this session:
+`/tmp/tactics-smoke-leaks-*.log`, `/tmp/tactics-wav-only-exit-*.log`, and
+`/tmp/tactics-grace-exit-*.log`.
+
+Offline capture instances and live voice-mode switching are inherited surfaces,
+not validated by this installation; their discarded pool/flush ownership cycles
+still need a separate lifecycle pass before capture/editor integration.
 
 ## Licenses and distribution
 

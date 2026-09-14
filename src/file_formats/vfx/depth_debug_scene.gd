@@ -116,7 +116,7 @@ func _process(_delta: float) -> void:
 	_angle_index += 1
 	if _angle_index >= _angles.size():
 		print("[DEPTH_TEST] === Test Complete ===")
-		get_tree().quit()
+		ApplicationShutdown.request_quit()
 		return
 
 	_set_camera_angle(_angles[_angle_index])

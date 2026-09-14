@@ -79,11 +79,16 @@ In the scenario editor, unit can be drag and dropped with the mouse.
 This project is built with Godot 4.7 (audio validation: official 4.7.2)
 https://godotengine.org/
 
-## Deferred audio addons
+## Audio addons and distribution
 
-The ExMateria audio addons and native binaries are supplied with provenance,
-licenses, reproducible input records and guarded source packaging. Host autoload
-wiring and private-content provisioning are separate steps.
+ExMateria Sound + SPU are installed with deferred, explicit content initialization.
+ROM provisioning and effect-audio wiring are not connected yet. Ordinary Godot
+audio and GL Compatibility remain unchanged.
+
+See [audio installation, builds, tests, and release packaging](docs/audio-installation.md).
+The audio-enabled combined distribution follows GPL-3.0 terms; the original MIT
+grant in `LICENSE.txt` remains intact. Read `THIRD_PARTY_NOTICES.txt` and distribute
+matching corresponding source alongside binaries. Do not distribute ROM content.
 
 The audio extension binaries for Windows/Linux x86_64 are committed: cloning and
 running does not download build dependencies. Native rebuilding or preparing a

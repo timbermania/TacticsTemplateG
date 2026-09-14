@@ -396,7 +396,7 @@ func _on_effect_instance_finished() -> void:
 	current_instance = null
 	if quit_after_loop:
 		print("[VfxTestScene] first loop done — quitting")
-		get_tree().quit()
+		ApplicationShutdown.request_quit()
 		return
 	_loop_delay = 0.0
 

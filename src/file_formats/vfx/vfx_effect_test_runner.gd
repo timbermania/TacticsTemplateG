@@ -42,13 +42,13 @@ func _start() -> void:
 	# Load and play effect
 	if effect_index < 0 or effect_index >= RomReader.vfx.size():
 		print("[VFX_TEST] Effect index %d out of range" % effect_index)
-		get_tree().quit()
+		ApplicationShutdown.request_quit()
 		return
 
 	var vfx_data: VisualEffectData = RomReader.vfx[effect_index]
 	if vfx_data == null:
 		print("[VFX_TEST] Effect %d is null" % effect_index)
-		get_tree().quit()
+		ApplicationShutdown.request_quit()
 		return
 
 	# Ensure effect data is loaded
@@ -99,9 +99,9 @@ func _process(_delta: float) -> void:
 	if current_instance and is_instance_valid(current_instance) and current_instance.manager:
 		if current_instance.manager.is_done():
 			print("[VFX_TEST] Effect completed after %d frames" % _timeout_frames)
-			get_tree().quit()
+			ApplicationShutdown.request_quit()
 			return
 
 	if _timeout_frames >= MAX_FRAMES:
 		print("[VFX_TEST] Timeout after %d frames — force quitting" % MAX_FRAMES)
-		get_tree().quit()
+		ApplicationShutdown.request_quit()
