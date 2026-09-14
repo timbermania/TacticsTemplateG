@@ -27,6 +27,17 @@ is preserved; only the build profile reduces unused godot-cpp bindings.
 Detailed origins and binary/source hashes: tools/audio/upstream.json and
  tools/audio/builds/*.json in the accompanying source.
 
+Host disc-audio catalog selective port
+-------------------------------------
+Source: https://github.com/mrgudenheim/TacticsTemplateG/pull/3, timbermania,
+commit 0ebc36fcbaac56dd30e02bf1b2707c71140bc2d0 (origin/add-sound-clean).
+Original project MIT grant: Copyright (c) 2025 mrgudenheim; full license in
+LICENSE.txt. The host audio_test catalog adapts audio discovery, global SED
+sound-ID semantics and per-effect FEDS section extraction. New bounded
+read-only validation replaces the PR's whole-ROM/cache pipeline. No old addon
+or native binary was imported. The installed addon retains its GPL provenance
+above; the host absent-channel bank adapter subclasses its FEDS parser.
+
 PCSX-derived SPU algorithms and tables (not the MIT encoder)
 -----------------------------------------------------------
 Sources: https://github.com/grumpycoders/pcsx-redux, src/spu/
