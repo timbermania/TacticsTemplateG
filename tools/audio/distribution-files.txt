@@ -764,6 +764,8 @@ src/shaders/psx_depth_overlay.gdshader
 src/shaders/psx_depth_overlay.gdshader.uid
 src/shaders/psx_depth_subtractive.gdshader
 src/shaders/psx_depth_subtractive.gdshader.uid
+src/shaders/psx_window_depth.gdshaderinc
+src/shaders/psx_window_depth.gdshaderinc.uid
 src/ttg_icon.ico
 src/ttg_icon.png
 src/ttg_icon.png.import

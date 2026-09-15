@@ -93,13 +93,6 @@ may reach them; these paths are **not certified** by this installation.
 - Terrain-column callable (`{exists, world_y}` at floored world X/Z), unit
   layer-4/SelectionArea occlusion and cinematic camera/framing adapters.
 - Receiving map/unit tint registrations and compatible depth/tint shaders.
-  ⚠️ **The depth shaders do not currently compile under this project's engine.**
-  `run_checks.py`'s host half aborts on `src/shaders/psx_depth_overlay.gdshader`,
-  `src/Unit/shaders/unit_sprite.gdshader` and `unit_sprite_additive.gdshader`, all of
-  which `#include "res://src/shaders/psx_depth_common.gdshaderinc"` — stock 4.7.2 GL
-  reports `Tokenizer: Unknown character #35: '#'`. It reproduces byte-identically at
-  the commit before the Effects repin, so it dates from the depth-convention pass and
-  is not caused by the addon. It is recorded here rather than repaired.
   **Shared map/unit/legacy depth shader edits require separate approval.**
 - Gameplay audio/timing integration and content-loaded lifecycle validation.
 
