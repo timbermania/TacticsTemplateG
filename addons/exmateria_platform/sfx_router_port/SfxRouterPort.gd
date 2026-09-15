@@ -179,3 +179,35 @@ static func emit_bg_sound_changed(action: String, sound_id: int, stacking: int,
 	if p == null:
 		return
 	p.bg_sound_changed.emit(action, sound_id, stacking, handle)
+
+
+## The bank-slot LABEL for `slot` in `bank` ("" if unknown), or `""` with no router.
+##
+## 🔴 A CATALOGUE LOOKUP AND NOT A PLAYBACK VERB, AND IT IS HERE BECAUSE THE CATALOGUE
+## ITSELF CANNOT BE PORTED. `SfxCatalog` is a path-preloaded STATIC class, not an
+## autoload, so `_resolve`'s node path has nothing to bind — an addon that wanted these
+## two answers had to `preload("res://src/audio/SfxCatalog.gd")`, which is a reach into
+## another system's SOURCE (arm 6) rather than a parse break (arm 2). The router already
+## preloads the catalogue for four of its own lookups, so it is the RESOLVABLE thing
+## that has it, and it re-publishes these two as `catalog_name_for` / `catalog_is_loop`
+## (gl-ADR-0330).
+##
+## `""` is the catalogue's own answer for an unknown slot, so the absent path is a miss
+## its one caller already survives — `ScenarioVM` uses it in a log string.
+static func catalog_name_for(bank: String, slot: int) -> String:
+	var p := _resolve()
+	if p == null:
+		return ""
+	return p.catalog_name_for(bank, slot)
+
+
+## Whether `slot` in `bank` is a looping/continuous sound; `false` with no router.
+##
+## `false` is the catalogue's own answer for an unknown slot AND the safe one: a bg
+## ambient that is not marked looping is triggered as a ONE-SHOT, so a portless consumer
+## gets a sound that ends rather than a voice that never releases.
+static func catalog_is_loop(bank: String, slot: int) -> bool:
+	var p := _resolve()
+	if p == null:
+		return false
+	return p.catalog_is_loop(bank, slot)

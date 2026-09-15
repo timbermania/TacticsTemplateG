@@ -128,6 +128,15 @@ static func look_at_12bit(dx: int, dy: int) -> int:
 
 const UNITS_PER_TILE := 28  ## PSX world units spanned by one map tile (Sprite Move scale)
 
+## PSX world units spanned by ONE FFT ELEVATION HALF-STEP. Board geometry like
+## `UNITS_PER_TILE`, and it arrives here for the same reason ADR-0091 gave for the 28:
+## one fact, one home. It had THREE homes — `MapConstants.PSX_UNITS_PER_HALF_STEP`
+## (float 12.0) and `RomWalkStepper.LEVEL_RENDER` (int 12), both `Battlefield`, plus this.
+## ⚠️ Only the first is re-pointed here. Whether `LEVEL_RENDER` is the SAME fact or a
+## render-unit coincidence is a `Battlefield` reading nobody has taken, and folding it on
+## the strength of both being 12 is the guess this comment exists to refuse.
+const UNITS_PER_HALF_STEP := 12.0
+
 
 ## Mirror a depth row about the map's far-Z edge (ADR-0052 chirality flip):
 ## `godot_z = size_z - 1 - psx_z`. Every placement opcode's Event-Y row passes

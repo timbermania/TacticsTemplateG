@@ -48,11 +48,11 @@ const ScreenSubsystemClass = preload("res://addons/exmateria_effects/subsystem/S
 const PaletteSubsystemClass = preload("res://addons/exmateria_effects/subsystem/PaletteSubsystem.gd")
 const CallbackManagerClass = preload("res://addons/exmateria_effects/callbacks/CallbackManager.gd")
 const CameraSubsystemClass = preload("res://addons/exmateria_effects/subsystem/CameraSubsystem.gd")
-const EffectSoundControllerClass = preload("res://addons/exmateria_sound/runtime/effect_sound_controller.gd")
+const EffectSoundControllerClass = ExMateriaPlatform.EffectSoundController
 const EffectTimelineClass = preload("res://addons/exmateria_effects/cast/EffectTimeline.gd")
 const SoundSubsystemClass = preload("res://addons/exmateria_effects/subsystem/SoundSubsystem.gd")
 const EffectSoundScheduleClass = preload("res://addons/exmateria_effects/cast/EffectSoundSchedule.gd")
-const EffectSoundResolverClass = preload("res://addons/exmateria_sound/runtime/effect_sound_resolver.gd")
+const EffectSoundResolverClass = ExMateriaPlatform.EffectSoundResolver
 
 ## This addon's two overlay autoloads, reached through their PORTS rather than as bare
 ## identifiers — a member may name no autoload at all (ADR-0308 dec. 1). Seven of this
@@ -129,7 +129,7 @@ var camera_controller = null   # CameraSubsystem for camera animation
 var effect_timeline = null     # EffectTimeline — owns the clock, pumps the subsystems (ADR-0012)
 var _sound_subsystem = null        # SoundSubsystem adapter wrapping _sound_controller
 # Studio Solo/Mute: set-style Dictionary of muted sound lanes keyed "<phase>:<ci>". A trigger
-# whose (from_phase, from_channel) lane is muted is dropped in _on_sound_pair_triggered
+# whose (from_phase, from_channel) lane is muted is dropped in _on_sound_event
 # (phase-scoped so a lane's twins in the other phases stay audible; addon-safe).
 var _muted_sound: Dictionary = {}
 # Two INDEPENDENT emitter-hide sources feed the particle renderer and must not clobber
@@ -141,7 +141,7 @@ var _studio_disabled_emitters: Dictionary = {}
 # Timeline-driven FFT effect-sound (FEDS) playback. The EffectSoundController
 # (exmateria-sound addon's class — name is the addon's concern) walks the sound-
 # subsystem's keyframes, resolves each through the
-# effect-flags config, and emits pair_triggered → ExMateriaEffectSfx.play_pair.
+# effect-flags config, and emits sound_event → ExMateriaEffectSfx.play_pair.
 var _sound_loaded = null        # EffectSoundSchedule (this addon's, read off EffectData)
 var _sound_controller = null    # EffectSoundController
 var _sfx_token: int = 0         # ExMateriaEffectSfx cast token (for end_effect)
@@ -201,8 +201,8 @@ func _exit_tree() -> void:
 	# Disconnect the sound subsystem and end the SFX cast so the engine
 	# goes idle (stops driving the shared SPU). The ~25 ms already buffered plays
 	# out as a natural tail.
-	if _sound_controller and _sound_controller.pair_triggered.is_connected(_on_sound_pair_triggered):
-		_sound_controller.pair_triggered.disconnect(_on_sound_pair_triggered)
+	if _sound_controller and _sound_controller.sound_event.is_connected(_on_sound_event):
+		_sound_controller.sound_event.disconnect(_on_sound_event)
 	# Orphan (not end) the SFX cast: the visual is done, but let the dispatched
 	# FEDS pairs finish their natural sequence + tail instead of cutting them.
 	# The engine reaps the cast once its sound actually ends.
@@ -450,11 +450,15 @@ func _load_effect_sound() -> void:
 	`addons/exmateria_sound/`: the loader was one of the four whose absence is a
 	parse-error cascade (#1354)."""
 	_sound_loaded = EffectSoundScheduleClass.from_effect_data(effect_data)
-	if _sound_loaded.has_sound():
+	# ⚠️ `has_schedule()`, not `has_sound()` (ADR-0318 dec. 2). An effect with keyframes
+	# and no `feds.bin` now arms its walker and publishes its events; `_on_sound_event`
+	# below finds no bank and stays silent. Gating on the BANK here is what used to make
+	# "no audio package" mean "no events" (#1354).
+	if _sound_loaded.has_schedule():
 		_sound_controller = EffectSoundControllerClass.new()
 		_sound_controller.debug_log = false
 		if _sound_controller.load_effect(_sound_loaded):
-			_sound_controller.pair_triggered.connect(_on_sound_pair_triggered)
+			_sound_controller.sound_event.connect(_on_sound_event)
 			# Fresh SFX cast (re-seeds the entity; ends any prior cast's sound).
 			_sfx_token = SfxPort.begin_effect()
 			# pre_anchor_offset=0, vm_snapshot={} — PCSX parity-calibration
@@ -470,12 +474,18 @@ func set_target_count(count: int) -> void:
 	_target_count = maxi(1, count)
 
 
-func _on_sound_pair_triggered(pair_idx: int, from_channel: int, sound_id: int,
-		from_phase: String = "") -> void:
-	"""A sound-subsystem keyframe fired: dispatch the resolved FEDS pair through the
-	persistent SFX engine. sound_id is the resolver's output (the value
+func _on_sound_event(_frame: int, from_phase: String, from_channel: int,
+		sound_id: int) -> void:
+	"""A scheduled sound fired: dispatch it as a FEDS pair through the persistent SFX
+	engine, IF there is a bank. sound_id is the resolver's output (the value
 	ExMateriaEffectSfx/play_feds_pair wants for the chan+0x92 static seed); see
-	CONTEXT.md "Audio" → SoundContainer + EffectSoundResolver."""
+	CONTEXT.md "Audio" → SoundContainer + EffectSoundResolver.
+
+	🔴 THE FEDS ARITHMETIC IS THIS SIDE'S, NOT THE WALKER'S (ADR-0318 dec. 1). `pair_idx
+	= sound_id - 1` and the `num_pairs` bounds test used to happen inside the walker,
+	which meant the walker had to hold a bank, which meant no bank was no EVENT rather
+	than no SOUND. Both moved here. This handler is one of N: a backend that wants its
+	own sounds connects to the same signal and never learns what a FEDS pair is."""
 	# Studio Solo/Mute: drop the trigger if THIS (phase, channel) sound lane is muted. Keyed
 	# "<phase>:<ci>" to match resolve_audibility — each phase has its own channels 0/1/2, so a
 	# bare channel index would silence a lane's twins in the other phases (and break solo). The
@@ -483,8 +493,15 @@ func _on_sound_pair_triggered(pair_idx: int, from_channel: int, sound_id: int,
 	if _muted_sound.has("%s:%d" % [from_phase, from_channel]):
 		return
 	var bank = _live_feds_bank()
-	if bank:
-		SfxPort.play_pair(_sfx_token, bank, pair_idx, sound_id)
+	if bank == null:
+		return
+	# The bounds test the walker used to make. `_play_pair_locked` makes it too and
+	# `push_warning`s on a miss, so skipping it here would turn a silent, legitimate
+	# "this effect has no bytes for that id" into console noise on every fire.
+	var pair_idx: int = sound_id - 1
+	if pair_idx < 0 or pair_idx >= bank.num_pairs:
+		return
+	SfxPort.play_pair(_sfx_token, bank, pair_idx, sound_id)
 
 
 ## The FEDS bank the audible path must use: `EffectData`'s when there is one, else the

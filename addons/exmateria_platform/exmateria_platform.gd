@@ -172,6 +172,47 @@ const MusicPort = preload("res://addons/exmateria_platform/music_port/MusicPort.
 const CameraCalibration = preload("res://addons/exmateria_platform/display_port/CameraCalibration.gd")
 
 
+# --- the effect sound SCHEDULE ---------------------------------------------
+#
+# ADR-0318 dec. 3. The two files here are the one thing in this addon that BOTH
+# `exmateria_effects` and `exmateria_sound` reach, and they are here because
+# neither package may reach the other. Effects runs the walker to publish its
+# sound-event stream; the audio package's offline SPU parity rig runs the same
+# walker to prove our render matches PCSX. A copy in Effects would have FLIPPED
+# the arrow rather than cut it — see the walker's own header.
+#
+# ⚠️ They stretch `tier="port"`: a stateful keyframe walker is a MODEL, not an
+# adapter. ADR-0318 S1 says so in those words and does not pretend otherwise.
+
+## Walks an effect's sound schedule and announces the moments — `sound_event(frame,
+## phase, channel, sound_id)`, at an externally supplied 30 Hz tick. Makes no sound
+## and, since ADR-0318 decs. 1/2, cannot name one: no FEDS bank, no `pair_idx`, and
+## the gate is "is there a SCHEDULE", not "is there a bank". A cast with keyframes and
+## no `feds.bin` runs its walker, publishes its events and is silent.
+## Host use: `tests/stranger/exmateria_effects/no_sound_events.gd` drives it in a project
+## with no audio package at all, which is the state the move exists for. Like `SfxPort`
+## it has no host namer in production and is not expected to grow one — both its
+## production namers are **sibling namers** (ADR-0212 dec. 7):
+## `addons/exmateria_effects/cast/EffectInstance.gd` (the game's consumer) and
+## `src/audio/SfxStressTest.gd`. The offline SPU parity rig at
+## `exmateria-sound/workspace/harness/render_effect_sound.gd` is the third, in the other
+## package, and `ExMateriaSound` re-exports the name the way it re-exports the vendored
+## SPU's three.
+const EffectSoundController = preload("res://addons/exmateria_platform/sound_schedule/EffectSoundController.gd")
+
+## FFT's `lookup_sound_effect` (`0x801A32E8`): five integer modes over
+## `sound_containers.json` resolving a timeline `sound_id` to the id a backend plays.
+## Zero audio content — `exmateria_effects` owns the containers file and the Effect
+## Studio edits it. The walker builds one internally; a consumer rarely needs its own.
+## Host use: `src/effects/studio/SoundGhostProjector.gd` and
+## `src/effects/studio/SoundContainerModel.gd` — the Effect Studio's score projection and
+## its container editor, both real host namers. Its one **sibling namer** (ADR-0212
+## dec. 7) is `addons/exmateria_effects/cast/EffectInstance.gd`, whose
+## `studio_audition_container` drives a fresh resolver forward to make a container's mode
+## audible (ADR-0318 dec. 8 — #1222 carries the move of that method itself).
+const EffectSoundResolver = preload("res://addons/exmateria_platform/sound_schedule/EffectSoundResolver.gd")
+
+
 # --- the fixed-point conventions -------------------------------------------
 
 ## The PSX numeric conventions of the FFT event-script interpreter in one place —

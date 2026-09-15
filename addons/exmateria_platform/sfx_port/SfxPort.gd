@@ -1,7 +1,7 @@
 @tool
 extends RefCounted
 
-## The battle effect-SFX engine's PORT SIGNATURE — the four verbs an addon may name
+## The battle effect-SFX engine's PORT SIGNATURE — the five verbs an addon may name
 ## instead of the `ExMateriaEffectSfx` autoload identifier.
 ##
 ## `ExMateriaEffectSfx="*res://addons/exmateria_sound/runtime/effect_sfx_engine.gd"`
@@ -39,10 +39,11 @@ extends RefCounted
 ## | `play_pair` | dispatches one FEDS pair | **`false`** |
 ## | `end_effect` | key-off, voices ring out | **no-op** |
 ## | `orphan_effect` | visual ended, let the sound finish | **no-op** |
+## | `load_feds_bank` | parses a `feds.bin` into a bank | **`null`** |
 ##
 ## 🔴 **THE ABSENT COLUMN IS NOT INVENTED — IT IS THE ENGINE'S OWN NOT-READY
-## BEHAVIOUR, VERBATIM.** `effect_sfx_engine.gd` opens all four verbs with `if not
-## ready_ok:` and answers `0`, `false`, and two bare `return`s. So a consumer who
+## BEHAVIOUR, VERBATIM, FOR THE FOUR CAST VERBS.** `effect_sfx_engine.gd` opens each of
+## them with `if not ready_ok:` and answers `0`, `false`, and two bare `return`s. So a consumer who
 ## installed `exmateria_effects` without `exmateria_sound` gets the state the shipped
 ## game already reaches whenever the audio engine has not finished booting, and
 ## `cast/EffectInstance.gd` already treats `_sfx_token == 0` as "no cast" (`var
@@ -50,7 +51,14 @@ extends RefCounted
 ## strongest form this table can take: an absent answer that some real run already
 ## produces is one the call sites are already proven to survive.
 ##
-## 🔴 **FOUR VERBS IS THE WHOLE REACH AND NOT THE WHOLE ENGINE, STATED AS AN
+## ⚠️ **`load_feds_bank` IS THE ONE ROW WHERE THAT DERIVATION DOES NOT HOLD, AND IT IS
+## WEAKER FOR IT.** The engine deliberately does NOT test `ready_ok` there, because it is
+## a file parser rather than a device call and effects load before audio boots. So its
+## `null` is this port's own answer, not a state the shipped game reaches on its own
+## schedule — see that verb's note below for why `null` was nonetheless already a live
+## value at every reader.
+##
+## 🔴 **FIVE VERBS IS THE WHOLE REACH AND NOT THE WHOLE ENGINE, STATED AS AN
 ## ASYMMETRY.** `effect_sfx_engine.gd` also publishes `debug_snapshot`,
 ## `audition_split_stats`, `unit_count`, `tunables`/`write_tunable`,
 ## `set_audio_monitor_enabled` and more; none is reached from inside any addon today,
@@ -60,8 +68,8 @@ extends RefCounted
 ## (ADR-0234). The first addon that wants one of those verbs adds it HERE rather than
 ## going back to the identifier.
 ##
-## Signatures mirror the engine's exactly, including the two `void` returns, so a
-## re-point changes the receiver name and nothing else. `play_pair`'s `bool` is the
+## Signatures mirror the engine's exactly, including the two `void` returns and
+## `load_feds_bank`'s untyped return, so a re-point changes the receiver name and nothing else. `play_pair`'s `bool` is the
 ## engine's own; the two `void`s stay `void` because there is nothing to report that
 ## `begin_effect`'s token does not already tell the caller.
 ##
@@ -103,6 +111,36 @@ static func _resolve() -> Node:
 ## question as "does the lookup still succeed".
 static func _forget_port() -> void:
 	_port = null
+
+
+## Parse a `feds.bin` into the sound package's FEDS bank, or `null` where no engine is
+## registered.
+##
+## The return is UNTYPED for the same reason `play_pair`'s `feds_bank` argument is: the
+## type is `addons/exmateria_sound/runtime/feds_bank.gd` and naming it here would put the
+## path this port exists to avoid back into this file. `EffectData.feds_bank` is already
+## declared untyped, so the re-spelling changes no annotation downstream.
+##
+## 🔴 **`null` HERE MEANS TWO DIFFERENT THINGS AND BOTH WERE ALREADY REACHABLE.** No
+## package installed, and no `feds.bin` on disk — `EffectData` only calls this when
+## `FileAccess.file_exists` says the file is there, and every reader of `feds_bank` in
+## the tree is already written against `null` because most effects ship no bank at all.
+## So the absent-package column needed no new branch at any call site, which is the same
+## property the four verbs above have.
+##
+## ⚠️ **IN THE EDITOR THIS ANSWERS `null`,** because `effect_sfx_engine.gd` is not a
+## `@tool` script and `_resolve()` rejects the placeholder autoload (see its docstring).
+## `cast/EffectInstance.gd` is `@tool` and DOES load effect data in-editor, so its
+## in-editor casts now hold no bank — which changes nothing, because every path in that
+## file that reads a bank is behind `not Engine.is_editor_hint()` or is a studio verb the
+## editor never calls, and the editor preview is already forbidden to synthesize audio.
+## `tests/TunePortTest.gd` drives both arms, off `EffectData.load_from_directory`
+## rather than off this verb — the loaded effect is the seam every reader uses.
+static func load_feds_bank(feds_path: String):
+	var p := _resolve()
+	if p == null or not p.has_method(&"load_feds_bank"):
+		return null
+	return p.load_feds_bank(feds_path)
 
 
 ## Open a cast and return its token, or `0` where no engine is registered.

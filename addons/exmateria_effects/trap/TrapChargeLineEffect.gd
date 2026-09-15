@@ -115,7 +115,7 @@ func _ready() -> void:
 		_line_slots[i] = LineSlot.new()
 
 
-func start(world_position: Vector3, unit: Node = null) -> void:
+func start(world_position: Vector3, unit: Node = null, element_id: int = 0) -> void:
 	"""Begin spawning charge lines at the given position."""
 	_anchor_position = world_position
 	global_position = world_position
@@ -126,10 +126,7 @@ func start(world_position: Vector3, unit: Node = null) -> void:
 	_tick_timer = 0.0
 	_spawn_angle_accumulator = randi() % PsxMagnitude.FULL_TURN
 
-	# Determine element color
-	var element_id: int = 0
-	if unit and unit.has_method("get_element_id"):
-		element_id = unit.get_element_id()
+	# Color is explicit; a spatial anchor need not implement a game actor API.
 	element_id = clampi(element_id, 0, ELEMENT_COLORS.size() - 1)
 	_element_color = ELEMENT_COLORS[element_id]
 

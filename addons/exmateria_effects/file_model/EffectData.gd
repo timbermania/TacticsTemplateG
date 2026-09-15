@@ -16,18 +16,29 @@ const PaletteDataClass = preload("res://addons/exmateria_effects/file_model/Pale
 const CameraDataClass = preload("res://addons/exmateria_effects/file_model/CameraData.gd")
 const CurveExplode = preload("res://addons/exmateria_effects/file_model/CurveExplode.gd")
 
-## ADR-0212 dec. 11 + #1241 arm 8 — the `Audio` package's façade, reached by PATH
-## rather than by its global `ExMateriaSound`. The dependency is the blueprint's
-## Format-owner rule (`Effects` reads `Audio`'s `feds.bin`, ADR-0288 dec. 8) and it is
-## unchanged; what changed is the SPELLING. #1241's arm 8 is unconditional — a sibling
-## addon's `class_name` must be named in `plugin.cfg` `deps=` or not reached — and
-## declaring it is not available: `deps=` is what `tests/stranger/shared/rig.sh` STAGES,
-## `exmateria_sound` is another package (EXTRACTED, with its own two rigs), and
-## `_walk_roots.declared_engine` RAISES on it because that package declares no `engine=`.
-## So the reach goes through the façade FILE, which keeps ADR-0212 dec. 11's boundary —
-## this is the package's one published name, not an internal — while removing the bare
-## global. `cast/EffectInstance.gd` already preloads three `runtime/` files by path.
-const ExMateriaSoundPackage = preload("res://addons/exmateria_sound/exmateria_sound.gd")
+## ADR-0318 dec. 7 — the FEDS bank arrives through the PLATFORM PORT, not a `preload`
+## of the `Audio` package's façade.
+##
+## The DEPENDENCY is unchanged and is not the thing that was wrong: `Effects` reads
+## `Audio`'s `feds.bin` under the blueprint's Format-owner rule (ADR-0288 dec. 8) and
+## that stands. What was wrong is the CARRIER. `preload` is compile-time, so a façade
+## preload made an OPTIONAL artifact a compile-time REQUIREMENT of this file — with
+## `exmateria_sound` absent, this file failed to parse and took
+## `callbacks/CallbackManager.gd` down with it (ADR-0318 §1.1, the parser's own
+## attribution). One of the four preloads that made "install Effects without the audio
+## package" a parse-error cascade rather than a configuration.
+##
+## `ExMateriaPlatform.SfxPort` resolves at RUNTIME and answers `null` when no engine is
+## registered, so the absent package is now the same state as an effect with no
+## `feds.bin` — a state every reader of `feds_bank` in the tree already handles, because
+## most effects ship no bank. `feds_bank` was already declared untyped (see its
+## declaration below), so no annotation downstream changes.
+##
+## ⚠️ The FEDS **opcode table** does NOT come with it. Decision 7 moves a LOAD, not a
+## decode: `EffectReadSoundDef.gd` states the rule from the file-format side — the raw
+## blob is a patchable unit `Effects` can read, and the decode table exists twice under a
+## drift guard, so a third copy here would be one that guard does not know about.
+const SfxPort = ExMateriaPlatform.SfxPort
 
 var name: String = ""
 var emitters: Array[EffectEmitter] = []
@@ -222,10 +233,12 @@ static func load_from_directory(dir_path: String) -> _Self:
 		data.sound_containers = containers_data
 
 	# The FEDS bank (feds.bin) — TIER-3 byte truth (ADR-0085). Loaded here so the
-	# SoundDefChannel encoder, the studio env and playback all share ONE object.
+	# SoundDefChannel encoder, the studio env and playback all share ONE object. Through
+	# the port since ADR-0318 dec. 7, so `null` now covers TWO absences — no file, and no
+	# audio package installed — and the readers were already written for the first.
 	var feds_path = dir_path.path_join("feds.bin")
 	if FileAccess.file_exists(feds_path):
-		data.feds_bank = ExMateriaSoundPackage.FedsBank.load_from_file(feds_path)
+		data.feds_bank = SfxPort.load_feds_bank(feds_path)
 
 	# Load time scale (optional - for dramatic slowdown effects)
 	var time_scale_path = dir_path.path_join("time_scale.json")

@@ -27,7 +27,7 @@ func _init(controller) -> void:
 func advance(frame: int, _phase = null) -> void:
 	# Studio Solo/Mute is applied per-CHANNEL downstream: the controller fires all its
 	# channels (its keyframe walk stays whole), and EffectInstance drops the triggers whose
-	# from_channel is muted (the addon's pair_triggered carries the channel). Suppressing at
+	# from_channel is muted (the addon's sound_event carries the channel). Suppressing at
 	# the trigger keeps the addon untouched (CLAUDE.md).
 	if _controller:
 		_controller.update(frame, _controller.fire_sub_tick)

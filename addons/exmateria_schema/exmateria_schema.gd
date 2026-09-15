@@ -127,6 +127,30 @@ const ColorRecipe = preload("res://addons/exmateria_schema/colour_model/ColorRec
 ## which is the port that returns it.
 const TerrainCell = preload("res://addons/exmateria_schema/lattice/TerrainCell.gd")
 
+## The **lattice port's vocabulary** — the six value-typed verbs a consumer
+## annotates with, so the annotation can stay while the reach goes free
+## (gl-ADR-0332 dec. 1). The split is `Lattice.gd`'s own: its six PUBLIC verbs
+## name no `Tile`, its seven private ones all do.
+## Host use: none yet; the **SIBLING NAMERS** are
+## `addons/exmateria_battlefield/lattice/Lattice.gd`, which implements it, and
+## `addons/exmateria_cutscene`'s camera, weather and VM, which annotate with it.
+const TerrainQuery = preload("res://addons/exmateria_schema/lattice/TerrainQuery.gd")
+
+
+# --- the cursor vocabulary ---------------------------------------------------
+
+## The CURSOR PORT's vocabulary — three `Vector2i` signals and a `Vector2i` cell, the
+## members a host reads off a roam cursor. ADR-0332's third route, taken a second time
+## (gl-ADR-0363), so the annotation can stay while the reach goes free.
+## Host use: none yet; the **SIBLING NAMERS** are
+## `addons/exmateria_battlefield/cursor/CursorRig.gd`, which implements it, and
+## `addons/exmateria_ui`'s formation map host and detail transition, which annotate with it.
+## 🔴 THIS IS THE ONLY MEMBER OF THIS FAÇADE THAT IS NOT A `RefCounted`, and it is a
+## `Node` because `CursorRig` is one and GDScript has single inheritance. "Nothing here is
+## instantiated" is still true of it: a bare `CursorQuery` answers `Vector2i.ZERO` for
+## every cell and emits nothing, and no file in this package constructs one.
+const CursorQuery = preload("res://addons/exmateria_schema/cursor/CursorQuery.gd")
+
 ## **Why a cell is marked** — a placement-zone role, plus the cursor. It does NOT
 ## name an appearance: `Battle` decides which cells wear which marking and
 ## `Battlefield` paints it (ADR-0118 dec. 1's ninth schema row, ADR-0196 dec. 6/7).
@@ -134,6 +158,24 @@ const TerrainCell = preload("res://addons/exmateria_schema/lattice/TerrainCell.g
 ## `addons/exmateria_battlefield/overlay/TileHighlights.gd`, which paints, and
 ## `addons/exmateria_battlefield/lattice/Tile.gd`.
 const CellMarking = preload("res://addons/exmateria_schema/lattice/CellMarking.gd")
+
+## `WORLD.BIN`'s game-variable store — Campaign's save data in the ROM's own encoding,
+## 684 bytes over three regions that tile it exactly (u32 / BIT / NIBBLE by index).
+## Moved here from `src/world_map/` by gl-ADR-0330 because it is named by THREE systems —
+## `Campaign`, `World Map` and `Cutscene`'s event VM — and the 182 per-node event scripts
+## address these variables BY INDEX, as do the battle side's `event_set_script_variable`
+## and the BC opcodes. A value addressed by index from three systems is shared vocabulary,
+## which is what this addon is for.
+## 🔴 IT IS HERE BECAUSE A TYPE CANNOT BE PORTED. `check_addon_portability.py` arm 5's own
+## remedy note is the ruling: *"Move the shared symbol into `addons/exmateria_schema/` — the
+## shipped precedent and the shape — or invert the reach so the host passes the value in.
+## Naming it through a PORT is NOT open here: a port publishes a signature soft-bound at
+## call time, and a TYPE is bound at parse time."* The injection already existed
+## (`ScenarioPlayerScene.gd` calls `set_variable_store`); what was left was the ANNOTATION,
+## and widening it to `Node` would have turned the guard green by deleting the claim
+## (ADR-0148). It is kernel-clean on its own terms: 97 lines, `extends RefCounted`, and it
+## reaches nothing at all.
+const WorldMapVariables = preload("res://addons/exmateria_schema/campaign_state/WorldMapVariables.gd")
 
 
 # --- the unit-sprite vocabulary --------------------------------------------

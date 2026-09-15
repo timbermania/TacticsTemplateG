@@ -15,8 +15,8 @@ class EffectsTests(unittest.TestCase):
     def test_installed_selection_matches_lock_and_allowlist(self):
         lock = verify(allow_import_metadata=True)
         rows = json.loads((ROOT / lock["manifest"]).read_text())
-        self.assertEqual(len(rows), 225)
-        self.assertEqual(sum(row["bytes"] for row in rows), 965928)
+        self.assertEqual(len(rows), 241)
+        self.assertEqual(sum(row["bytes"] for row in rows), 993824)
         allowed = set(MANIFEST.read_text().splitlines())
         self.assertTrue({row["destination"] for row in rows} <= allowed)
         for path in (ROOT / "tools/effects").iterdir():

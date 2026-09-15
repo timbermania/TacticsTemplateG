@@ -9,10 +9,15 @@ here at [ADR-0295](../../docs/adr/0295-the-forty-five-class-names-collapse-to-tw
 
 The addon contains file models, cast/timeline playback, all currently implemented
 callbacks, camera/color/sound/particle subsystems, native/fold renderers and all
-three TRAP implementations. Ability selection is a host concern: the upstream
-CombatLoop adapter now lives at `src/gpu/EffectManager.gd`, not in this addon.
-Its formula/element, Break, Charge+N, charging-pose, line and orbital routing is
-unchanged. A different game supplies its own visual requests to the primitives.
+three TRAP implementations. Ability selection is routed by the addon's own
+cast manager (`cast/EffectManager.gd`), which asks the host what an ability looks
+like — `CastHost.ability_visual(id)`, answered with a `cast/AbilityVisual.gd`
+(display name, formula, element id, charging pose) and nothing else. The battle
+context — scene, actors, bounds, ability visuals, logging — arrives as the
+per-battle `CastHost` contract, never as a game type and never as a database. Terrain remains a host
+concern: cinematic facing takes an injected column-height query.
+The formula/element, Break, Charge+N, charging-pose, line and orbital routing is
+unchanged. A different game supplies its own `CastHost` and content.
 
 ## The one global name
 
@@ -24,7 +29,10 @@ declared **42** on the day it moved; they are all gone, and everything is a
 constant on that one name. `tools/check_addon_globals.py` holds both directions:
 nothing else here may declare a global, and nothing published may dangle.
 
-The published surface is **21 names**, derived rather than assumed: a member is
+The published surface is 23 names: the original 21 plus `EffectsContent` — the
+Effect Studio's content-root resolution — and `CastHost` / `EffectManager`, the
+per-battle cast contract and the cast lifecycle the host drives through it. They
+are derived rather than assumed: a member is
 published when something outside this addon reaches it. Fifteen further members
 are reached only from this repo's own `tests/` and `tools/` and are deliberately
 **not** published — they are bound by `res://` path instead, and every one of
@@ -42,6 +50,8 @@ decision** (ADR-0295 dec. 1).
 | `ExMateriaEffects.PaletteData` / `.ScreenData` / `.CameraData` | the three keyframe data models |
 | `ExMateriaEffects.EffectInstance` | one running effect, as a `Node3D` |
 | `ExMateriaEffects.EffectsContent` | configured content-root and effect-directory resolution |
+| `ExMateriaEffects.EffectManager` | spawning, cleanup polling, the cast lifecycle |
+| `ExMateriaEffects.CastHost` | per-battle scene and live actor slots; optional bounds, charge color, logging and diagnostic context |
 | `ExMateriaEffects.EffectPhase` | the timeline phase constants |
 | `ExMateriaEffects.EffectEndModel` | the derived effect end — when the engine REAPS the cast |
 | `ExMateriaEffects.PaletteSubsystem` / `.ScreenSubsystem` | two of the four channel runtimes |
@@ -60,9 +70,17 @@ const EffectData = ExMateriaEffects.EffectData
 
 ## Install
 
-1. Copy `addons/exmateria_effects/` — and its `deps=` (`exmateria_schema`,
-   `exmateria_platform`, `exmateria_render`, `exmateria_sound`; sound requires
-   `exmateria_spu`) — into your project.
+1. Copy `addons/exmateria_effects/` — and its `deps=` (`exmateria_almanac`,
+   `exmateria_schema`, `exmateria_platform`, `exmateria_render`) — into your
+   project.
+
+   🔴 **`exmateria_sound` IS NOT ON THAT LIST AND THAT IS THE POINT** (#1354,
+   [ADR-0318](../../docs/adr)). Effects parses and runs with the audio package
+   absent, and it still publishes its full sound-event stream — the schedule
+   walker lives in `exmateria_platform`, so a consumer with its own audio
+   backend gets `sound_event(frame, phase, channel, sound_id)` without
+   installing a PSX SPU to be told when to play its own sounds. Install the
+   audio package too if you want OUR backend; nothing here requires it.
 2. **Open the project, enable Platform and Effects plugins, then reload.** Godot imports and
    compiles shaders when the project OPENS; a first enable in a bare project
    logs shader compile errors for names the plugin has not provided yet
@@ -74,6 +92,71 @@ const EffectData = ExMateriaEffects.EffectData
    do not overwrite its source or native binaries to install Effects.
 5. **Declare `exmateria_effects/content_root`** — see *Content the host must
    supply* below. Without it nothing loads, and you get one `push_error` saying so.
+
+## Drive a cast
+
+Construct `EffectManager` with a **`CastHost`, not your combat-loop object**. This
+is an injected, per-battle contract, not an autoload. The base host supports casts
+with plain `Node3D` anchors, no roster, and no logger. For indexed charge VFX and
+reaction routing, extend it with your live roster:
+
+```gdscript
+class BattleCastHost extends ExMateriaEffects.CastHost:
+    var roster: Array[Node3D] = []
+
+    func actors() -> Array[Node3D]:
+        return roster
+
+# In the scene's _ready(), after its actors have entered the tree:
+var cast_host := BattleCastHost.new(self)
+cast_host.roster.assign([caster, target])
+var effects := ExMateriaEffects.EffectManager.new(cast_host)
+effects.spawn_spell_effect(caster, target, ability_id, effect_id)
+```
+
+Keep the manager for the battle's lifetime and connect its reaction signals to
+your gameplay. `actors()` is read live, in **stable slot order**: keep vacant
+slots as `null`, never compact. Reaction signals capture the target's slot at
+spawn; later roster changes do not retarget an existing cast. Actors belong to
+the stage's scene and share its `World3D`; they need no game-specific methods.
+Visible actor tint still requires registering their materials with `TintedSurfaces`.
+
+The stage must already be inside the scene tree and must **not** be the persistent
+root viewport. Invalid setup reports an error immediately and leaves the manager
+inert. The host holds its stage weakly. Stage removal is terminal for that manager:
+new spawns stop and pending cleanup stops safely, even if the node is reattached.
+The manager disposes of its ordinary spell/item instances and stops/frees tracked
+charges, including charges parented to sibling actors that survive stage removal.
+Cinematic instances remain caller-owned: stage detachment does not queue their
+cleanup, though freeing their scene parent naturally frees them. Never swap a host
+to a different stage.
+
+Optional overrides (all typed in `CastHost.gd`):
+
+- `arena_bounds() -> Rect2i`: empty means unavailable. Cinematic casts preserve
+  the existing **size-only** center calculation; spell/item centering is unchanged.
+- `actor_element_id(actor: Node3D) -> int`: charge-line color, default `0`.
+  This is distinct from the ability's element. Standalone `TrapChargeLineEffect.start`
+  likewise takes the element explicitly as its optional third argument.
+- `note_cast(caster_idx, target_idx, effect_name)`: no-op by default; `-1` denotes
+  an absent/unknown slot. This is an observation, **not a successful-spawn event**:
+  spell/cinematic/item logging precedes initialization, trap logging follows it.
+- `diagnostic_label() -> String` and `diagnostic_tick() -> int`: default `""` and
+  `0`. The addon keeps its own existing verbosity gates.
+
+Cleanup cadence, strict timeout/frame comparisons and charge head height remain
+fixed addon-owned policy. No host timing constants or map internals are read back.
+The in-repo `CombatCastHost` demonstrates translating a richer game into this
+contract without making that game's actor type part of the addon API.
+
+The runtime witness is `tests/EffectManagerNode3DAnchorTest.tscn` in the monorepo:
+it drives casts, live slots, explicit charge color, logging order and asynchronous
+cleanup with an independent host. Real sibling charges and detached spell/item
+instances exercise terminal disposal; a cinematic survives until its caller reaps it.
+Logging tests observe resources at the logging boundary and inject null effect data
+for initialization-failure branches (the loader otherwise accepts empty directories).
+It needs extracted content; a parse-only stranger-rig result
+is **not** evidence that a host can drive a cast.
 
 ## Content the host must supply
 

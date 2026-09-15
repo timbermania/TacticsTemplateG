@@ -3,21 +3,34 @@
 ## Scope and provenance
 
 Installed from `timbermania/fft-monorepo` commit
-`7933d1d42a89f1e81a99cb15ed61ce363314d12a`, against target baseline
+`7f140717604a7906cfaf03bd9556a34d6800ccce`, against target baseline
 `3a9cdffc128fbe9caa13ba8fa3b9cb721bc647b6`. This is **installation and
 configuration only**, not gameplay integration, full addon support, fold parity,
 or release approval. The host remains official Godot **4.7.2 GL Compatibility**.
 
 `tools/effects/manifest.json` records each exact source/destination, full revision,
 SHA-256, byte count and selection role. Its hash and profile contract are locked
-in `tools/effects/upstream.json`. All **225 files / 965,928 bytes** were extracted
+in `tools/effects/upstream.json`. All **241 files / 993,824 bytes** were extracted
 with `git show <pin>:<source>` and verified before installation; no upstream
-working-tree bytes were copied. The selection contains 68 Effects, 15 platform,
-19 schema and 4 render source/resource files (106 total), plus 107 committed UID
+working-tree bytes were copied. The selection contains 71 Effects, 17 platform,
+22 schema and 4 render source/resource files (114 total), plus 115 committed UID
 sidecars and 12 README/plugin metadata files. One schema header,
 `colour_model/color_stack.gdshaderinc`, is deliberately retained for the future
-host receiving-shader contract; the other 105 files form the facade/autoload
+host receiving-shader contract; the other 113 files form the facade/autoload
 resource closure. Lazy optional resource names and their bytes remain intact.
+
+**This pin is the first one the install model could actually reach.** The previous
+pin's Effects package declared `exmateria_almanac` in `deps=` and read it from
+`cast/EffectManager.gd`, and two of that package's files —
+`abilities/AbilityDatabase.gd` and `abilities/AbilityView.gd` — are gitignored
+ROM-derived sources whose façade hard-preloads them. Because this installer obtains
+bytes only through `git show <rev>:<path>`, **no revision could supply them**, so
+pulling `EffectManager` into the closure was structurally impossible rather than
+merely undesirable. Upstream ADR-0364 cut that edge: the ability lookup is now a
+host capability on the existing `CastHost` contract, and `deps=` reads
+`exmateria_platform exmateria_render exmateria_schema` — all three already here.
+The selection consequently gains `cast/EffectManager.gd`, `install/CastHost.gd`
+and `cast/AbilityVisual.gd`, which is why the façade export count moves below.
 
 No almanac, battlefield, upstream host/game/editor assets, BIN tooling, ROM data
 or extracted content was added. The selected packages' original README/plugin
@@ -46,9 +59,10 @@ plugin globals are not required by this selection. Existing project settings,
 plugins, GL renderer, main scene and ApplicationShutdown order are retained.
 No new plugin, PSXDisplay, CompositorAutopilot or production compositor setup is enabled.
 
-The public `ExMateriaEffects` facade retains all 21 exports. Its decoupled pin
-no longer imports host EffectManager or Battlefield. The project **does not yet
-request visual playback**. A future owning playback scene must create one
+The public `ExMateriaEffects` facade now carries **24 exports**, re-counted rather
+than carried over: the previous pin's 21 plus `EffectManager`, `CastHost` and
+`AbilityVisual`, which the almanac cut made obtainable. It still imports no host
+Battlefield. The project **does not yet request visual playback**. A future owning playback scene must create one
 `ExMateriaEffects.EngineFoldCompositor`, add it to the tree, then check
 `setup_native(in_tree_camera)` succeeds before playback. Keep that producer and
 camera alive for the cast. Do not call default fold `setup()` on stock Godot.
@@ -99,7 +113,7 @@ The static verifier checks the full file inventory/hashes, retained GPL text,
 explicit autoloads, nonzero globals and native GL/no-new-plugin configuration.
 CLI/root checks tolerate only Godot's generated `.import` sidecars for the two
 selected GLSL files; source staging excludes those sidecars and enforces the exact
-225-file inventory. No generated cache or metadata is deleted or rewritten.
+241-file inventory. No generated cache or metadata is deleted or rewritten.
 Optional Git verification is read-only and never trusts a modified upstream tree.
 Engine executable SHA-256, version, release archive URL and SHA-512 are recorded
 in the lock. The archive was matched against official release sums and the
@@ -112,7 +126,7 @@ system temporary directory. It cold-imports the **full host**, runs existing hos
 regressions, and starts the unchanged real main scene with a test-only exit
 observer. That observer checks idle audio/native registration and the Effects
 autoloads, then requests the existing graceful shutdown. A separate empty-cache
-minimal native project preserves the synthetic compatibility probe: 21 exports,
+minimal native project preserves the synthetic compatibility probe: 24 exports,
 checked native setup, 64 pool slots, visible mix/add/sub/add25 carriers, callback
 triangle, all 28 registered callback IDs, framebuffer contributions, slot return
 and drained shutdown. It repeats the runtime once with warm caches.
@@ -169,7 +183,7 @@ and shared packages. Original MIT grants and all prior third-party notices remai
 Upstream root LICENSE exactly matches the existing `LICENSES/GPL-3.0.txt`;
 `THIRD_PARTY_NOTICES.txt` records the new pin and bounded selection.
 
-The explicit `tools/audio/distribution-files.txt` allowlist includes all 225
+The explicit `tools/audio/distribution-files.txt` allowlist includes all 241
 inputs and Effects verification/docs/tests/lock. Source staging rejects missing,
 altered or symlinked allowlisted inputs, extra Effects files in the staged tree,
 and incorrect native-profile settings, alongside the existing native receipt and

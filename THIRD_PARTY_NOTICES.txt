@@ -30,7 +30,7 @@ Detailed origins and binary/source hashes: tools/audio/upstream.json and
 ExMateria Effects selected native-GL profile and shared dependencies
 ------------------------------------------------------------------
 Source: https://github.com/timbermania/fft-monorepo
-Snapshot: 7933d1d42a89f1e81a99cb15ed61ce363314d12a, godot-learning/
+Snapshot: 7f140717604a7906cfaf03bd9556a34d6800ccce, godot-learning/
 225 unchanged committed files selected from addons/exmateria_effects/,
 addons/exmateria_platform/, addons/exmateria_render/ and addons/exmateria_schema/.
 Upstream root LICENSE is GPL-3.0, reproduced exactly in LICENSES/GPL-3.0.txt

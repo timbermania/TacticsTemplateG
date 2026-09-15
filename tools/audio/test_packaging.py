@@ -218,9 +218,9 @@ class DistributionTests(unittest.TestCase):
                 complete = extracted / "TacticsTemplateG-source"
                 lock = release.verify_effects(complete)
                 effects = json.loads((complete / lock["manifest"]).read_text())
-                self.assertEqual(len(effects), 225)
+                self.assertEqual(len(effects), 241)
                 self.assertTrue({row["destination"] for row in effects} <= names)
-                self.assertIn("7933d1d42a89f1e81a99cb15ed61ce363314d12a",
+                self.assertIn("7f140717604a7906cfaf03bd9556a34d6800ccce",
                               (complete / "THIRD_PARTY_NOTICES.txt").read_text())
                 with patch("godot_cpp.open_https", side_effect=AssertionError("network")):
                     release.verify_native(complete, require_dependency=True)
