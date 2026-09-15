@@ -478,6 +478,10 @@ src/battle/editor/ui_palette.gdshader.uid
 src/battle/editor/unit_editor.gd
 src/battle/editor/unit_editor.gd.uid
 src/battle/editor/unit_editor.tscn
+src/battle/effects_cast_host.gd
+src/battle/effects_cast_host.gd.uid
+src/battle/effects_playback.gd
+src/battle/effects_playback.gd.uid
 src/battle/end_condition.gd
 src/battle/end_condition.gd.uid
 src/battle/extract_fft_scenarios.gd
@@ -1111,6 +1115,9 @@ tools/effects/native_project.godot.txt
 tools/effects/native_regression.gd
 tools/effects/native_regression.tscn
 tools/effects/run_checks.py
+tools/effects/run_integration_probe.py
 tools/effects/test_installation.py
+tools/effects/ttg_integration_probe.gd
+tools/effects/ttg_integration_probe.tscn
 tools/effects/upstream.json
 tools/effects/verify_installation.py

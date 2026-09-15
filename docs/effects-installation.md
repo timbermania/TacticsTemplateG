@@ -83,10 +83,23 @@ may reach them; these paths are **not certified** by this installation.
 - Explicit private content root and `effects/E###`, callback payload and TRAP
   texture/table layout; no content search, importer or root setting was invented.
 - Ability/action-to-visual routing, real timelines, callbacks/TRAP and timing.
-- Owning scene/camera lifecycle and checked native setup before real playback.
+- ~~Owning scene/camera lifecycle and checked native setup before real playback.~~
+  **Done** — `src/battle/effects_playback.gd` owns the producer/host/manager for one
+  battle and checks `setup_native(in_tree_camera)`; `src/battle/effects_cast_host.gd`
+  implements the `CastHost` contract (roster, arena bounds, ability visuals). Both are
+  **opt-in**: `enabled` is false by default, so this COEXISTS with the project's own
+  VFX rather than replacing it. See `docs/adr/0003-*.md`. Content provisioning and the
+  routing at the real call sites are still open — see the remaining items here.
 - Terrain-column callable (`{exists, world_y}` at floored world X/Z), unit
   layer-4/SelectionArea occlusion and cinematic camera/framing adapters.
 - Receiving map/unit tint registrations and compatible depth/tint shaders.
+  ⚠️ **The depth shaders do not currently compile under this project's engine.**
+  `run_checks.py`'s host half aborts on `src/shaders/psx_depth_overlay.gdshader`,
+  `src/Unit/shaders/unit_sprite.gdshader` and `unit_sprite_additive.gdshader`, all of
+  which `#include "res://src/shaders/psx_depth_common.gdshaderinc"` — stock 4.7.2 GL
+  reports `Tokenizer: Unknown character #35: '#'`. It reproduces byte-identically at
+  the commit before the Effects repin, so it dates from the depth-convention pass and
+  is not caused by the addon. It is recorded here rather than repaired.
   **Shared map/unit/legacy depth shader edits require separate approval.**
 - Gameplay audio/timing integration and content-loaded lifecycle validation.
 
