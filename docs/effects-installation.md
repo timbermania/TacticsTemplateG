@@ -140,16 +140,24 @@ may reach them; these paths are **not certified** by this installation.
   as well as its own `.tres`/`.webp` outputs.
 - Terrain-column callable (`{exists, world_y}` at floored world X/Z), unit
   layer-4/SelectionArea occlusion and cinematic camera/framing adapters.
-- Receiving **unit** tint registrations and a compatible unit depth/tint shader.
-  **Shared unit/legacy depth shader edits still require separate approval.**
-  The **map** half is DONE and approved separately: `MapChunkNodes.set_mesh_shader`
-  registers each chunk's `ShaderMaterial` under `TintedSurfaces.SURFACE_MAP`, and
-  `src/content_scripts/map/map_shader.gdshader` now includes
-  `colour_model/color_stack.gdshaderinc` and folds `color_apply` onto the sampled
-  palette entry BEFORE the lighting multiply — the CLUT-rewrite order. That shader
-  also carries the map's own ROM per-vertex lighting (`MapLighting`). Scored by
+- ~~Receiving map/unit tint registrations and compatible depth/tint shaders.~~ DONE,
+  both halves, each approved separately. Units: `UnitSpritesManager.bind_tint_surface`
+  registers the body/weapon/effect materials under `char_body.get_instance_id()`, and
+  `src/Unit/shaders/unit_sprite*.gdshader` fold `color_apply`. Map:
+  `MapChunkNodes.set_mesh_shader` registers each chunk's `ShaderMaterial` under
+  `TintedSurfaces.SURFACE_MAP`, and `src/content_scripts/map/map_shader.gdshader`
+  includes `colour_model/color_stack.gdshaderinc` and folds `color_apply` onto the
+  sampled palette entry BEFORE the lighting multiply — the CLUT-rewrite order. That
+  shader also carries the map's own ROM per-vertex lighting (`MapLighting`), scored by
   `tools/effects/run_map_lighting_checks.py`. `VfxConstants.DepthMode` and
-  `src/shaders/psx_depth_common.gdshaderinc` were NOT touched.
+  `src/shaders/psx_depth_common.gdshaderinc` were NOT touched, and **edits to them
+  still require separate approval.**
+- Unit sprites take no LIGHTING term. `unit_sprite.gdshader` is `render_mode unshaded`
+  and reads no normal, so now that the map is lit by its own ROM lights a unit stands
+  at full brightness on a shaded floor. Map lighting landed first on purpose; this is
+  the visible remainder.
+- Map lighting reads the PRIMARY mesh record only. A map's other `time_weather` /
+  `arrangement` rows carry their own lighting block and are not reachable.
 - Gameplay audio/timing integration and content-loaded lifecycle validation.
 
 No action, content importer, camera, audio integration, legacy removal or shared
