@@ -87,12 +87,36 @@ may reach them; these paths are **not certified** by this installation.
   directory exists, so a checkout with no content still fails legibly rather than
   resolving paths that cannot be there. All 401 `E###` directories are provisioned
   alongside the ten `effects/trap/*.json` tables and `TRAP1.tga`/`TRAP1.palette.tga`.
-  Copy them from the monorepo's `godot-learning/assets/effects/` into the gitignored
-  `content/`, **excluding the `*.import` sidecars** — those hard-code
-  `source_file="res://assets/…"` and must be regenerated here. Do not symlink: the
-  addon loads textures through `ResourceLoader`, so the content must live under
-  `res://` and be imported, and `EffectData` SILENTLY SKIPS an unimported `.tga` —
-  a broken link yields effects that initialize and simulate but draw nothing.
+
+  **The `E###` directories are now GENERATED HERE**, by
+  `RomReader.generate_effects_content()`, a step of `export_data()` beside `export_vfx()` —
+  same ROM, same export run as everything else. It is named GENERATE and takes no
+  `save_path` because, unlike every `export_*`, it cannot write to `EXPORT_PATH`: the
+  `ResourceLoader` constraint this document already states below is what forbids it. They no longer have to be copied from the monorepo.
+  The parse is upstream's GDScript `E###.BIN` reader, vendored into
+  `src/file_formats/vfx/effect_bin/` by `tools/effects/vendor_effect_bin.py` (the
+  addon install is pinned at a revision that predates it, and nothing under
+  `addons/` moves); `src/file_formats/vfx/effect_extract.gd` maps the parsed
+  sections onto the twenty leaves and `effect_callbacks.gd` carries the bespoke MIPS
+  callback tables for the eight effects that have them.
+
+  🔴 **It writes into `res://content/`, not into `EXPORT_PATH`, and that is forced.**
+  The addon loads textures through `ResourceLoader`, so the content must live under
+  `res://` and be IMPORTED, and `EffectData` SILENTLY SKIPS an unimported `.tga` —
+  which yields effects that initialize and simulate but draw nothing at all. The
+  exporter reports how many sheets are unimported, and how many CHANGED underneath
+  an existing `*.import` (a stale sidecar loads the OLD pixels, so the effect draws
+  the wrong texture rather than none). **Open the project in the editor once after
+  regenerating** so Godot imports them. The `*.import` sidecars are Godot's and are
+  never written by the exporter; a copy taken from the monorepo must still exclude
+  them, since those hard-code `source_file="res://assets/…"`. Do not symlink.
+
+  `tools/effects/effect_extract_regression.tscn` is the acceptance test: it
+  re-derives every leaf through the ROM and diffs it against a known-good extract,
+  and with `export` also writes a full tree and compares all 7,761 files.
+  🔴 Point `--oracle=` at an INDEPENDENTLY produced tree (upstream's
+  `godot-learning/assets/effects`) once `content/effects/` is itself generated —
+  otherwise the test compares a build to itself and passes for anything.
 - ~~Ability/action-to-visual routing~~ **Done** — `Unit.use_ability` and
   `ActionInstance.execute_action` both cast through `EffectsPlayback`, and
   `show_shared_vfx` drives the addon's TRAP handlers. The key is the ROM EFFECT
@@ -111,9 +135,9 @@ may reach them; these paths are **not certified** by this installation.
   routing landed, so `EffectsPlayback` is the only ability-VFX path. `VfxConstants`
   (unit/shadow depth), `ProjectileEffectInstance` (weapon projectiles, which this
   addon does not implement) and the `VisualEffectData`/`TrapEffectData` data model
-  and its ROM exporter were deliberately KEPT — the exporter is still the only
-  in-repo route from a ROM to effect content, since the `E###` directories are
-  produced by a generator that lives in the upstream monorepo, not here.
+  and its ROM exporter were deliberately KEPT — the exporter is the in-repo route
+  from a ROM to effect content, and it now produces the addon's `E###` directories
+  as well as its own `.tres`/`.webp` outputs.
 - Terrain-column callable (`{exists, world_y}` at floored world X/Z), unit
   layer-4/SelectionArea occlusion and cinematic camera/framing adapters.
 - Receiving map/unit tint registrations and compatible depth/tint shaders.

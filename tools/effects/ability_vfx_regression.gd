@@ -23,7 +23,10 @@ extends Node3D
 ##   Godot --path . res://tools/effects/ability_vfx_regression.tscn -- auto noplay [...]
 ## Exits 0 only if every arm that ran passed. Never --headless: arm B reads a framebuffer.
 
-const CONTENT_ROOT := "res://content/"
+## The one value `RomReader.export_effects_content()` writes to and `BattleManager` reads
+## from. Scoring a different path than the exporter produces would be scoring nothing.
+const EffectExtractPaths := preload("res://src/file_formats/vfx/effect_extract.gd")
+const CONTENT_ROOT := EffectExtractPaths.CONTENT_ROOT
 
 ## One real ability, with the values its exported action actually carries. Fire is a
 ## bright, centred, long-lived cast — a poor choice would fail arm B for being dim

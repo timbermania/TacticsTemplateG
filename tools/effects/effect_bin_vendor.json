@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/timbermania/fft-monorepo",
+  "revision": "4cdaa1624efac831a118495f9ac312bdbfe61ee6",
+  "source_prefix": "godot-learning/",
+  "vendor_dir": "src/file_formats/vfx/effect_bin",
+  "rewrite": {
+    "from": "res://addons/exmateria_effects/file_model/",
+    "to": "res://src/file_formats/vfx/effect_bin/"
+  },
+  "file_count": 19,
+  "files": [
+    {
+      "source": "godot-learning/addons/exmateria_effects/file_model/EffectBinHeader.gd",
+      "destination": "src/file_formats/vfx/effect_bin/EffectBinHeader.gd",
+      "upstream_sha256": "c4234bc505e4457f643df00679becf1c9e7dc03724b565ba31f2e9e53374a6f8",
+      "vendored_sha256": "c4234bc505e4457f643df00679becf1c9e7dc03724b565ba31f2e9e53374a6f8",
+      "bytes": 10694
+    },
+    {
+      "source": "godot-learning/addons/exmateria_effects/file_model/EffectBinLayout.gd",
+      "destination": "src/file_formats/vfx/effect_bin/EffectBinLayout.gd",
+      "upstream_sha256": "60d3f26717e11944242d8101c819145faf6f922af8df7b1bc5d0c492aab51970",
+      "vendored_sha256": "60d3f26717e11944242d8101c819145faf6f922af8df7b1bc5d0c492aab51970",
+      "bytes": 12144
+    },
+    {
+      "source": "godot-learning/addons/exmateria_effects/file_model/EffectBinReader.gd",
+      "destination": "src/file_formats/vfx/effect_bin/EffectBinReader.gd",
+      "upstream_sha256": "0d777cbbe08d03e7010c90b558c7f5a3f89c7e01480f439397c46f4b19077552",
+      "vendored_sha256": "09f1bff79ba6284af885aa8a08e47df6a75a86d0d946811488d5fc2d575ec19f",
+      "bytes": 5440
+    },
+    {
+      "source": "godot-learning/addons/exmateria_effects/file_model/readers/EffectReadAnimation.gd",
+      "destination": "src/file_formats/vfx/effect_bin/readers/EffectReadAnimation.gd",
+      "upstream_sha256": "c136fa0a0c9fefcc979c9fc3d01b75639a739b32d8c09c826d0dc54c78f60456",
+      "vendored_sha256": "c136fa0a0c9fefcc979c9fc3d01b75639a739b32d8c09c826d0dc54c78f60456",
+      "bytes": 6406
+    },
+    {
+      "source": "godot-learning/addons/exmateria_effects/file_model/readers/EffectReadCamera.gd",
+      "destination": "src/file_formats/vfx/effect_bin/readers/EffectReadCamera.gd",
+      "upstream_sha256": "9e7c21eae815c6a15c2285e29e8281eceaf034db8a7713cad8be2759a9af8c66",
+      "vendored_sha256": "c04ad62d8f9c3c6fc3509c22cba4e2a68a8927eee26d8c612cc0cfebb830b003",
+      "bytes": 6213
+    },
+    {
+      "source": "godot-learning/addons/exmateria_effects/file_model/readers/EffectReadContainers.gd",
+      "destination": "src/file_formats/vfx/effect_bin/readers/EffectReadContainers.gd",
+      "upstream_sha256": "0b8c8d5f57aab3a0152347ad055401615fc6a71162f128b1a2e55e47f5468204",
+      "vendored_sha256": "01fd457f4c01f9167f1e7e62e460a16c9db2d6598765cc91487d6d77a478a124",
+      "bytes": 1069
+    },
+    {
+      "source": "godot-learning/addons/exmateria_effects/file_model/readers/EffectReadCurves.gd",
+      "destination": "src/file_formats/vfx/effect_bin/readers/EffectReadCurves.gd",
+      "upstream_sha256": "ee0c2dbd7910d49ec60d7645aba1e15c26cb03335fe944a2e9b0eae8a380a03d",
+      "vendored_sha256": "ee0c2dbd7910d49ec60d7645aba1e15c26cb03335fe944a2e9b0eae8a380a03d",
+      "bytes": 3997
+    },
+    {
+      "source": "godot-learning/addons/exmateria_effects/file_model/readers/EffectReadEmitters.gd",
+      "destination": "src/file_formats/vfx/effect_bin/readers/EffectReadEmitters.gd",
+      "upstream_sha256": "a57c48345909531bf086deb0b9e90499c98f92ec1f7a3dfb5760b60ad0efeeb0",
+      "vendored_sha256": "02f0fe5890634ad8fb59234d91517516b7541b58f7467fbb876775dc27687447",
+      "bytes": 16662
+    },
+    {
+      "source": "godot-learning/addons/exmateria_effects/file_model/readers/EffectReadFlags.gd",
+      "destination": "src/file_formats/vfx/effect_bin/readers/EffectReadFlags.gd",
+      "upstream_sha256": "604716e68ba65c5f2ebd7f514bfb174827a599ad1b53979b9fc3b2d8514cbde0",
+      "vendored_sha256": "1854ae9a1214f795092afb687c7f759a7e768e5c583c13bc4a56af1b30a756fe",
+      "bytes": 1141
+    },
+    {
+      "source": "godot-learning/addons/exmateria_effects/file_model/readers/EffectReadFrames.gd",
+      "destination": "src/file_formats/vfx/effect_bin/readers/EffectReadFrames.gd",
+      "upstream_sha256": "7b1df26fb549aa260ac1b656343427d75552d0a8db9e3e793c889e56b351399c",
+      "vendored_sha256": "13d8c32443975202aec11cb2a0c715b4bcaa9902069c2a7f2111b8e2a6f04a6a",
+      "bytes": 11606
+    },
+    {
+      "source": "godot-learning/addons/exmateria_effects/file_model/readers/EffectReadPalette.gd",
+      "destination": "src/file_formats/vfx/effect_bin/readers/EffectReadPalette.gd",
+      "upstream_sha256": "ccd8a3d37ed09a56b874bbfbb6fcacf0c6873df0aedbc22703468848cfa6e07d",
+      "vendored_sha256": "ee6b5ad71588cb9b46ad6b69535f7cee3039b7ee656bea5eafd0b8762a4129c9",
+      "bytes": 4574
+    },
+    {
+      "source": "godot-learning/addons/exmateria_effects/file_model/readers/EffectReadParticleTimeline.gd",
+      "destination": "src/file_formats/vfx/effect_bin/readers/EffectReadParticleTimeline.gd",
+      "upstream_sha256": "895c4fa2696eeeef2a19d0407a101c7cb242d1a9693d49a5f24709b66b160f24",
+      "vendored_sha256": "f5b6759e02a2f1920debafecb79b49b7caebcefff14de36873e20b2551f54200",
+      "bytes": 10684
+    },
+    {
+      "source": "godot-learning/addons/exmateria_effects/file_model/readers/EffectReadScreen.gd",
+      "destination": "src/file_formats/vfx/effect_bin/readers/EffectReadScreen.gd",
+      "upstream_sha256": "d0633f89014978e2813b311aa1d044b9de2738b3280000e0644d95aaa8349282",
+      "vendored_sha256": "c5eee60e431188c375e4ca68edb9673bbf0e06ce2eafe84f783dff94f30b1265",
+      "bytes": 5886
+    },
+    {
+      "source": "godot-learning/addons/exmateria_effects/file_model/readers/EffectReadScript.gd",
+      "destination": "src/file_formats/vfx/effect_bin/readers/EffectReadScript.gd",
+      "upstream_sha256": "3f81f84370821edbe56654e8cea4b34157d80e35100134d846cc1b797ece86c7",
+      "vendored_sha256": "3f81f84370821edbe56654e8cea4b34157d80e35100134d846cc1b797ece86c7",
+      "bytes": 7099
+    },
+    {
+      "source": "godot-learning/addons/exmateria_effects/file_model/readers/EffectReadSound.gd",
+      "destination": "src/file_formats/vfx/effect_bin/readers/EffectReadSound.gd",
+      "upstream_sha256": "477d2f83bb329d215120d68a15298f3c000fd5f6da627de7fbed3253bd3517f7",
+      "vendored_sha256": "95abe3d95f72d2d0d651d5cd188671904ca1597551243f428653469f384be861",
+      "bytes": 2612
+    },
+    {
+      "source": "godot-learning/addons/exmateria_effects/file_model/readers/EffectReadSoundDef.gd",
+      "destination": "src/file_formats/vfx/effect_bin/readers/EffectReadSoundDef.gd",
+      "upstream_sha256": "e95844291a84683bc5c24c0194d24af09e832428eff1cd76c36b1c5966149226",
+      "vendored_sha256": "e95844291a84683bc5c24c0194d24af09e832428eff1cd76c36b1c5966149226",
+      "bytes": 3229
+    },
+    {
+      "source": "godot-learning/addons/exmateria_effects/file_model/readers/EffectReadTexture.gd",
+      "destination": "src/file_formats/vfx/effect_bin/readers/EffectReadTexture.gd",
+      "upstream_sha256": "272bf2aa6a8560c21f036a0b89e32c92a79c77fca984aad3283cb45b4b6f87de",
+      "vendored_sha256": "8b8bba76c233be1478eef3093117fce3d4bc5304dccd94c76d3de5d965b05c8e",
+      "bytes": 11707
+    },
+    {
+      "source": "godot-learning/addons/exmateria_effects/file_model/readers/EffectReadTimeScale.gd",
+      "destination": "src/file_formats/vfx/effect_bin/readers/EffectReadTimeScale.gd",
+      "upstream_sha256": "cefc09ed0dcb931727ec77c4a9e3933c35d708659959570c4d7c4c871652386b",
+      "vendored_sha256": "8ee4af81658bc0d4590849379667f6ac1f84f20668baefb09a5f613da403b90e",
+      "bytes": 1877
+    },
+    {
+      "source": "godot-learning/src/effects/studio/TextureTga.gd",
+      "destination": "src/file_formats/vfx/effect_bin/TextureTga.gd",
+      "upstream_sha256": "fac3448ec6c665ff3276cf7b07d95f1885e5870cbc649c2a491bc6f180dc384a",
+      "vendored_sha256": "fac3448ec6c665ff3276cf7b07d95f1885e5870cbc649c2a491bc6f180dc384a",
+      "bytes": 6657
+    }
+  ]
+}
