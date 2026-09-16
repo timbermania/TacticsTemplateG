@@ -790,6 +790,8 @@ src/content_scripts/map/map_data.gd
 src/content_scripts/map/map_data.gd.uid
 src/content_scripts/map/map_file_record.gd
 src/content_scripts/map/map_file_record.gd.uid
+src/content_scripts/map/map_lighting.gd
+src/content_scripts/map/map_lighting.gd.uid
 src/content_scripts/map/map_shader.gdshader
 src/content_scripts/map/map_shader.gdshader.uid
 src/content_scripts/map/terrain_tile.gd
@@ -1127,11 +1129,15 @@ tools/effects/effect_extract_regression.gd.uid
 tools/effects/effect_extract_regression.tscn
 tools/effects/host_startup.gd
 tools/effects/manifest.json
+tools/effects/map_lighting_regression.gd
+tools/effects/map_lighting_regression.gd.uid
+tools/effects/map_lighting_regression.tscn
 tools/effects/native_project.godot.txt
 tools/effects/native_regression.gd
 tools/effects/native_regression.tscn
 tools/effects/run_checks.py
 tools/effects/run_integration_probe.py
+tools/effects/run_map_lighting_checks.py
 tools/effects/test_installation.py
 tools/effects/ttg_integration_probe.gd
 tools/effects/ttg_integration_probe.tscn

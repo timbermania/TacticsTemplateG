@@ -140,12 +140,20 @@ may reach them; these paths are **not certified** by this installation.
   as well as its own `.tres`/`.webp` outputs.
 - Terrain-column callable (`{exists, world_y}` at floored world X/Z), unit
   layer-4/SelectionArea occlusion and cinematic camera/framing adapters.
-- Receiving map/unit tint registrations and compatible depth/tint shaders.
-  **Shared map/unit/legacy depth shader edits require separate approval.**
+- Receiving **unit** tint registrations and a compatible unit depth/tint shader.
+  **Shared unit/legacy depth shader edits still require separate approval.**
+  The **map** half is DONE and approved separately: `MapChunkNodes.set_mesh_shader`
+  registers each chunk's `ShaderMaterial` under `TintedSurfaces.SURFACE_MAP`, and
+  `src/content_scripts/map/map_shader.gdshader` now includes
+  `colour_model/color_stack.gdshaderinc` and folds `color_apply` onto the sampled
+  palette entry BEFORE the lighting multiply — the CLUT-rewrite order. That shader
+  also carries the map's own ROM per-vertex lighting (`MapLighting`). Scored by
+  `tools/effects/run_map_lighting_checks.py`. `VfxConstants.DepthMode` and
+  `src/shaders/psx_depth_common.gdshaderinc` were NOT touched.
 - Gameplay audio/timing integration and content-loaded lifecycle validation.
 
-No action, content importer, camera, tint, audio integration, legacy removal or
-shared host shader change is implemented here. Accepted GL blend appearance
+No action, content importer, camera, audio integration, legacy removal or shared
+UNIT/legacy shader change is implemented here. Accepted GL blend appearance
 differences do not excuse missing effects, shader failures or gameplay regressions.
 
 ## Reproducible verification

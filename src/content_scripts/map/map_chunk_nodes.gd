@@ -3,6 +3,14 @@ extends StaticBody3D
 
 const MAP_SCENE: PackedScene = preload("uid://buljw4afjva1d")
 
+## The reserved MAP-surface token, taken off the addon's PORT rather than off the
+## autoload node: a GDScript const is not a property, so `TintedSurfaces.SURFACE_MAP`
+## is a reach into the SCRIPT, and the port already re-exports it for exactly that
+## reason (`install/TintedSurfacesPort.gd:16-22`). The port publishes no
+## `register_surface` verb - registration is the host's side of the contract - so the
+## call itself goes to the autoload.
+const TintedSurfacesPort := preload("res://addons/exmateria_effects/install/TintedSurfacesPort.gd")
+
 @export var mesh_instance: MeshInstance3D
 @export var collision_shape: CollisionShape3D
 @export var map_shader: Shader
@@ -59,10 +67,34 @@ func play_animations(local_map_data: MapData) -> void:
 			local_map_data.animate_uv(texture_animation, self, anim_id, anim_fps)
 
 
-func set_mesh_shader(texture: Texture2D, texture_palettes: PackedColorArray) -> void:
+func set_mesh_shader(texture: Texture2D, texture_palettes: PackedColorArray, lighting: MapLighting = null) -> void:
 	var new_mesh_material: ShaderMaterial = ShaderMaterial.new()
 	new_mesh_material.shader = map_shader
 	new_mesh_material.set_shader_parameter("albedo_texture_color_indicies", texture)
 	new_mesh_material.set_shader_parameter("palettes_colors", texture_palettes)
-	
+
+	# 🔴 NO LIGHTING IS A LOUD FALLBACK, NOT A DARK MAP. `lighting` is null for a
+	# `.map_data.tres` exported before maps carried a `MapLighting`; `unlit()` is
+	# ambient 1.0 with no directional term, which is pixel-identical to the flat map
+	# that shipped before. Re-export the maps from the ROM to get the real thing.
+	var chunk_lighting: MapLighting = lighting
+	if chunk_lighting == null:
+		push_warning("MapChunkNodes: no ROM lighting for \"%s\"; rendering flat. Re-export this map." % name)
+		chunk_lighting = MapLighting.unlit()
+	chunk_lighting.apply_to_material(new_mesh_material)
+
 	mesh_instance.material_override = new_mesh_material
+
+	# The effects addon's palette/colour track pushes a map tint on every cast
+	# (`subsystem/PaletteSubsystem._deliver_output`), and until this call existed
+	# `TintedSurfaces` held SURFACE_MAP with an EMPTY material list and `_recomposite`
+	# iterated nothing - every map tint the addon computed was discarded silently.
+	#
+	# There is deliberately no matching unregister: `TintedSurfaces.unregister_surface`
+	# early-returns on SURFACE_MAP ("a map's materials are replaced by the next
+	# composition, never withdrawn"), so a chunk's material stays in the registry for
+	# the process lifetime. Upstream's own `BattlefieldWiring.wire_map` registers and
+	# never withdraws for the same reason. Re-registering the same material is a
+	# documented no-op.
+	if is_instance_valid(TintedSurfaces):
+		TintedSurfaces.register_surface(TintedSurfacesPort.SURFACE_MAP, new_mesh_material)
