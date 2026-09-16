@@ -20,7 +20,6 @@ config/icon="uid://b05fn7pqo1rrn"
 [autoload]
 
 ApplicationShutdown="*res://src/utilities/application_shutdown.gd"
-
 ExMateriaAudioEngine="*res://addons/exmateria_sound/runtime/audio_engine.gd"
 ExMateriaEffectSfx="*res://addons/exmateria_sound/runtime/effect_sfx_engine.gd"
 EffectMultiMeshPool="*res://addons/exmateria_effects/render/EffectMultiMeshPool.gd"
