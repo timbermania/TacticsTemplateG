@@ -77,7 +77,11 @@ func run() -> void:
 	# Playback refuses loudly rather than rendering nothing.
 	var play = play_script.new()
 	add_child(play)
-	check(not play.enabled, "playback is OPT-IN, so it COEXISTS with TacticsG's VFX")
+	# The default is still OFF — but that no longer means "coexists with TacticsG's VFX",
+	# because there is no longer a second path to coexist with. It now means a bare
+	# EffectsPlayback draws nothing until an owner (BattleManager) opts it in, so a scene
+	# that forgets to enable it fails loudly through `unavailable_reason` below.
+	check(not play.enabled, "playback is OPT-IN: it builds nothing until an owner enables it")
 	check(not play.begin(null), "begin() refuses while disabled")
 	check(play.unavailable_reason.begins_with("disabled"), "refusal states a reason: " + play.unavailable_reason)
 	check(not play.is_available(), "no manager exists after a refusal")
@@ -108,9 +112,23 @@ func run() -> void:
 	ProjectSettings.set_setting(ExMateriaEffects.EffectsContent.ROOT_SETTING, previous_root)
 	camera.queue_free()
 
-	# TacticsG's own VFX path must be untouched by any of this.
-	check(ClassDB.class_exists("Node") and load("res://src/file_formats/vfx/trap_effect_instance.gd") != null,
-		"TacticsG's own TrapEffectInstance is still present — this is coexistence, not replacement")
+	# 🔴 This assertion was INVERTED, deliberately. It used to require TacticsG's own
+	# `TrapEffectInstance` to still exist, as proof that installing the addon had changed
+	# nothing. That was true of the installation pass; it is false now — the addon owns
+	# ability VFX and the old renderers are gone, so the old assertion would fail for the
+	# right reason and hide the real one. What must hold now is that the renderers are
+	# RETIRED while the data/exporter layer they were built on survives, because
+	# `VisualEffectData` is still the only in-repo path from a ROM to effect content.
+	check(not ResourceLoader.exists("res://src/file_formats/vfx/trap_effect_instance.gd"),
+		"TacticsG's own TRAP renderer is retired — the addon draws these now")
+	check(not ResourceLoader.exists("res://src/file_formats/vfx/vfx_effect_instance.gd"),
+		"TacticsG's own spell VFX renderer is retired — the addon draws these now")
+	check(ResourceLoader.exists("res://src/file_formats/vfx/visual_effect_data.gd"),
+		"the VFX DATA model survives the renderer's retirement (ROM export still works)")
+	check(ResourceLoader.exists("res://src/file_formats/vfx/vfx_constants.gd"),
+		"VfxConstants survives — units and shadows read DepthMode.UNIT from it")
+	check(ResourceLoader.exists("res://src/file_formats/vfx/projectile_effect_instance.gd"),
+		"weapon projectiles survive — the addon has no equivalent")
 
 	print("PROBE: " + ("PASS" if not failed else "FAIL"))
 	get_tree().quit(1 if failed else 0)

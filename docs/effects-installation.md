@@ -62,11 +62,12 @@ No new plugin, PSXDisplay, CompositorAutopilot or production compositor setup is
 The public `ExMateriaEffects` facade now carries **24 exports**, re-counted rather
 than carried over: the previous pin's 21 plus `EffectManager`, `CastHost` and
 `AbilityVisual`, which the almanac cut made obtainable. It still imports no host
-Battlefield. The project **does not yet request visual playback**. A future owning playback scene must create one
-`ExMateriaEffects.EngineFoldCompositor`, add it to the tree, then check
-`setup_native(in_tree_camera)` succeeds before playback. Keep that producer and
+Battlefield. The project **now requests visual playback**: `src/battle/effects_playback.gd`
+creates one `ExMateriaEffects.EngineFoldCompositor`, adds it to the tree, and checks
+`setup_native(in_tree_camera)` succeeds before playback, keeping that producer and
 camera alive for the cast. Do not call default fold `setup()` on stock Godot.
-Only the synthetic test currently exercises the native setup seam.
+Besides the synthetic test, `tools/effects/ability_vfx_regression.tscn` now exercises
+the native setup seam and scores that real casts reach the framebuffer.
 
 ### Unsupported optional fork resources
 
@@ -82,23 +83,37 @@ may reach them; these paths are **not certified** by this installation.
 
 - Explicit private content root and `effects/E###`, callback payload and TRAP
   texture/table layout; no content search, importer or root setting was invented.
-  **Partly done for TRAP only.** `src/battle/effects_demo_scene.tscn` declares a
-  content root at runtime and plays real TRAP handlers, which needs only the ten
-  `effects/trap/*.json` tables and `TRAP1.tga`/`TRAP1.palette.tga` (~660 KB) — NOT
-  the 224 MB of per-effect `E###` directories that spell and cinematic casts need.
-  Copy those from the monorepo's `godot-learning/assets/` into a gitignored
-  `content/` (`content/effects/trap/`, `content/sprites/textures/`) and run the
-  scene. The addon loads the textures with `load()`, i.e. `ResourceLoader`, so the
-  content must live under `res://` and be imported — an absolute or external path
-  will not work.
-- Ability/action-to-visual routing, real timelines, callbacks/TRAP and timing.
+  **Done.** `BattleManager` declares `res://content/` at runtime — only when that
+  directory exists, so a checkout with no content still fails legibly rather than
+  resolving paths that cannot be there. All 401 `E###` directories are provisioned
+  alongside the ten `effects/trap/*.json` tables and `TRAP1.tga`/`TRAP1.palette.tga`.
+  Copy them from the monorepo's `godot-learning/assets/effects/` into the gitignored
+  `content/`, **excluding the `*.import` sidecars** — those hard-code
+  `source_file="res://assets/…"` and must be regenerated here. Do not symlink: the
+  addon loads textures through `ResourceLoader`, so the content must live under
+  `res://` and be imported, and `EffectData` SILENTLY SKIPS an unimported `.tga` —
+  a broken link yields effects that initialize and simulate but draw nothing.
+- ~~Ability/action-to-visual routing~~ **Done** — `Unit.use_ability` and
+  `ActionInstance.execute_action` both cast through `EffectsPlayback`, and
+  `show_shared_vfx` drives the addon's TRAP handlers. The key is the ROM EFFECT
+  NUMBER (`Action.vfx_id` -> `E%03d`), NOT the ability id: they differ for 352 of
+  388 abilities, and many wrong ids name a real directory, so keying on the ability
+  id draws the WRONG effect silently. `tools/effects/ability_vfx_regression.tscn`
+  scores the mapping against the exported action data and the drawing against a
+  negative control. Real timelines, callbacks and finer timing remain open.
 - ~~Owning scene/camera lifecycle and checked native setup before real playback.~~
   **Done** — `src/battle/effects_playback.gd` owns the producer/host/manager for one
   battle and checks `setup_native(in_tree_camera)`; `src/battle/effects_cast_host.gd`
   implements the `CastHost` contract (roster, arena bounds, ability visuals). Both are
-  **opt-in**: `enabled` is false by default, so this COEXISTS with the project's own
-  VFX rather than replacing it. See `docs/adr/0003-*.md`. Content provisioning and the
-  routing at the real call sites are still open — see the remaining items here.
+  **opt-in**: `enabled` is false by default, so an owner must switch it on.
+  See `docs/adr/0003-*.md`. 🔴 This no longer COEXISTS with the project's own VFX —
+  the old spell/TRAP renderers under `src/file_formats/vfx/` were deleted once the
+  routing landed, so `EffectsPlayback` is the only ability-VFX path. `VfxConstants`
+  (unit/shadow depth), `ProjectileEffectInstance` (weapon projectiles, which this
+  addon does not implement) and the `VisualEffectData`/`TrapEffectData` data model
+  and its ROM exporter were deliberately KEPT — the exporter is still the only
+  in-repo route from a ROM to effect content, since the `E###` directories are
+  produced by a generator that lives in the upstream monorepo, not here.
 - Terrain-column callable (`{exists, world_y}` at floored world X/Z), unit
   layer-4/SelectionArea occlusion and cinematic camera/framing adapters.
 - Receiving map/unit tint registrations and compatible depth/tint shaders.

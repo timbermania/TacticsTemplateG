@@ -720,6 +720,8 @@ func update_actions(battle_manager: BattleManager) -> void:
 	# set_available_actions(get_all_passive_effects())
 	for action: Action in actions:
 		var modified_action: Action = Action.get_modified_action(action, self)
+		if modified_action == null:
+			continue
 		var new_action_instance: ActionInstance = ActionInstance.new(modified_action, self, battle_manager)
 		actions_data[modified_action.unique_name] = new_action_instance
 		
@@ -735,7 +737,9 @@ func update_actions(battle_manager: BattleManager) -> void:
 func set_available_actions(all_passive_effects: Array[PassiveEffect]) -> void:
 	actions.clear()
 	actions.append(move_action)
-	actions.append(get_attack_action())
+	var attack_action: Action = get_attack_action()
+	if attack_action != null:
+		actions.append(attack_action)
 	actions.append_array(get_skillset_actions()) # TODO move to skillset ability
 
 	for passive_effect: PassiveEffect in all_passive_effects:
@@ -1116,8 +1120,15 @@ func use_ability(pos: Vector3) -> void:
 	#new_vfx_location.name = "VfxLocation"
 	#get_parent().add_child(new_vfx_location)
 	var action_instance: ActionInstance = ActionInstance.new(action_data, self, global_battle_manager)
-	if is_instance_valid(action_instance.action.vfx_data):
-		action_instance.show_vfx(pos)
+	# Ability VFX now come from `addons/exmateria_effects` rather than the old
+	# `vfx_data` path. `use_ability` raycasts the map, so it knows the struck POINT
+	# and not a unit there — hence the `_at` variant, which supplies the target node
+	# the addon anchors to. The playback answers true/false; a false is a real state
+	# (playback refused, or no content for this effect) and is already reported at
+	# the seam that knows why, so it is deliberately not re-warned per cast here.
+	if global_battle_manager != null and global_battle_manager.effects_playback != null:
+		global_battle_manager.effects_playback.play_action_vfx_at(
+			self, pos, action_instance.action)
 	
 	# TODO implement proper timeout for abilities that execute using an infinite loop animation
 	# this implementation can overwrite can_move when in the middle of another ability
