@@ -127,9 +127,15 @@ const CAM_PROBE_YAW: float = 1024.0
 ## material, shader and registration this arm is about lives on this scene.
 const UNIT_SPRITES_SCENE := preload("res://src/Unit/unit_sprites_manager.tscn")
 ## The addon's colour engine, loaded BY PATH (the probe pins the facade's export count,
-## so leaning on the facade here would couple this arm to that number). Used to author
-## a layer with a NARROW surface mask, which no published `TintedSurfaces` verb can.
+## so leaning on the facade here would couple this arm to that number). Used for two
+## things: to author a layer with a NARROW surface mask, which no published
+## `TintedSurfaces` verb can, and as the ARITHMETIC ORACLE below.
 const COLOR_STACK_PATH := "res://addons/exmateria_schema/colour_model/ColorStack.gd"
+## How far the sprite's measured colour may sit from what `ColorStack.fold_packed`
+## says the same uniforms fold to. This is a READBACK tolerance, not a modelling one —
+## the two are the same arithmetic — so it is set just above the 8-bit framebuffer's
+## own rounding (measured worst case 0.006 on a settled frame).
+const UNIT_FOLD_EPSILON: float = 0.02
 ## 🔴 NOT E016. Fire's palette track carries six TARGET keyframes and NO caster ones
 ## (counted over all three phases of the installed `palette.json`), so an arm scored on
 ## it could not tell a working caster channel from a missing one. E015 (Holy) drives
@@ -793,6 +799,17 @@ func _run_unit_fold(caster: Dictionary, target: Dictionary, bystander: Dictionar
 	after.save_png("user://ability-vfx-unit-tint.png")
 	print("[AbilityVfx] screenshot user://ability-vfx-unit-tint.png")
 
+	# 🔴 F6, SCORED HERE because this is the one place the frame is clean: no cast, no
+	# particles, so a disagreement between the shader and the oracle can only be the
+	# shader. (Scoring it during a cast measures particles over the patch instead — a
+	# measured 0.68 "error" at the peak of E073's plume was exactly that.)
+	_check_fold_parity(after, caster, UnitSpritesManager.SURFACE_BODY, Vector3.ZERO,
+		"a caster's own additive layer")
+	_check_fold_parity(after, target, UnitSpritesManager.SURFACE_BODY, Vector3.ZERO,
+		"a target's own additive layer")
+	_check_fold_parity(after, bystander, UnitSpritesManager.SURFACE_BODY, Vector3.ZERO,
+		"an untouched unit (the identity fold)")
+
 	var caster_rise := _rise(_unit_patch(before, caster, Vector3.ZERO),
 		_unit_patch(after, caster, Vector3.ZERO))
 	var target_rise := _rise(_unit_patch(before, target, Vector3.ZERO),
@@ -866,6 +883,12 @@ func _run_unit_surface_masks(caster: Dictionary) -> void:
 		print("[AbilityVfx] ARM F3 SURFACES %s body=%s weapon=%s effect=%s"
 			% [mask_name, _v3(body_rise), _v3(weapon_rise), _v3(effect_rise)])
 
+		# The same parity question against a REAL ColorStack (a mode-0 affine at the
+		# full 5-bit parameter), not just the additive bridge, and on each surface id.
+		_check_fold_parity(after, caster, UnitSpritesManager.SURFACE_BODY, Vector3.ZERO,
+			"%s on the body" % mask_name)
+		_check_fold_parity(after, caster, UnitSpritesManager.SURFACE_WEAPON,
+			UNIT_WEAPON_OFFSET, "%s on the weapon" % mask_name)
 		_check(body_rise.x > UNIT_MIN_RISE,
 			"F3 %s lights the BODY (%.4f)" % [mask_name, body_rise.x])
 		if mask == stack_script.MASK_SURFACE0:
@@ -914,6 +937,8 @@ func _run_unit_cast(control: bool, registry: Node, caster: Dictionary,
 	var peak_bystander_rise := Vector3.ZERO
 	var peak_target_patch := Color.BLACK
 	var budget_exceeded := 0
+	var peak_effect_frame := 0
+	var tinted_seconds: float = 0.0
 	var addon_owners: Dictionary = {}
 	var elapsed: float = 0.0
 	while elapsed < UNIT_SAMPLE_SECONDS:
@@ -928,6 +953,10 @@ func _run_unit_cast(control: bool, registry: Node, caster: Dictionary,
 		budget_exceeded = maxi(budget_exceeded,
 			registry._active_layers.get(target["token"], {}).values().reduce(
 				func(total: int, snap: Dictionary) -> int: return total + snap.rgb0.size(), 0))
+		if is_instance_valid(_unit_cast):
+			peak_effect_frame = maxi(peak_effect_frame, _unit_cast.get_effect_frame())
+		if _layer_count(target_body) > 0:
+			tinted_seconds += get_tree().root.get_process_delta_time()
 		var now := await _grab()
 		peak_caster_rise = _peak_rise(peak_caster_rise,
 			_rise(_unit_patch(baseline, caster, Vector3.ZERO), _unit_patch(now, caster, Vector3.ZERO)))
@@ -976,6 +1005,7 @@ func _run_unit_cast(control: bool, registry: Node, caster: Dictionary,
 		"F4 and the CASTER's sprite pixels moved (%s)" % _v3(peak_caster_rise))
 	_check(peak_target_rise.length() > UNIT_MIN_RISE,
 		"F4 and the TARGET's sprite pixels moved (%s)" % _v3(peak_target_rise))
+	_report_restore_reach(peak_effect_frame, tinted_seconds)
 	# 🔴 WHERE THE SPRITE LANDED, not merely that it moved — the ROM's own numbers as
 	# an independent oracle. E015's caster and target keyframes are blend mode 4,
 	# `base + delta`, at the full 5-bit parameter: `ColorRecipe.from_mode` normalizes
@@ -1009,6 +1039,45 @@ func _run_unit_cast(control: bool, registry: Node, caster: Dictionary,
 		_unit_patch(after_cast, target, Vector3.ZERO))
 	_check(residue.length() < UNIT_TINT_TOLERANCE,
 		"F5 and the sprite is back to its untinted colour (%s)" % _v3(residue))
+
+
+## 🔴 A KNOWN UPSTREAM LIMITATION, REPORTED EVERY RUN RATHER THAN LEFT TO BE
+## REDISCOVERED — and the reason a unit can look like it "never goes back".
+##
+## Almost every effect in the corpus puts its palette RESTORE (blend mode 8/10, the op
+## that fades the flash back to the untinted CLUT entry) in **phase2**, and
+## `PaletteSubsystem.build_stream` only pushes ops for phases that have actually
+## STARTED. Phase 2 starts at `phase1_duration + phase2_delay` of the effect's OWN
+## frame clock. But `EffectManager._poll_effect_cleanup` caps a spell in WALL CLOCK —
+## 0.5s plus 100 polls at 0.1s — and an effect whose `time_scale` pacing curve runs it
+## below 30 Hz needs more wall clock than that to reach the same frame. When the cap
+## wins, the cast is destroyed mid-timeline, the restore never executes, and the unit
+## holds the flash until `EffectInstance._exit_tree` yanks the layers — which is a SNAP
+## back to base, not the fade the ROM authored.
+##
+## Measured on E073: reaped at effect frame 171 with `phase2_start` 241, the caster
+## pinned at pure white for 5.6 seconds first. Both halves of the cause live in
+## `addons/`, which is byte-pinned, so this states the number instead of fixing it.
+func _report_restore_reach(peak_frame: int, tinted_seconds: float) -> void:
+	var path: String = EffectExtractPaths.EFFECTS_DIR.path_join(
+		"E%03d" % int(UNIT_TINT_ACTION["vfx_id"])).path_join("timeline.json")
+	var phase2_start := -1
+	var total_frames := -1
+	if FileAccess.file_exists(path):
+		var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+		if typeof(parsed) == TYPE_DICTIONARY and parsed.has("header"):
+			var header: Dictionary = parsed["header"]
+			phase2_start = int(header.get("phase1_duration", 0)) + int(header.get("phase2_delay", 0))
+			total_frames = int(header.get("total_frames", -1))
+	print(("[AbilityVfx] NOTE F4 the cast reached effect frame %d of %d "
+		+ "(phase2_start %d) and held a tint for %.1fs.")
+		% [peak_frame, total_frames, phase2_start, tinted_seconds])
+	if phase2_start >= 0 and peak_frame < phase2_start:
+		print("[AbilityVfx] NOTE F4 it was reaped BEFORE phase2, so the ROM's palette "
+			+ "RESTORE never ran — the unit snapped back when the cast node freed "
+			+ "instead of fading. `EffectManager` caps a spell at 0.5s + 100 polls of "
+			+ "WALL CLOCK, which a time-scaled effect cannot always reach phase2 in. "
+			+ "Both halves are in the byte-pinned addon; see _report_restore_reach.")
 
 
 ## F5b. The other teardown: the unit leaves the tree. `Unit._exit_tree` calls
@@ -1072,6 +1141,57 @@ func _unit_patch(image: Image, probe: Dictionary, offset: Vector3) -> Color:
 	if count == 0:
 		return Color.BLACK
 	return Color(total.x / count, total.y / count, total.z / count)
+
+
+## What the addon's own CPU mirror says the material's CURRENT uniforms fold to.
+##
+## 🔴 THE ANSWER TO "IS THE HOST FOLDING THE COLOUR FRAMES CORRECTLY". `color_apply`
+## in `color_stack.gdshaderinc` and `ColorStack.fold_packed` are two implementations of
+## one specification — affine vs luma, the meta bit-3 source select, per-layer progress
+## and the 5-bit quantize — and `fold_packed`'s own docstring calls itself "the readback
+## oracle ... it reproduces exactly what the shader's color_apply computes". Feeding it
+## the exact uniform arrays the registry pushed and comparing against the pixels is
+## therefore a direct check of the host shader against the addon's specification, with
+## no expected value hand-written on either side.
+func _fold_oracle(probe: Dictionary, surface_id: int) -> Vector3:
+	var stack_script: Script = load(COLOR_STACK_PATH)
+	var material: ShaderMaterial = _probe_material(probe, surface_id)
+	var base := Vector3(UNIT_BASE_COLOUR.r, UNIT_BASE_COLOUR.g, UNIT_BASE_COLOUR.b)
+	if stack_script == null or material == null:
+		return base
+	var count: Variant = material.get_shader_parameter("color_layer_count")
+	if count == null or int(count) == 0:
+		return base
+	var quantize: Variant = material.get_shader_parameter("quantize")
+	return stack_script.fold_packed(
+		Array(material.get_shader_parameter("color_layer_rgb0")),
+		Array(material.get_shader_parameter("color_layer_rgb1")),
+		Array(material.get_shader_parameter("color_layer_meta")),
+		int(count), base, surface_id, quantize != null and bool(quantize))
+
+
+## The material painting one of a probe's three colour sub-surfaces.
+func _probe_material(probe: Dictionary, surface_id: int) -> ShaderMaterial:
+	var sprites: UnitSpritesManager = probe["sprites"]
+	match surface_id:
+		UnitSpritesManager.SURFACE_WEAPON:
+			return sprites.sprite_weapon.material_override as ShaderMaterial
+		UnitSpritesManager.SURFACE_EFFECT:
+			return sprites.sprite_effect.material_override as ShaderMaterial
+		_:
+			return sprites.sprite_primary.material_override as ShaderMaterial
+
+
+## Score one sub-sprite's pixels against the oracle. `label` names the situation.
+func _check_fold_parity(image: Image, probe: Dictionary, surface_id: int,
+		offset: Vector3, label: String) -> void:
+	var measured_colour: Color = _unit_patch(image, probe, offset)
+	var measured := Vector3(measured_colour.r, measured_colour.g, measured_colour.b)
+	var expected: Vector3 = _fold_oracle(probe, surface_id)
+	_check((expected - measured).length() < UNIT_FOLD_EPSILON,
+		"F6 %s folds to what ColorStack.fold_packed says these exact uniforms mean "
+			% label + "(shader %s vs oracle %s, %.4f apart)"
+			% [_v3(measured), _v3(expected), (expected - measured).length()])
 
 
 ## Per-channel change. SIGNED and per-channel, not a scalar distance: a tint that
