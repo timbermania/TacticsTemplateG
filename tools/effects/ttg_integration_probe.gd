@@ -130,5 +130,78 @@ func run() -> void:
 	check(ResourceLoader.exists("res://src/file_formats/vfx/projectile_effect_instance.gd"),
 		"weapon projectiles survive — the addon has no equivalent")
 
+	_check_unit_tint_surface()
+
 	print("PROBE: " + ("PASS" if not failed else "FAIL"))
 	get_tree().quit(1 if failed else 0)
+
+
+## 🔴 THE TOKEN IS `char_body`'s INSTANCE ID, NOT THE `Unit`'s — measured on a REAL
+## `Unit`, not on a stand-in.
+##
+## `PaletteSubsystem._deliver_output` pushes its CASTER / TARGET colour stacks at
+## `get_instance_id()` of whatever the cast was handed as caster/target, and
+## `EffectsPlayback.play_action_vfx` is handed `unit.char_body` — it refuses a `Unit`
+## outright, because a `Unit` is a `Node3D` that is never positioned. Register the
+## `Unit`'s own id and `TintedSurfaces.update_stack` returns early on an unknown token:
+## it compiles, it runs, and it tints nothing, silently. `tools/effects/
+## ability_vfx_regression.gd` arm F scores the fold itself on the real sprite
+## materials; this is the half that can only be asked of `unit.tscn` + `unit.gd`.
+##
+## The unit is built here rather than in a battle because `Unit._enter_tree` — where
+## the bind lives, so that reparenting `battle_view` into the scenario editor's
+## SubViewport and back does not permanently unregister every unit — needs nothing
+## but the scene's own exported `char_body` and `animation_manager`.
+func _check_unit_tint_surface() -> void:
+	var registry: Node = get_tree().root.get_node_or_null(^"/root/TintedSurfaces")
+	check(registry != null, "the TintedSurfaces autoload is present to register into")
+	if registry == null:
+		return
+	# 🔴 A FIXTURE, NOT A SHORTCUT. `Unit._ready` reaches `GameData` for the status-icon
+	# sheet and its palette, and `GameData` is empty in a probe with no ROM indexed — so
+	# without these two entries the run prints two `no indexed texture named "misc"`
+	# errors and one hard `Invalid access to property 'misc'`, which is exactly the
+	# noise a probe exists to make legible. The bind under test happens in `_enter_tree`,
+	# before any of that, and does not depend on either value.
+	var had_texture: bool = GameData.textures.has("misc")
+	var had_palette: bool = GameData.palettes.has("misc")
+	if not had_texture:
+		GameData.textures["misc"] = ImageTexture.create_from_image(
+			Image.create_empty(8, 8, false, Image.FORMAT_RGBA8))
+	if not had_palette:
+		var stub := PackedColorArray()
+		stub.resize(256)
+		GameData.palettes["misc"] = stub
+
+	var unit: Unit = Unit.instantiate()
+	add_child(unit)
+
+	var body_id: int = unit.char_body.get_instance_id()
+	check(unit.tint_surface_token() == body_id,
+		"a Unit registers its CHAR_BODY's instance id (%d), which is what the addon "
+			% body_id + "keys caster/target tints on — not its own (%d)"
+			% unit.get_instance_id())
+	check(registry.is_surface_registered(body_id),
+		"and TintedSurfaces knows that token, so update_stack does not early-return")
+	check(not registry.is_surface_registered(unit.get_instance_id()),
+		"and the Unit's own id is NOT a surface — registering it would tint nothing")
+	var materials: Array = registry._surface_materials.get(body_id, [])
+	check(materials.size() >= 2,
+		"with the unit's sprite materials on it (%d)" % materials.size())
+
+	# The other half of the lifecycle. `BattleManager` reparents `battle_view` in and
+	# out of the scenario editor's SubViewport, which takes every unit out of the tree
+	# and back, so the pair has to survive a round trip and not just a teardown.
+	remove_child(unit)
+	check(not registry.is_surface_registered(body_id),
+		"leaving the tree unregisters the surface rather than leaking it")
+	add_child(unit)
+	check(registry.is_surface_registered(body_id)
+			and registry._surface_materials.get(body_id, []).size() >= 2,
+		"and coming back re-registers it — a reparent must not kill a unit's tint")
+	unit.queue_free()
+
+	if not had_texture:
+		GameData.textures.erase("misc")
+	if not had_palette:
+		GameData.palettes.erase("misc")

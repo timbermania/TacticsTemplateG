@@ -23,6 +23,9 @@ extends Node3D
 ## ARM E — CAMERA. The addon's CAMERA track, driving TacticsG's own `CameraController`
 ##   through `EffectCameraTrack`. Measured like D and for the same reason — see
 ##   `_run_camera_arm`.
+## ARM F — UNIT COLOUR. The addon's PALETTE track's caster/target channels, folded
+##   into TacticsG's own unit sprite shaders through `TintedSurfaces`. Measured on the
+##   sprite, not the frame — see `_run_unit_tint_arm`.
 ##
 ## USAGE
 ##   Godot --path . res://tools/effects/ability_vfx_regression.tscn -- auto [--actions=DIR]
@@ -118,6 +121,71 @@ const CAM_RESTORE_EPSILON: float = 0.001
 const CAM_CONTROL_TOLERANCE: float = 0.004
 ## PSX yaw 1024 = 90 degrees — the chirality probe's pose.
 const CAM_PROBE_YAW: float = 1024.0
+
+## ARM F. The unit sprite rig TacticsG actually ships, instantiated three times. Not a
+## whole `Unit`: a `Unit` cannot stand up without an indexed `GameData`, and every
+## material, shader and registration this arm is about lives on this scene.
+const UNIT_SPRITES_SCENE := preload("res://src/Unit/unit_sprites_manager.tscn")
+## The addon's colour engine, loaded BY PATH (the probe pins the facade's export count,
+## so leaning on the facade here would couple this arm to that number). Used to author
+## a layer with a NARROW surface mask, which no published `TintedSurfaces` verb can.
+const COLOR_STACK_PATH := "res://addons/exmateria_schema/colour_model/ColorStack.gd"
+## 🔴 NOT E016. Fire's palette track carries six TARGET keyframes and NO caster ones
+## (counted over all three phases of the installed `palette.json`), so an arm scored on
+## it could not tell a working caster channel from a missing one. E015 (Holy) drives
+## both channels with mode-4 `base + delta` keyframes at the full 5-bit parameter
+## (31/31 = white) over 32 frames — the largest, longest and least ambiguous unit flash
+## in the corpus, and the same effect the addon's own map-tint notes are written about.
+const UNIT_TINT_ACTION := {"unique_name": "e015-unit-colour-probe", "vfx_name": "e_015", "vfx_id": 15}
+## Where the three probe units stand. The caster and the target are where the cast
+## plays; the BYSTANDER is the third unit nobody named — it is registered like the
+## others and targeted by nothing, so it answers two questions at once: does a layer
+## reach a unit the cast never addressed, and would PARTICLES washing across the frame
+## move a patch on their own.
+##
+## 🔴 KEPT WELL INSIDE A NARROW FRAME. The project declares a 1536x864 window, but the
+## window manager is free to hand the run something else entirely — a measured run got
+## a PORTRAIT 1212x1391 viewport, where the horizontal half-extent is 3.4 world units
+## rather than 6.8. The first cut of this arm put the bystander at x=4.2 and sampled
+## empty space off the right edge, which read as "did not move" and PASSED. Nothing is
+## placed past +/-2.1 now, and `_probe_visible` refuses to score a patch that is not
+## demonstrably on screen.
+const UNIT_CASTER_POS := Vector3(-1.8, 1.4, 0.0)
+const UNIT_TARGET_POS := Vector3(1.8, 1.4, 0.0)
+const UNIT_BYSTANDER_POS := Vector3(1.8, -1.4, 0.0)
+## The weapon and effect sub-sprites of the caster probe, pushed off the body along Y
+## so all three surfaces can be sampled independently. A unit normally stacks them.
+const UNIT_WEAPON_OFFSET := Vector3(0.0, -0.8, 0.0)
+const UNIT_EFFECT_OFFSET := Vector3(0.0, 0.8, 0.0)
+## The probe sprite's source texture. 256 px over the scene's 16 hframes/vframes gives
+## a 16 px frame, ~0.57 world units — small enough that five sub-sprites fit a portrait
+## viewport, large enough that the sampled patch sits comfortably inside one.
+const UNIT_TEXTURE_PX: int = 256
+## The sampled patch: a box centred on a sub-sprite's projected centre. The sprite
+## projects to ~64 px at the narrowest viewport this has been run at, so +/-12 px stays
+## inside it with room to spare.
+const UNIT_PATCH_HALF_PX: int = 12
+## The probe sprite's CLUT entry. Mid grey leaves room in every channel for a tint to
+## move UP measurably without the readback clipping at 1.0.
+const UNIT_BASE_COLOUR := Color(0.35, 0.35, 0.35, 1.0)
+## The deterministic host-side pushes: one per channel, so a fold that wrote the wrong
+## channel (or all of them) fails instead of passing on magnitude alone.
+const UNIT_CASTER_DELTA := Color(0.60, 0.0, 0.0)
+const UNIT_TARGET_DELTA := Color(0.0, 0.0, 0.60)
+## Owner ids for the host-side pushes. Deliberately far from `PaletteSubsystem.owner_id`
+## (an effect instance id) so an arm F layer can never be mistaken for a cast's.
+const UNIT_TINT_OWNER: int = 0x7F000001
+const UNIT_MASK_OWNER: int = 0x7F000002
+## A tinted channel must rise by at least this much, and the two channels the tint does
+## not name must stay under the tolerance. Calibrated against a measured run.
+const UNIT_MIN_RISE: float = 0.08
+const UNIT_TINT_TOLERANCE: float = 0.02
+## How long to watch a cast for the caster/target flash. E015's unit keyframes ramp over
+## 32 effect frames from their phase start, and the cast outlives that.
+const UNIT_SAMPLE_SECONDS: float = 6.0
+## How long to wait for the cast to finish and withdraw its layers on its own.
+## `EffectManager` caps a spell at roughly 10.5s.
+const UNIT_QUIET_TIMEOUT: float = 14.0
 ## E4 drives the rig two tiles sideways with no cast in the scene, so the only thing
 ## that can repaint the frame is the camera. Against the landmarks below that moves a
 ## large fraction of the sampled pixels; the return-to-baseline reading is the control.
@@ -162,6 +230,9 @@ const CAM_YAW_SAMPLE_SECONDS: float = 5.0
 const FAKE_MAP_TILES := Vector2i(12, 7)
 
 var _playback: EffectsPlayback
+## ARM F's cast, kept so the arm can wait for it to free itself before handing the
+## frame to arm D — see the tail of `_run_unit_tint_arm`.
+var _unit_cast: Node3D
 var _caster: Node3D
 var _background: ScreenBackgroundQuad
 var _failures: Array[String] = []
@@ -407,6 +478,10 @@ func _run_pixel_arm() -> void:
 			"ability pixels reached the framebuffer (%d changed px must be > %d)"
 				% [peak, MIN_DREW_PX])
 	await _run_trap_arm(control)
+	# BEFORE arm D, deliberately: D makes the full-screen gradient visible and E adds
+	# landmarks and drives the camera, and this arm measures a 40x40 px patch of one
+	# sprite against a flat clear.
+	await _run_unit_tint_arm(control)
 	await _run_background_arm(control)
 	await _run_camera_arm(control)
 	_finish(true)
@@ -505,6 +580,532 @@ func _changed_pixels(before: Image, after: Image) -> int:
 			if absf(a.r - b.r) + absf(a.g - b.g) + absf(a.b - b.b) > PIXEL_EPSILON:
 				count += 1
 	return count
+
+
+# --- ARM F: the unit colour track -----------------------------------------------
+
+## Proves the addon's PALETTE track's CASTER and TARGET channels reach TacticsG's unit
+## sprites.
+##
+## The fourth track this integration computed every frame and threw away, after the
+## background gradient, the map tint and the camera. `PaletteSubsystem._deliver_output`
+## has always pushed a caster ColorStack and a target ColorStack into
+## `TintedSurfaces.update_stack`, keyed by the cast's caster/target node ids — and
+## `TintedSurfaces.update_stack` opens with `if not _surface_materials.has(surface_id):
+## return`, while NOTHING in TacticsG ever called `register_surface`. Every unit tint
+## the addon computed was dropped on the floor, with no error.
+##
+##   F1 REGISTERED — the host registers, under the id the addon actually keys on, in
+##      the order a `Unit` really does it (bind from `_enter_tree`, materials created
+##      later in the child's `_ready`). A token that is the `Unit`'s id rather than
+##      `char_body`'s compiles, runs and tints nothing, so the token is READ BACK off
+##      the registry and compared, never assumed.
+##   F2 FOLDED — a known layer on one unit's token moves that unit's sprite pixels, in
+##      the channel it names, and moves NEITHER of the other two units. Deterministic:
+##      no cast, no particles, so this is the clean statement that the shader fold and
+##      the per-token isolation work.
+##   F3 SUB-SURFACE — a `MASK_SURFACE0` layer lights the BODY only, and `MASK_WHOLE`
+##      lights body, weapon and effect. This is the evidence for passing distinct
+##      `color_surface_id`s (0/1/2) instead of 0 everywhere; with 0 everywhere the two
+##      masks are indistinguishable and F3's first half fails.
+##   F4 THE CAST — a real ability's caster and target channels land on the real unit
+##      materials (`color_layer_count` read back off the material, which was 0 forever)
+##      and move the sprite, while the unregistered bystander does not move at all.
+##      The bystander is the particle control: it is bathed in the same frame as the
+##      others, so if the plume were what moved the patch it would move too.
+##   F5 CLEARED — the tint goes away when the cast ends, and again when the unit leaves
+##      the tree (`Unit._exit_tree` -> `unbind_tint_surface`), with no layer left behind.
+func _run_unit_tint_arm(control: bool) -> void:
+	# Arm C's trap has to finish decaying before any patch reading means anything.
+	await _settle(TRAP_SAMPLE_SECONDS)
+
+	var registry: Node = get_tree().root.get_node_or_null(^"/root/TintedSurfaces")
+	if registry == null:
+		_fail("ARM F: the TintedSurfaces autoload is absent — nothing can be registered")
+		return
+
+	var caster := _make_unit_probe("ProbeCaster", UNIT_CASTER_POS, true)
+	var target := _make_unit_probe("ProbeTarget", UNIT_TARGET_POS, false)
+	var bystander := _make_unit_probe("ProbeBystander", UNIT_BYSTANDER_POS, false)
+	await _settle(SETTLE_SECONDS)
+
+	_run_unit_registration(registry, caster, target, bystander)
+	await _run_unit_fold(caster, target, bystander)
+	await _run_unit_surface_masks(caster)
+	await _run_unit_cast(control, registry, caster, target, bystander)
+	await _run_unit_teardown(caster, target, bystander)
+
+	for probe: Dictionary in [caster, target, bystander]:
+		(probe["body"] as Node3D).queue_free()
+
+	# 🔴 THE CAST HAS TO BE GONE BEFORE ARM D, not merely finished with the units.
+	# E015's UNIT channels settle well before the effect instance does, and the same
+	# instance is still driving the SCREEN track — arm D opens by asserting the
+	# background sits at the host's two map colours "at rest", which is false while
+	# anything is still folding a gradient. `EffectManager`'s cleanup poll caps a spell
+	# at roughly 10.5s, so this waits it out rather than racing it.
+	var waited: float = 0.0
+	while is_instance_valid(_unit_cast) and waited < UNIT_QUIET_TIMEOUT:
+		await get_tree().process_frame
+		waited += get_tree().root.get_process_delta_time()
+	if _unit_cast != null:
+		_check(not is_instance_valid(_unit_cast),
+			"F5 the cast freed itself within %.0fs (waited %.1fs), so the next arm "
+				% [UNIT_QUIET_TIMEOUT, waited] + "measures a frame at rest")
+	_unit_cast = null
+	await get_tree().process_frame
+
+
+## One probe "unit": a positioned `Node3D` standing in for `char_body`, with the real
+## `UnitSpritesManager` scene under it and a real paletted texture on its sprites.
+##
+## 🔴 THE BIND HAPPENS BEFORE `add_child`, ON PURPOSE. `Unit` binds from `_enter_tree`,
+## which Godot runs top-down BEFORE any child's `_ready` — so the first
+## `bind_tint_surface` always arrives while `_primary_material` and `_weapon_material`
+## are still null, and `UnitSpritesManager._ready` is what completes the registration.
+## Binding after the child is in the tree would test an order the game never takes.
+func _make_unit_probe(probe_name: String, at: Vector3, with_sub_sprites: bool) -> Dictionary:
+	var body := Node3D.new()
+	body.name = probe_name
+	add_child(body)
+	body.global_position = at
+
+	var sprites: UnitSpritesManager = UNIT_SPRITES_SCENE.instantiate()
+	sprites.bind_tint_surface(body.get_instance_id())
+	body.add_child(sprites)
+
+	var texture := _index_texture()
+	var palette := _index_palette(UNIT_BASE_COLOUR)
+	sprites.set_primary_texture(texture)
+	sprites.sprite_primary.material_override.set_shader_parameter("palette_colors", palette)
+
+	if with_sub_sprites:
+		sprites.set_weapon_texture(texture)
+		sprites.sprite_weapon.material_override.set_shader_parameter("palette_colors", palette)
+		sprites.sprite_weapon.position += UNIT_WEAPON_OFFSET
+		# The per-unit DUPLICATE, exactly as `Unit.initialize_unit` makes it — the scene
+		# ships this material as a shared SubResource, so registering the shared one
+		# would tie every unit's effect sprite to every other unit's colour stack.
+		var effect_material: ShaderMaterial = sprites.sprite_effect.material_override.duplicate()
+		effect_material.set_shader_parameter("sprite_texture", texture)
+		effect_material.set_shader_parameter("palette_colors", palette)
+		sprites.set_effect_material(effect_material)
+		sprites.sprite_effect.texture = texture
+		sprites.sprite_effect.position += UNIT_EFFECT_OFFSET
+	else:
+		sprites.sprite_weapon.visible = false
+		sprites.sprite_effect.visible = false
+
+	return {"body": body, "sprites": sprites, "token": body.get_instance_id()}
+
+
+## A paletted sprite texture: every texel is CLUT index 1. The unit shaders read the
+## RED channel as the index (`round(tex.x * 255.0)`), so the index travels in r/255.
+func _index_texture() -> ImageTexture:
+	var image := Image.create_empty(UNIT_TEXTURE_PX, UNIT_TEXTURE_PX, false, Image.FORMAT_RGBA8)
+	image.fill(Color(1.0 / 255.0, 0.0, 0.0, 1.0))
+	return ImageTexture.create_from_image(image)
+
+
+## A 16-entry CLUT with index 0 transparent (the shaders discard it) and index 1 the
+## probe colour.
+func _index_palette(entry: Color) -> PackedColorArray:
+	var palette := PackedColorArray()
+	palette.resize(16)
+	for i in 16:
+		palette[i] = Color(0.0, 0.0, 0.0, 0.0)
+	palette[1] = entry
+	return palette
+
+
+## F1. Registered, under the right token, with every material the unit paints with.
+func _run_unit_registration(registry: Node, caster: Dictionary, target: Dictionary,
+		bystander: Dictionary) -> void:
+	for probe: Dictionary in [caster, target, bystander]:
+		var sprites: UnitSpritesManager = probe["sprites"]
+		var body: Node3D = probe["body"]
+		_check(registry.is_surface_registered(probe["token"]),
+			"F1 %s is a registered tint surface" % body.name)
+		# 🔴 THE FAILURE THIS ARM EXISTS FOR. `PaletteSubsystem` keys on
+		# `get_instance_id()` of the node the cast was handed as caster/target, and that
+		# node is `char_body`. Reading the token back off the host rather than trusting
+		# the call is what makes "it compiles and tints nothing" fail here.
+		_check(sprites.tint_surface_token() == body.get_instance_id(),
+			"F1 %s's token IS its char_body's instance id (%d)"
+				% [body.name, body.get_instance_id()])
+
+	# The whole material set, not just the one the sprite happens to be showing: a
+	# layer carries a mask over all three sub-surfaces.
+	var caster_materials: Array = registry._surface_materials.get(caster["token"], [])
+	_check(caster_materials.size() == 3,
+		"F1 all THREE of the caster's sprite materials are on the surface (body, "
+		+ "weapon, effect — got %d)" % caster_materials.size())
+	var plain_materials: Array = registry._surface_materials.get(target["token"], [])
+	_check(plain_materials.size() == 2,
+		"F1 a unit whose effect material has not been duplicated yet registers the two "
+		+ "it has (got %d), rather than the scene's SHARED effect material"
+			% plain_materials.size())
+
+	# The ordering hazard, stated as a check: the bind above ran while both materials
+	# were still null, so this passing means `UnitSpritesManager._ready` completed the
+	# registration the way it has to for `Unit._enter_tree`.
+	var sprites_caster: UnitSpritesManager = caster["sprites"]
+	_check(caster_materials.has(sprites_caster.sprite_primary.material_override),
+		"F1 the body material registered even though the bind preceded its creation")
+	_check(int(sprites_caster.sprite_primary.material_override.get_shader_parameter(
+			"color_surface_id")) == UnitSpritesManager.SURFACE_BODY
+		and int(sprites_caster.sprite_weapon.material_override.get_shader_parameter(
+			"color_surface_id")) == UnitSpritesManager.SURFACE_WEAPON
+		and int(sprites_caster.sprite_effect.material_override.get_shader_parameter(
+			"color_surface_id")) == UnitSpritesManager.SURFACE_EFFECT,
+		"F1 the three materials pass DISTINCT color_surface_ids (0/1/2), so a "
+		+ "single-surface mask can mean the body alone")
+
+
+## F2. A known layer on one token moves that unit's pixels, in the channel it names,
+## and moves no other unit's. No cast is involved: this is the clean statement that the
+## shader fold works, uncontaminated by particles.
+func _run_unit_fold(caster: Dictionary, target: Dictionary, bystander: Dictionary) -> void:
+	var before := await _grab()
+	# 🔴 THE PATCH HAS TO BE ON A SPRITE, and the first cut of this arm proved why:
+	# the bystander sat off the right edge of a portrait viewport, `_unit_patch` fell
+	# through its "no pixels sampled" return, and "did not move" passed on black. Both
+	# halves are asserted — the point projects inside the frame, AND what is there is
+	# the probe's own CLUT colour rather than the clear.
+	var clear_patch: Color = _mean_of(before, false)
+	for probe: Dictionary in [caster, target, bystander]:
+		var body_name: String = (probe["body"] as Node3D).name
+		_check(_probe_visible(before, probe, Vector3.ZERO),
+			"F2 %s projects inside the viewport" % body_name)
+		var patch: Color = _unit_patch(before, probe, Vector3.ZERO)
+		_check(_distance(patch, UNIT_BASE_COLOUR) < 0.1
+				and _distance(patch, clear_patch) > 0.02,
+			"F2 %s's sprite is what the patch is sampling (patch %s, CLUT entry %s, "
+				% [body_name, patch, UNIT_BASE_COLOUR] + "clear %s)" % clear_patch)
+	for offset: Vector3 in [UNIT_WEAPON_OFFSET, UNIT_EFFECT_OFFSET]:
+		_check(_probe_visible(before, caster, offset),
+			"F2 the caster's sub-sprite at %s projects inside the viewport" % _v3(offset))
+
+	TintedSurfaces.update_layer(caster["token"], UNIT_TINT_OWNER, UNIT_CASTER_DELTA)
+	TintedSurfaces.update_layer(target["token"], UNIT_TINT_OWNER, UNIT_TARGET_DELTA)
+	await _settle(0.2)
+	var after := await _grab()
+	after.save_png("user://ability-vfx-unit-tint.png")
+	print("[AbilityVfx] screenshot user://ability-vfx-unit-tint.png")
+
+	var caster_rise := _rise(_unit_patch(before, caster, Vector3.ZERO),
+		_unit_patch(after, caster, Vector3.ZERO))
+	var target_rise := _rise(_unit_patch(before, target, Vector3.ZERO),
+		_unit_patch(after, target, Vector3.ZERO))
+	var bystander_rise := _rise(_unit_patch(before, bystander, Vector3.ZERO),
+		_unit_patch(after, bystander, Vector3.ZERO))
+	print("[AbilityVfx] ARM F2 FOLD caster_rise=%s target_rise=%s bystander_rise=%s"
+		% [_v3(caster_rise), _v3(target_rise), _v3(bystander_rise)])
+
+	_check(caster_rise.x > UNIT_MIN_RISE
+			and caster_rise.x > caster_rise.y + UNIT_MIN_RISE
+			and caster_rise.x > caster_rise.z + UNIT_MIN_RISE,
+		"F2 the CASTER's own layer reached its sprite, in RED (%s)" % _v3(caster_rise))
+	_check(target_rise.z > UNIT_MIN_RISE
+			and target_rise.z > target_rise.x + UNIT_MIN_RISE
+			and target_rise.z > target_rise.y + UNIT_MIN_RISE,
+		"F2 the TARGET's own layer reached its sprite, in BLUE (%s)" % _v3(target_rise))
+	# The two channels are separate surfaces, not one shared tint: neither push may
+	# show up on the other unit, and neither on a unit nobody pushed to.
+	_check(absf(target_rise.x) < UNIT_TINT_TOLERANCE,
+		"F2 the caster's RED did not leak onto the target (%.4f)" % target_rise.x)
+	_check(absf(caster_rise.z) < UNIT_TINT_TOLERANCE,
+		"F2 the target's BLUE did not leak onto the caster (%.4f)" % caster_rise.z)
+	_check(bystander_rise.length() < UNIT_TINT_TOLERANCE,
+		"F2 the UNPUSHED third unit did not move at all (%s)" % _v3(bystander_rise))
+
+	TintedSurfaces.remove_layer(caster["token"], UNIT_TINT_OWNER)
+	TintedSurfaces.remove_layer(target["token"], UNIT_TINT_OWNER)
+	await _settle(0.2)
+	var cleared := await _grab()
+	var caster_residue := _rise(_unit_patch(before, caster, Vector3.ZERO),
+		_unit_patch(cleared, caster, Vector3.ZERO))
+	_check(caster_residue.length() < UNIT_TINT_TOLERANCE,
+		"F2 withdrawing the layer put the sprite back (%s)" % _v3(caster_residue))
+
+
+## F3. The three sub-surfaces are addressable separately.
+##
+## This is the arm that justifies the host passing 0/1/2 rather than 0 three times.
+## Upstream's unit shader composites all three sprite layers into ONE quad and is
+## therefore a single-surface consumer that hardcodes 0; TacticsG paints them as three
+## Sprite3Ds with three materials, which is the case `color_stack.gdshaderinc:25-26`
+## describes. With 0 everywhere the first half of this check fails: `MASK_SURFACE0`
+## would light the weapon and the effect sprite too.
+func _run_unit_surface_masks(caster: Dictionary) -> void:
+	var stack_script: Script = load(COLOR_STACK_PATH)
+	if stack_script == null:
+		_fail("ARM F3: cannot load " + COLOR_STACK_PATH)
+		return
+	var before := await _grab()
+
+	for phase: Array in [["MASK_SURFACE0", stack_script.MASK_SURFACE0],
+			["MASK_WHOLE", stack_script.MASK_WHOLE]]:
+		var mask_name: String = phase[0]
+		var mask: int = phase[1]
+		# One settled affine layer: mode 0 is `current + delta`, the delta is the full
+		# 5-bit parameter in RED, and duration 0 snaps it to full progress at frame 0.
+		var stack: Variant = stack_script.new()
+		stack.set_quantize(true)
+		stack.push_op(0, 31, 0, 0, 0, 0, mask, 0)
+		TintedSurfaces.update_stack(caster["token"], UNIT_MASK_OWNER, stack, 0)
+		await _settle(0.2)
+		var after := await _grab()
+
+		var body_rise := _rise(_unit_patch(before, caster, Vector3.ZERO),
+			_unit_patch(after, caster, Vector3.ZERO))
+		var weapon_rise := _rise(_unit_patch(before, caster, UNIT_WEAPON_OFFSET),
+			_unit_patch(after, caster, UNIT_WEAPON_OFFSET))
+		var effect_rise := _rise(_unit_patch(before, caster, UNIT_EFFECT_OFFSET),
+			_unit_patch(after, caster, UNIT_EFFECT_OFFSET))
+		print("[AbilityVfx] ARM F3 SURFACES %s body=%s weapon=%s effect=%s"
+			% [mask_name, _v3(body_rise), _v3(weapon_rise), _v3(effect_rise)])
+
+		_check(body_rise.x > UNIT_MIN_RISE,
+			"F3 %s lights the BODY (%.4f)" % [mask_name, body_rise.x])
+		if mask == stack_script.MASK_SURFACE0:
+			_check(weapon_rise.length() < UNIT_TINT_TOLERANCE
+					and effect_rise.length() < UNIT_TINT_TOLERANCE,
+				"F3 MASK_SURFACE0 lights the body ALONE — weapon %s, effect %s"
+					% [_v3(weapon_rise), _v3(effect_rise)])
+		else:
+			_check(weapon_rise.x > UNIT_MIN_RISE and effect_rise.x > UNIT_MIN_RISE,
+				"F3 MASK_WHOLE lights body, weapon AND effect (weapon %.4f, effect %.4f)"
+					% [weapon_rise.x, effect_rise.x])
+
+	TintedSurfaces.remove_layer(caster["token"], UNIT_MASK_OWNER)
+	await _settle(0.2)
+
+
+## F4. A real cast's caster and target channels land on the real unit materials.
+func _run_unit_cast(control: bool, registry: Node, caster: Dictionary,
+		target: Dictionary, bystander: Dictionary) -> void:
+	var caster_body: ShaderMaterial = (caster["sprites"] as UnitSpritesManager).sprite_primary.material_override
+	var target_body: ShaderMaterial = (target["sprites"] as UnitSpritesManager).sprite_primary.material_override
+	var bystander_body: ShaderMaterial = (bystander["sprites"] as UnitSpritesManager).sprite_primary.material_override
+
+	var action := Action.new()
+	action.unique_name = UNIT_TINT_ACTION["unique_name"]
+	action.vfx_name = UNIT_TINT_ACTION["vfx_name"]
+	action.vfx_id = UNIT_TINT_ACTION["vfx_id"]
+	_check(EffectsPlayback.effect_id_for(action) == UNIT_TINT_ACTION["vfx_id"],
+		"F4 the probe ability routes to E%03d" % UNIT_TINT_ACTION["vfx_id"])
+
+	var baseline := await _grab()
+	if not control:
+		# The exact call `Unit.use_ability` makes, with the two nodes it hands over:
+		# `char_body`s, never `Unit`s.
+		_unit_cast = _playback.play_action_vfx(caster["body"], target["body"], action)
+		_check(_unit_cast != null,
+			"F4 the cast spawned from the caster probe at the target probe")
+
+	# `color_layer_count` on the unit's OWN material: 0 for the entire history of this
+	# integration, because nothing was ever registered for the addon to write into.
+	var peak_caster_layers := 0
+	var peak_target_layers := 0
+	var peak_bystander_layers := 0
+	var peak_caster_rise := Vector3.ZERO
+	var peak_target_rise := Vector3.ZERO
+	var peak_bystander_rise := Vector3.ZERO
+	var peak_target_patch := Color.BLACK
+	var budget_exceeded := 0
+	var addon_owners: Dictionary = {}
+	var elapsed: float = 0.0
+	while elapsed < UNIT_SAMPLE_SECONDS:
+		await get_tree().process_frame
+		elapsed += get_tree().root.get_process_delta_time()
+		peak_caster_layers = maxi(peak_caster_layers, _layer_count(caster_body))
+		peak_target_layers = maxi(peak_target_layers, _layer_count(target_body))
+		peak_bystander_layers = maxi(peak_bystander_layers, _layer_count(bystander_body))
+		for token: int in [caster["token"], target["token"]]:
+			for owner_id: int in registry._active_layers.get(token, {}).keys():
+				addon_owners[owner_id] = true
+		budget_exceeded = maxi(budget_exceeded,
+			registry._active_layers.get(target["token"], {}).values().reduce(
+				func(total: int, snap: Dictionary) -> int: return total + snap.rgb0.size(), 0))
+		var now := await _grab()
+		peak_caster_rise = _peak_rise(peak_caster_rise,
+			_rise(_unit_patch(baseline, caster, Vector3.ZERO), _unit_patch(now, caster, Vector3.ZERO)))
+		var target_patch: Color = _unit_patch(now, target, Vector3.ZERO)
+		var target_rise := _rise(_unit_patch(baseline, target, Vector3.ZERO), target_patch)
+		if target_rise.length() > peak_target_rise.length():
+			peak_target_rise = target_rise
+			peak_target_patch = target_patch
+		peak_bystander_rise = _peak_rise(peak_bystander_rise,
+			_rise(_unit_patch(baseline, bystander, Vector3.ZERO),
+				_unit_patch(now, bystander, Vector3.ZERO)))
+
+	print("[AbilityVfx] ARM F4 CAST%s layers caster=%d target=%d bystander=%d "
+		% [" (CONTROL, no cast)" if control else "",
+			peak_caster_layers, peak_target_layers, peak_bystander_layers]
+		+ "(the addon offered up to %d, capped at its own MAX_COLOR_LAYERS budget); "
+			% budget_exceeded
+		+ "rise caster=%s target=%s bystander=%s; peak target patch %s"
+			% [_v3(peak_caster_rise), _v3(peak_target_rise), _v3(peak_bystander_rise),
+				peak_target_patch])
+
+	if control:
+		_check(peak_caster_layers == 0 and peak_target_layers == 0,
+			"F4 CONTROL: with no cast, no colour layer ever reached a unit material "
+			+ "(%d / %d)" % [peak_caster_layers, peak_target_layers])
+		_check(peak_caster_rise.length() < UNIT_TINT_TOLERANCE
+				and peak_target_rise.length() < UNIT_TINT_TOLERANCE,
+			"F4 CONTROL: and no unit sprite moved (%s / %s)"
+				% [_v3(peak_caster_rise), _v3(peak_target_rise)])
+		return
+
+	_check(peak_caster_layers > 0,
+		"F4 the cast's CASTER colour stack reached the caster's material (%d layers)"
+			% peak_caster_layers)
+	_check(peak_target_layers > 0,
+		"F4 the cast's TARGET colour stack reached the target's material (%d layers)"
+			% peak_target_layers)
+	_check(peak_bystander_layers == 0,
+		"F4 and nothing reached the unit the cast never named (%d layers)"
+			% peak_bystander_layers)
+	_check(addon_owners.size() >= 1
+			and not addon_owners.has(UNIT_TINT_OWNER) and not addon_owners.has(UNIT_MASK_OWNER),
+		"F4 the layers are the ADDON's, not this arm's leftovers (owners %s)"
+			% [addon_owners.keys()])
+	_check(peak_caster_rise.length() > UNIT_MIN_RISE,
+		"F4 and the CASTER's sprite pixels moved (%s)" % _v3(peak_caster_rise))
+	_check(peak_target_rise.length() > UNIT_MIN_RISE,
+		"F4 and the TARGET's sprite pixels moved (%s)" % _v3(peak_target_rise))
+	# 🔴 WHERE THE SPRITE LANDED, not merely that it moved — the ROM's own numbers as
+	# an independent oracle. E015's caster and target keyframes are blend mode 4,
+	# `base + delta`, at the full 5-bit parameter: `ColorRecipe.from_mode` normalizes
+	# 31/31 to 1.0, so the fold saturates the CLUT entry to WHITE. A tint that reached
+	# the shader but folded through the wrong recipe, the wrong quantization or the
+	# wrong operand order moves the patch too; only the right one puts it here.
+	_check(peak_target_patch.r > 0.95 and peak_target_patch.g > 0.95
+			and peak_target_patch.b > 0.95,
+		"F4 and it landed where the ROM's own keyframes say — mode 4 `base + 31/31` "
+		+ "saturates the CLUT entry to white (%s)" % peak_target_patch)
+	# 🔴 THE PARTICLE CONTROL. The bystander stands in the same frame, unregistered and
+	# untargeted. If the plume were what moved the two patches above, it would move this
+	# one too — so this check is what makes them evidence about COLOUR.
+	_check(peak_bystander_rise.length() < UNIT_TINT_TOLERANCE,
+		"F4 while the untargeted unit beside them did not — so what moved them was the "
+		+ "colour track, not particles (%s)" % _v3(peak_bystander_rise))
+
+	# F5a: the cast withdraws its own layers when it ends.
+	var waited: float = 0.0
+	while waited < UNIT_QUIET_TIMEOUT:
+		await get_tree().process_frame
+		waited += get_tree().root.get_process_delta_time()
+		if _layer_count(caster_body) == 0 and _layer_count(target_body) == 0:
+			break
+	_check(_layer_count(caster_body) == 0 and _layer_count(target_body) == 0,
+		"F5 the cast took its colour layers back with it when it ended (after %.1fs)"
+			% waited)
+	await _settle(0.3)
+	var after_cast := await _grab()
+	var residue := _rise(_unit_patch(baseline, target, Vector3.ZERO),
+		_unit_patch(after_cast, target, Vector3.ZERO))
+	_check(residue.length() < UNIT_TINT_TOLERANCE,
+		"F5 and the sprite is back to its untinted colour (%s)" % _v3(residue))
+
+
+## F5b. The other teardown: the unit leaves the tree. `Unit._exit_tree` calls
+## `unbind_tint_surface`, which drops the surface AND pushes an empty stack to its
+## materials first — a unit removed mid-cast must not keep the last frame's tint baked
+## into its uniforms, and its token must not stay in a registry that outlives it.
+func _run_unit_teardown(caster: Dictionary, target: Dictionary, bystander: Dictionary) -> void:
+	var sprites: UnitSpritesManager = target["sprites"]
+	var material: ShaderMaterial = sprites.sprite_primary.material_override
+	var before := await _grab()
+
+	TintedSurfaces.update_layer(target["token"], UNIT_TINT_OWNER, UNIT_TARGET_DELTA)
+	await _settle(0.2)
+	var tinted := await _grab()
+	_check(_rise(_unit_patch(before, target, Vector3.ZERO),
+			_unit_patch(tinted, target, Vector3.ZERO)).z > UNIT_MIN_RISE,
+		"F5 a layer is live on the unit about to be torn down")
+
+	sprites.unbind_tint_surface()
+	await _settle(0.2)
+	var torn := await _grab()
+	_check(not TintedSurfaces.is_surface_registered(target["token"]),
+		"F5 unbinding drops the surface from the registry")
+	_check(sprites.tint_surface_token() == 0,
+		"F5 and the host stops claiming a token it no longer holds")
+	_check(_layer_count(material) == 0,
+		"F5 and the material's stack was CLEARED, not just orphaned (%d layers)"
+			% _layer_count(material))
+	var residue := _rise(_unit_patch(before, target, Vector3.ZERO),
+		_unit_patch(torn, target, Vector3.ZERO))
+	_check(residue.length() < UNIT_TINT_TOLERANCE,
+		"F5 and the sprite went back to untinted (%s)" % _v3(residue))
+
+	# Leave nothing behind for arms D and E.
+	for probe: Dictionary in [caster, bystander]:
+		TintedSurfaces.remove_layer(probe["token"], UNIT_TINT_OWNER)
+		TintedSurfaces.remove_layer(probe["token"], UNIT_MASK_OWNER)
+		(probe["sprites"] as UnitSpritesManager).unbind_tint_surface()
+
+
+## Mean colour of a box centred on one probe sub-sprite's projected centre. The offset
+## selects the sub-sprite (zero = body); the body's quad centre sits exactly on the
+## probe's origin, because `unit_sprites_manager.tscn` cancels the sprite's -0.714 drop
+## with a +0.714 pixel offset.
+func _unit_patch(image: Image, probe: Dictionary, offset: Vector3) -> Color:
+	var camera := get_viewport().get_camera_3d()
+	if camera == null:
+		return Color.BLACK
+	var at: Vector2 = camera.unproject_position((probe["body"] as Node3D).global_position + offset)
+	var total := Vector3.ZERO
+	var count := 0
+	for y in range(int(at.y) - UNIT_PATCH_HALF_PX, int(at.y) + UNIT_PATCH_HALF_PX + 1):
+		if y < 0 or y >= image.get_height():
+			continue
+		for x in range(int(at.x) - UNIT_PATCH_HALF_PX, int(at.x) + UNIT_PATCH_HALF_PX + 1):
+			if x < 0 or x >= image.get_width():
+				continue
+			var c := image.get_pixel(x, y)
+			total += Vector3(c.r, c.g, c.b)
+			count += 1
+	if count == 0:
+		return Color.BLACK
+	return Color(total.x / count, total.y / count, total.z / count)
+
+
+## Per-channel change. SIGNED and per-channel, not a scalar distance: a tint that
+## reached the wrong channel is the failure a magnitude would score as a pass.
+func _rise(before: Color, after: Color) -> Vector3:
+	return Vector3(after.r - before.r, after.g - before.g, after.b - before.b)
+
+
+func _peak_rise(best: Vector3, candidate: Vector3) -> Vector3:
+	return candidate if candidate.length() > best.length() else best
+
+
+## `color_layer_count` as the material actually holds it. NEVER `int(...)` directly: a
+## material nothing has written to answers `null`, and `int(null)` is a runtime error
+## that takes the rest of the arm down without failing a check.
+func _layer_count(material: ShaderMaterial) -> int:
+	var value: Variant = material.get_shader_parameter("color_layer_count")
+	return 0 if value == null else int(value)
+
+
+## Whether a probe sub-sprite's centre projects far enough inside the frame for the
+## whole sampled patch to land on it.
+func _probe_visible(image: Image, probe: Dictionary, offset: Vector3) -> bool:
+	var camera := get_viewport().get_camera_3d()
+	if camera == null:
+		return false
+	var world: Vector3 = (probe["body"] as Node3D).global_position + offset
+	if camera.is_position_behind(world):
+		return false
+	var at: Vector2 = camera.unproject_position(world)
+	var margin: float = float(UNIT_PATCH_HALF_PX) + 1.0
+	return (at.x >= margin and at.y >= margin
+		and at.x < float(image.get_width()) - margin
+		and at.y < float(image.get_height()) - margin)
 
 
 # --- ARM D: the background ------------------------------------------------------

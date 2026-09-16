@@ -326,7 +326,34 @@ func _ready() -> void:
 		initialize_unit()
 
 
+## Bind this unit's sprite materials to the effects addon's colour registry.
+##
+## 🔴 THE TOKEN IS `char_body`'s INSTANCE ID, NOT THIS NODE'S. `PaletteSubsystem` keys
+## its CASTER / TARGET colour channels on `get_instance_id()` of the node the cast was
+## given as caster/target, and `EffectsPlayback.play_action_vfx` is handed — and now
+## refuses anything but — `char_body`, because a `Unit` is a `Node3D` that is never
+## positioned. Register this node's id instead and `TintedSurfaces.update_stack`
+## returns early on an unknown token: it compiles, it runs, and it tints nothing.
+##
+## 🔴 `_enter_tree`, NOT `_ready`. `BattleManager` reparents `battle_view` in and out of
+## the scenario editor's SubViewport, which takes every unit out of the tree and back
+## (the same reason `units` is rebuilt at `battle_manager.gd:286`). `_ready` runs once;
+## `_exit_tree` below unregisters, so only `_enter_tree` puts it back.
+func _enter_tree() -> void:
+	if char_body == null or animation_manager == null:
+		return
+	var sprites: UnitSpritesManager = animation_manager.unit_sprites_manager
+	if sprites != null:
+		sprites.bind_tint_surface(char_body.get_instance_id())
+
+
 func _exit_tree() -> void:
+	# Unconditional, unlike the battle bookkeeping below: the registry holds strong
+	# references to this unit's materials and keys them by an instance id the engine is
+	# free to hand to some other object later, so leaving a dead surface registered is
+	# both a leak and a mis-tint waiting to happen.
+	if animation_manager != null and animation_manager.unit_sprites_manager != null:
+		animation_manager.unit_sprites_manager.unbind_tint_surface()
 	if global_battle_manager != null and is_queued_for_deletion():
 		var unit_index: int = global_battle_manager.units.find(self)
 		for action_instance: ActionInstance in actions_data.values():
@@ -380,7 +407,11 @@ func initialize_unit() -> void:
 	eff_material.set_shader_parameter("sprite_texture", eff_frame_grid)
 	eff_material.set_shader_parameter("palette_colors", GameData.get_spritesheet_data("eff").color_palette.slice(0 * 16, 1 * 16))
 	eff_material.set_shader_parameter("depth_mode", VfxConstants.DepthMode.UNIT)
-	animation_manager.unit_sprites_manager.sprite_effect.material_override = eff_material
+	# Through the manager, not onto the Sprite3D: this is the per-unit DUPLICATE of the
+	# material `unit_sprites_manager.tscn` ships as a shared SubResource, and the tint
+	# registration has to swap to it (and stamp its `color_surface_id`) or the effect
+	# sprite is either unregistered or — worse — shared with every other unit.
+	animation_manager.unit_sprites_manager.set_effect_material(eff_material)
 
 	#animation_manager.item_spr = RomReader.sprs[RomReader.file_records["ITEM.BIN"].type_index]
 	
@@ -1685,6 +1716,22 @@ func modulate_sprite_color(new_modulate_color: Color) -> void:
 
 func set_sprite_tint(tint: Vector3) -> void:
 	animation_manager.unit_sprites_manager.set_tint(tint)
+
+
+## This unit's TINTED SURFACE token — the address `TintedSurfaces` knows its sprite
+## materials by, which is `char_body`'s instance id (see `_enter_tree`). 0 while the
+## unit is out of the tree.
+##
+## The seam for any host-side colour consumer, not just the effects addon's caster and
+## target channels: `TintedSurfaces.update_stack(token, owner, stack, now)` for a full
+## ColorStack, `update_layer(token, owner, delta)` for a flat additive one,
+## `remove_layer(token, owner)` to withdraw it. `StatusEffect.shading_color` /
+## `shading_type` — decoded from the ROM at `scus_942_21_data.gd:198-199` and applied
+## by nothing today — is the next consumer this is shaped for.
+func tint_surface_token() -> int:
+	if animation_manager == null or animation_manager.unit_sprites_manager == null:
+		return 0
+	return animation_manager.unit_sprites_manager.tint_surface_token()
 
 
 func set_submerged_depth(new_depth: int) -> void:
