@@ -537,14 +537,22 @@ func animate_evade(target_unit: Unit, evade_direction: EvadeData.Directions, use
 ## `addons/exmateria_effects`. Returns the cast so the caller can time against it, or
 ## null when this action has no effect or playback is unavailable.
 ##
-## The target is the UNIT NODE rather than its tile's world position, which the old
-## `VfxEffectInstance` path used: the addon parents a tracking anchor to whatever it is
-## given, so a unit node keeps the effect on a target that is still moving.
+## 🔴 `char_body`, NEVER the `Unit` NODE. A `Unit` is a `Node3D` that is never moved —
+## `unit.gd` and `battle_manager.gd` only ever assign `char_body.global_position`, so the
+## Unit itself sits at the world ORIGIN for the whole battle. `spawn_spell_effect` places
+## the cast at `caster.global_position`, so handing it a Unit spawns every effect at
+## (0,0,0). The old `VfxEffectInstance` path never touched the Unit transform either — it
+## used `tile_position.get_world_position()` and `char_body.global_position`.
+##
+## The tracking anchor the addon parents to the target therefore lands on `char_body`,
+## which is also the node that actually moves when a unit walks.
 func show_vfx(target_unit: Unit) -> Node3D:
 	var playback: EffectsPlayback = _effects_playback()
 	if playback == null or not is_instance_valid(target_unit):
 		return null
-	return playback.play_action_vfx(user, target_unit, action)
+	if user.char_body == null or target_unit.char_body == null:
+		return null
+	return playback.play_action_vfx(user.char_body, target_unit.char_body, action)
 
 
 ## The TRAP handlers (hit clouds, knight break, charge poses). The handler id and the

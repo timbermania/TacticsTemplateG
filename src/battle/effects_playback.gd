@@ -171,6 +171,16 @@ var _missing_content: Dictionary = {}
 func play_action_vfx(caster: Node3D, target: Node3D, action: Action) -> Node3D:
 	if not is_available() or not is_instance_valid(caster) or not is_instance_valid(target):
 		return null
+	# 🔴 A `Unit` IS NOT A POSITIONED NODE. It is a Node3D that never moves — only its
+	# `char_body` child is ever assigned a transform — so `spawn_spell_effect`, which
+	# places the cast at `caster.global_position`, would put it at the world ORIGIN.
+	# That shipped once and was invisible to every test here, because the scored scene
+	# casts from a bare Node3D it positions itself, so "at the caster" and "at the
+	# origin" were the same pixels. Refuse loudly instead of drawing in the wrong place.
+	if caster is Unit or target is Unit:
+		push_error("EffectsPlayback: pass `unit.char_body`, not the Unit — a Unit's own "
+			+ "transform is never set, so the cast would spawn at the world origin.")
+		return null
 	var effect_id: int = effect_id_for(action)
 	if effect_id < 0:
 		return null

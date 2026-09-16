@@ -1126,9 +1126,13 @@ func use_ability(pos: Vector3) -> void:
 	# the addon anchors to. The playback answers true/false; a false is a real state
 	# (playback refused, or no content for this effect) and is already reported at
 	# the seam that knows why, so it is deliberately not re-warned per cast here.
-	if global_battle_manager != null and global_battle_manager.effects_playback != null:
+	# 🔴 `char_body`, not `self`. A Unit is a Node3D that is NEVER positioned — only
+	# `char_body` is (see `set_unit_tile_position`) — so passing `self` spawns the cast
+	# at the world origin instead of on the caster.
+	if global_battle_manager != null and global_battle_manager.effects_playback != null \
+			and char_body != null:
 		global_battle_manager.effects_playback.play_action_vfx_at(
-			self, pos, action_instance.action)
+			char_body, pos, action_instance.action)
 	
 	# TODO implement proper timeout for abilities that execute using an infinite loop animation
 	# this implementation can overwrite can_move when in the middle of another ability

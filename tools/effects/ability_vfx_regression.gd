@@ -62,6 +62,11 @@ const TRAP_PROBE_HANDLER: int = 2
 const TRAP_PROBE_ELEMENT: int = 1
 ## Trap handlers are short and immediate; they need nothing like a spell's wind-up.
 const TRAP_SAMPLE_SECONDS: float = 2.5
+## Far enough from (0,0,0) that a cast placed at either one is unmistakably separated
+## on screen, and both stay in frame so neither can win by being the only thing visible.
+const CASTER_ORIGIN_OFFSET := Vector3(2.2, 0.0, 0.0)
+## The cast must land nearer the caster than the origin by at least this ratio.
+const POSITION_MARGIN: float = 1.5
 
 ## ARM D. Two colours far apart in every channel, so a top/bottom swap (the corner
 ## ordering is the one thing about this gradient that is easy to get backwards and
@@ -117,6 +122,13 @@ func _ready() -> void:
 	_caster = Node3D.new()
 	_caster.name = "Caster"
 	add_child(_caster)
+	# 🔴 DELIBERATELY OFF THE ORIGIN. With the caster AT (0,0,0) this suite passed while
+	# every cast in the real game spawned at the world origin, because "at the caster"
+	# and "at the origin" were the same pixels. A TacticsG `Unit` is a Node3D that is
+	# never moved — only its `char_body` child is — so handing the addon a Unit put
+	# every effect at (0,0,0), and nothing here could see it. The offset is what makes
+	# the position assertion below able to fail.
+	_caster.position = CASTER_ORIGIN_OFFSET
 	units.append(_caster)
 
 	_playback = EffectsPlayback.new()
@@ -254,7 +266,9 @@ func _run_pixel_arm() -> void:
 	var control: bool = "noplay" in OS.get_cmdline_user_args()
 	if not control:
 		# The EXACT call `Unit.use_ability` makes.
-		_check(_playback.play_action_vfx_at(_caster, Vector3(0, 1.0, 0), action) != null,
+		# Target expressed relative to the caster, as a real ability's would be.
+		_check(_playback.play_action_vfx_at(
+				_caster, _caster.global_position + Vector3(0, 1.0, 0), action) != null,
 			"play_action_vfx_at spawned a cast")
 
 	# Sampled across the whole cast, not at one guessed instant: a spell winds up for
@@ -283,6 +297,22 @@ func _run_pixel_arm() -> void:
 	else:
 		baseline.save_png("user://ability-vfx-regression%s.png" % suffix)
 	print("[AbilityVfx] screenshot user://ability-vfx-regression%s.png" % suffix)
+
+	# 🔴 WHERE, not just whether. Everything above passes for a cast drawn in the wrong
+	# place; this is the assertion that does not.
+	if not control and peak_image != null:
+		var centroid := _changed_centroid(baseline, peak_image)
+		if centroid.x >= 0.0:
+			var cam := get_viewport().get_camera_3d()
+			var at_caster: Vector2 = cam.unproject_position(_caster.global_position)
+			var at_origin: Vector2 = cam.unproject_position(Vector3.ZERO)
+			var d_caster: float = centroid.distance_to(at_caster)
+			var d_origin: float = centroid.distance_to(at_origin)
+			print("[AbilityVfx] ARM B WHERE centroid=%s caster=%s origin=%s d_caster=%.1f d_origin=%.1f"
+				% [str(centroid), str(at_caster), str(at_origin), d_caster, d_origin])
+			_check(d_origin > d_caster * POSITION_MARGIN,
+				"the cast drew ON THE CASTER, not at the world origin (%.1f vs %.1f px)"
+					% [d_caster, d_origin])
 
 	if control:
 		_check(peak <= CONTROL_TOLERANCE_PX,
@@ -344,6 +374,20 @@ func _is_disturbance(changed: int) -> bool:
 	print("[AbilityVfx] NOTE viewport disturbance (%d/%d px) — re-baselining, not scoring"
 		% [changed, _sampled_total])
 	return true
+
+
+## Screen-space centroid of the pixels that changed, or (-1,-1) when none did.
+func _changed_centroid(before: Image, after: Image) -> Vector2:
+	var sum := Vector2.ZERO
+	var n := 0
+	for y in range(0, before.get_height(), 2):
+		for x in range(0, before.get_width(), 2):
+			var a := before.get_pixel(x, y)
+			var b := after.get_pixel(x, y)
+			if absf(a.r - b.r) + absf(a.g - b.g) + absf(a.b - b.b) > PIXEL_EPSILON:
+				sum += Vector2(x, y)
+				n += 1
+	return sum / float(n) if n > 0 else Vector2(-1.0, -1.0)
 
 
 ## Wall-clock wait. Frame counts are not interchangeable with time here — see

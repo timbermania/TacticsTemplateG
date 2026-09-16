@@ -37,7 +37,19 @@ func actors() -> Array[Node3D]:
 	if battle == null:
 		return result
 	for unit in battle.units:
-		result.append(unit as Node3D if is_instance_valid(unit) else null)
+		# 🔴 `char_body`, not the Unit. The addon treats an actor as a POSITIONED node:
+		# `spawn_charge_vfx` reads `actor.global_position` and parents the charge effect
+		# to it, and `actors().find(caster)` has to match what the cast sites pass. A
+		# TacticsG `Unit` is a Node3D that never moves — `char_body` carries the whole
+		# transform — so handing over Units would put every charge effect at the origin
+		# and make every roster lookup miss.
+		if not is_instance_valid(unit):
+			result.append(null)
+			continue
+		# Duck-typed on purpose: a `Unit` answers with its body, and a stage that rosters
+		# plain Node3Ds (the demo scene, the scored regression) answers with itself.
+		var body: Node3D = unit.get("char_body") as Node3D
+		result.append(body if body != null else unit as Node3D)
 	return result
 
 
