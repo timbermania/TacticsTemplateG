@@ -733,6 +733,8 @@ src/battle/end_condition.gd.uid
 src/battle/extract_fft_scenarios.gd
 src/battle/extract_fft_scenarios.gd.uid
 src/battle/extract_fft_scenarios.tscn
+src/battle/screen_background_quad.gd
+src/battle/screen_background_quad.gd.uid
 src/battle/statuses.txt
 src/battle/statuses.txt.import
 src/battle/team.gd
@@ -1013,6 +1015,8 @@ src/shaders/psx_depth_subtractive.gdshader
 src/shaders/psx_depth_subtractive.gdshader.uid
 src/shaders/psx_window_depth.gdshaderinc
 src/shaders/psx_window_depth.gdshaderinc.uid
+src/shaders/screen_background.gdshader
+src/shaders/screen_background.gdshader.uid
 src/ttg_icon.ico
 src/ttg_icon.png
 src/ttg_icon.png.import

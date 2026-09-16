@@ -6,7 +6,7 @@ signal unit_created(new_unit: Unit)
 signal delayed_action_completed
 
 ## Where the gitignored ROM-derived Effects content lives. See docs/effects-installation.md.
-## 🔴 NOT A SECOND LITERAL. `RomReader.export_effects_content()` GENERATES that tree, so the
+## 🔴 NOT A SECOND LITERAL. `RomReader.generate_effects_content()` GENERATES that tree, so the
 ## path playback reads and the path the exporter writes have to be one value — a drift between
 ## them shows up as effects that load nothing, with no error anywhere.
 const EffectExtractPaths := preload("res://src/file_formats/vfx/effect_extract.gd")
@@ -26,7 +26,16 @@ const SCALED_UNITS_PER_HEIGHT: float = SCALE * FftMapData.UNITS_PER_HEIGHT
 @export var orthographic_check: CheckBox
 @export var camera_controller: CameraController
 var main_camera: Camera3D
+## The 2D half of the background: a CanvasLayer TextureRect drawn BEHIND the 3D scene
+## by the WorldEnvironment's `background_mode = 3` (BG_CANVAS, canvas_max_layer -3).
+## It covers the whole window, including the parts the battle view does not occupy
+## while the scenario editor has the camera inside its SubViewport.
 @export var background_gradient: TextureRect
+## The 3D half: the one node `addons/exmateria_effects` can drive (see
+## `ScreenBackgroundQuad`). Kept at the SAME colours as `background_gradient` by
+## `set_background_gradient()`, so the pair is seamless at rest and only the quad
+## moves while an effect is playing.
+var screen_background: ScreenBackgroundQuad
 
 @export var maps: Node3D
 var total_map_tiles: Dictionary[Vector2i, Array] = {} # Array[TerrainTile]
@@ -102,6 +111,16 @@ var walled_maps: PackedInt32Array = [
 
 func _ready() -> void:
 	main_camera = camera_controller.camera
+	# Before anything can cast. The addon latches its renderer the first time an
+	# effect delivers a screen frame, so standing this up late is standing it up
+	# never for that effect — and the only symptom would be a push_error.
+	screen_background = ScreenBackgroundQuad.attach(main_camera)
+	# Seed it from the gradient the scene already ships, so the quad matches the
+	# TextureRect from the first frame rather than starting black and snapping to the
+	# map's colours once a scenario loads.
+	var initial: PackedColorArray = background_gradient.texture.gradient.colors
+	if initial.size() >= 2:
+		set_background_gradient(initial[1], initial[0])
 
 	load_rom_button.file_selected.connect(RomReader.on_load_rom_dialog_file_selected)
 	GameData.data_indexed.connect(on_data_ready)
@@ -203,6 +222,24 @@ func _begin_effects_playback() -> void:
 		# identical in a log, and this is the line that tells them apart.
 		print("BattleManager: ability VFX ready (exmateria_effects, content root %s)"
 			% EFFECTS_CONTENT_ROOT)
+
+
+## The one place the battle's background colours are written.
+##
+## TacticsG parses these two colours per map out of the ROM (`FftMapData`), carries
+## them on the `Scenario`, and lets the editor's two colour pickers edit them. Both
+## renderers are fed here so they cannot drift: the 2D `TextureRect` that covers the
+## window, and the 3D quad the effects addon drives.
+##
+## 🔴 ORDER. `Gradient.colors[0]` is the BOTTOM colour and `[1]` is the TOP — the
+## texture fills from (0.5, 1) to (0.5, 0), i.e. offset 0 is the bottom of the screen.
+## `ScenarioEditor.background_gradient_colors` is in that same order, and so is the
+## pair of colour pickers. Swapping them here turns every sky upside down without
+## erroring.
+func set_background_gradient(top: Color, bottom: Color) -> void:
+	background_gradient.texture.gradient.colors = PackedColorArray([bottom, top])
+	if screen_background != null:
+		screen_background.set_gradient(top, bottom)
 
 
 func update_total_map_tiles(map_chunks: Array[Scenario.MapChunk]) -> void:
