@@ -82,6 +82,15 @@ may reach them; these paths are **not certified** by this installation.
 
 - Explicit private content root and `effects/E###`, callback payload and TRAP
   texture/table layout; no content search, importer or root setting was invented.
+  **Partly done for TRAP only.** `src/battle/effects_demo_scene.tscn` declares a
+  content root at runtime and plays real TRAP handlers, which needs only the ten
+  `effects/trap/*.json` tables and `TRAP1.tga`/`TRAP1.palette.tga` (~660 KB) — NOT
+  the 224 MB of per-effect `E###` directories that spell and cinematic casts need.
+  Copy those from the monorepo's `godot-learning/assets/` into a gitignored
+  `content/` (`content/effects/trap/`, `content/sprites/textures/`) and run the
+  scene. The addon loads the textures with `load()`, i.e. `ResourceLoader`, so the
+  content must live under `res://` and be imported — an absolute or external path
+  will not work.
 - Ability/action-to-visual routing, real timelines, callbacks/TRAP and timing.
 - ~~Owning scene/camera lifecycle and checked native setup before real playback.~~
   **Done** — `src/battle/effects_playback.gd` owns the producer/host/manager for one

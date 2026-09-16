@@ -480,6 +480,9 @@ src/battle/editor/unit_editor.gd.uid
 src/battle/editor/unit_editor.tscn
 src/battle/effects_cast_host.gd
 src/battle/effects_cast_host.gd.uid
+src/battle/effects_demo_scene.gd
+src/battle/effects_demo_scene.gd.uid
+src/battle/effects_demo_scene.tscn
 src/battle/effects_playback.gd
 src/battle/effects_playback.gd.uid
 src/battle/end_condition.gd
