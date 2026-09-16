@@ -67,6 +67,12 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	# 🔴 STAND DOWN WHILE AN EFFECT TRACK OWNS THE RIG. Every branch below writes
+	# `global_position`, so a takeover that did not stop this loop would be overwritten
+	# every frame by the follow/pan it is supposed to be replacing — the camera would
+	# look unmoved while the track ran perfectly. See `begin_effect_takeover`.
+	if is_effect_driven():
+		return
 	if is_transitioning and follow_node != null:
 		transition_time += delta
 		var transition_percent: float = transition_time / time_to_transition
@@ -91,6 +97,11 @@ func start_transitioning() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# The player's orbit/zoom/pan verbs all write state the takeover snapshot is
+	# holding, so accepting them mid-cast would corrupt the restore rather than the
+	# shot. Input during a cast is dropped, not queued.
+	if is_effect_driven():
+		return
 	if event.is_action_pressed(&"zoom_in", false, true):  # Wheel Up Event
 		zoom_camera(1)
 	elif event.is_action_pressed(&"zoom_out", false, true):  # Wheel Down Event
@@ -107,6 +118,8 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func zoom_camera(dir: int) -> void:
+	if is_effect_driven():
+		return
 	var zoom_margin: float = zoom * (-dir) / 5
 	var new_zoom: float = zoom + zoom_margin
 	if new_zoom < zoom_out_max and new_zoom > zoom_in_max:
@@ -134,7 +147,7 @@ func zoom_camera(dir: int) -> void:
 
 
 func start_rotating_camera(dir: int) -> void:
-	if is_rotating:
+	if is_rotating or is_effect_driven():
 		return
 	
 	is_rotating = true
@@ -187,3 +200,110 @@ func on_orthographic_toggled(toggled_on: bool) -> void:
 func update_distance() -> void:
 	if camera.projection == Camera3D.PROJECTION_PERSPECTIVE:
 		camera.position.z = camera.size * 8.0 / 12.0
+
+
+# --- Effect-track takeover ------------------------------------------------------
+#
+# `addons/exmateria_effects` runs a `CameraSubsystem` for (measured) 388 of the 401
+# `E###` effects, and it is a PURE STATE MACHINE — it never touches a `Camera3D`. It
+# produces a focus point, an orbit and a zoom per effect frame and expects a host rig
+# to consume them. This is that consumer's half: the rig's own save / drive / restore,
+# with no knowledge of the addon in it. The PSX→Godot conversion and the cast
+# lifecycle live one layer out, in `EffectCameraTrack`.
+#
+# 🔴 THIS RIG IS ALREADY SHAPED LIKE THE ONE THE ADDON ASSUMES, which is why the
+# takeover is three fields rather than a reimplementation. The addon's own
+# `CinematicFacingResolver._view_forward` models a pose as
+# `Basis.from_euler(psx_angles_to_godot_rotation(...)) * Vector3(0, 0, -1)` — a focus
+# node carrying the orbit, with the camera looking down its local -Z. That is exactly
+# `CameraController` + its `Camera3D` child parked at local +Z.
+
+## Everything a takeover overwrites, or empty while nobody is driving. The DICTIONARY
+## IS THE FLAG: there is no second bool to fall out of step with it.
+var _takeover_saved: Dictionary = {}
+
+
+## True while an effect camera track owns this rig.
+func is_effect_driven() -> bool:
+	return not _takeover_saved.is_empty()
+
+
+## Snapshot the player's camera state and hand the rig to an effect track. Returns
+## false if somebody is already driving — the FIRST cast of a multi-target volley keeps
+## the camera for its whole track rather than being cut into by the second.
+func begin_effect_takeover() -> bool:
+	if is_effect_driven():
+		return false
+	_takeover_saved = {
+		"follow_node": follow_node,
+		"global_position": global_position,
+		"rotation_degrees": rotation_degrees,
+		"zoom": zoom,
+		"camera_size": camera.size,
+		"camera_z": camera.position.z,
+		"projection": camera.projection,
+	}
+	# 🔴 `follow_node` MUST GO. While it is set, `_process` writes `global_position`
+	# from it every frame; the `is_effect_driven()` guard up top already stops that,
+	# but leaving the reference would make a `follow_node` freed during the cast a
+	# dangling restore. Nulling it here goes through the setter, which arms a
+	# transition as a side effect — disarmed on the next line, because a takeover
+	# snaps to the track's first pose and never eases into it.
+	follow_node = null
+	is_transitioning = false
+	pan_direction = Vector2.ZERO
+	return true
+
+
+## Drive one frame of the rig from an effect track. `focus` is the world point the
+## camera orbits, `orbit_degrees` the rig's own euler, `ortho_size` the orthographic
+## size the addon's `CameraCalibration` calls for.
+##
+## 🔴 ROTATION GOES THROUGH `rotate_camera()`, NOT A BARE `rotation_degrees` WRITE, and
+## that is the difference between a camera move and a camera move with the units still
+## in it. TacticsG's unit sprites are billboards that re-face on `rotated` /
+## `camera_facing_changed`; a raw write would orbit the camera while leaving every unit
+## on screen facing the pre-cast direction.
+func apply_effect_pose(focus: Vector3, orbit_degrees: Vector3, ortho_size: float) -> void:
+	if not is_effect_driven():
+		return
+	global_position = focus
+	rotate_camera(orbit_degrees)
+	# `zoom` is this rig's name for the orthographic size (`_ready` copies it straight
+	# into `camera.size`), so both are written and `update_distance()` derives the
+	# perspective stand-off from it when a user has toggled the projection off ortho.
+	zoom = ortho_size
+	camera.size = ortho_size
+	update_distance()
+
+
+## Give the camera back. Restores the exact pre-cast values — the state a caller can
+## assert against — rather than easing toward them.
+##
+## 🔴 THE RESTORE SNAPS. Re-assigning `follow_node` arms `start_transitioning()`, which
+## would ease the rig back over `time_to_transition` from wherever the track left it;
+## that reads as a second, unauthored camera move tacked onto the end of every spell.
+## The transition is disarmed and the saved pose written directly instead. A rig that
+## was following a unit re-acquires it on its very next `_process`, through the branch
+## that already snaps to `follow_node.global_position`.
+func end_effect_takeover() -> void:
+	if not is_effect_driven():
+		return
+	var saved: Dictionary = _takeover_saved
+	_takeover_saved = {}
+	camera.projection = saved["projection"]
+	camera.size = saved["camera_size"]
+	camera.position.z = saved["camera_z"]
+	zoom = saved["zoom"]
+	# Through `rotate_camera` for the same reason `apply_effect_pose` is: the units
+	# turned to follow the cast and have to turn back.
+	rotate_camera(saved["rotation_degrees"])
+	# Only if nobody claimed it meanwhile. `begin_effect_takeover` left it null, so a
+	# non-null value here is a HOST decision taken during the cast — `BattleManager`
+	# opening the scenario editor, or the turn moving to another unit — and restoring
+	# over it would silently undo that. The last writer wins, and the takeover is not
+	# the last writer just because it finished last.
+	if follow_node == null:
+		follow_node = saved["follow_node"]
+	is_transitioning = false
+	global_position = saved["global_position"]

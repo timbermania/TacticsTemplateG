@@ -204,6 +204,13 @@ func _begin_effects_playback() -> void:
 	effects_playback.name = "EffectsPlayback"
 	effects_playback.enabled = true
 	effects_playback.battle_manager = self
+	# The CAMERA track. 388 of the 401 installed effects carry one and it is not gated
+	# on `is_cinematic`, so this is ordinary spell casts, not just charge-time
+	# cinematics. Handing over the rig — not `main_camera` — is deliberate: the
+	# subsystem produces a FOCUS POINT, an orbit and a zoom, which is exactly the
+	# `CameraController` / child-`Camera3D` split, and the takeover has to be able to
+	# release `follow_node` and put it back.
+	effects_playback.camera_rig = camera_controller
 	# Declared at runtime, not in project.godot: the content is ROM-derived and
 	# gitignored, so a committed default would make every contentless checkout report
 	# a root that cannot exist. Left empty when the directory is absent, which makes

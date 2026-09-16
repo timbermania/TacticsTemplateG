@@ -37,9 +37,21 @@ extends Node3D
 ## resolving paths that cannot exist.
 @export var content_root: String = ""
 
+## The rig a cast's CAMERA track drives, or null to leave the camera alone.
+##
+## 🔴 THE THIRD DISCARDED TRACK. `EffectInstance` runs a `CameraSubsystem` for 388 of
+## the 401 installed effects — NOT gated on `is_cinematic`, so ordinary spell casts have
+## one — and until this was wired, every frame of it was computed and thrown away, the
+## same silent way the background gradient and the map tint were. Left unset (the
+## regression scenes, the editor previews) nothing takes the camera and nothing changes.
+@export var camera_rig: CameraController
+
 var _producer: ExMateriaEffects.EngineFoldCompositor
 var _host: EffectsCastHost
 var _manager: ExMateriaEffects.EffectManager
+## Pumps `camera_rig` from whichever cast currently owns it. Built lazily so a playback
+## with no rig never adds a node that would only ever no-op.
+var _camera_track: EffectCameraTrack
 
 ## Why playback is unavailable, or "" when it is. Read this instead of guessing:
 ## every refusal below is a quiet-by-design failure mode.
@@ -101,6 +113,10 @@ func end() -> void:
 
 
 func _end() -> void:
+	# Before the manager goes: a torn-down battle must not leave the rig frozen
+	# mid-track with nothing left to advance it.
+	if is_instance_valid(_camera_track):
+		_camera_track.release()
 	_manager = null
 	_host = null
 	if is_instance_valid(_producer):
@@ -216,9 +232,46 @@ func play_action_vfx(caster: Node3D, target: Node3D, action: Action) -> Node3D:
 		if before.has(child.get_instance_id()) or child.is_queued_for_deletion():
 			continue
 		if child.has_method("get_active_particle_count"):
+			_offer_camera(child)
 			return child as Node3D
 	# Initialization failed; the manager already freed its instance.
 	return null
+
+
+## Offer a freshly spawned cast the camera rig.
+##
+## 🔴 CALLED HERE, ONE LINE AFTER THE SPAWN, BECAUSE THE SIGNAL IS ALREADY GONE.
+## `EffectInstance` emits `camera_started` INSIDE `initialize()` — before
+## `spawn_spell_effect` returns — and `spawn_spell_effect` takes no camera callbacks;
+## only `spawn_cinematic_effect` does, and it wires them before `initialize()` for
+## exactly this reason. Connecting to `camera_started` after the spawn misses it
+## entirely. `instance.camera_controller != null` carries the same information and is
+## readable right here, off the instance this function already had to identify for
+## TIMING. `camera_finished` is a different matter — it fires from `_exit_tree`, well
+## after the spawn returns — so `EffectCameraTrack` connects that one normally.
+##
+## Routing charge-time abilities through `spawn_cinematic_effect` instead would get the
+## callbacks properly, but it is a bigger change (cinematics opt out of the
+## `combat_visuals` group, their lifetime is caller-owned, and TacticsG calls that path
+## nowhere today) and it is not needed to make the track visible. Left as a follow-up.
+func _offer_camera(cast: Node) -> void:
+	if not is_instance_valid(camera_rig):
+		return
+	if not is_instance_valid(_camera_track):
+		_camera_track = EffectCameraTrack.new(camera_rig)
+		add_child(_camera_track)
+	_camera_track.rig = camera_rig
+	if _camera_track.adopt(cast) and _host != null:
+		# `EFFECT_CTR` keyframes anchor on the map centre, which the addon's spell spawn
+		# never sets — the host is the only side that knows the arena's size.
+		_camera_track.set_map_bounds(_host.arena_bounds())
+
+
+## The live camera track, or null if nothing has ever claimed the rig. Exposed so a test
+## can read the subsystem values beside the host values rather than infer one from the
+## other — a host value that moves without a matching subsystem value is a host bug.
+func camera_track() -> EffectCameraTrack:
+	return _camera_track
 
 
 ## `play_action_vfx` for a call site that knows a target POSITION but not a target

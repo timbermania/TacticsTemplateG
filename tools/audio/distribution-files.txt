@@ -721,6 +721,8 @@ src/battle/editor/ui_palette.gdshader.uid
 src/battle/editor/unit_editor.gd
 src/battle/editor/unit_editor.gd.uid
 src/battle/editor/unit_editor.tscn
+src/battle/effect_camera_track.gd
+src/battle/effect_camera_track.gd.uid
 src/battle/effects_cast_host.gd
 src/battle/effects_cast_host.gd.uid
 src/battle/effects_demo_scene.gd
