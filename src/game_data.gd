@@ -270,6 +270,9 @@ func get_shp(unique_name: String) -> Shp:
 	if shps.has(unique_name):
 		return shps[unique_name]
 	
+	if not shp_paths.has(unique_name):
+		push_error("GameData: no indexed shp named \"%s\" (is the import path set and indexed?)" % unique_name)
+		return null
 	var file_path: String = shp_paths[unique_name]
 	var new_shp: Shp = ResourceLoader.load(file_path, "Shp")
 	new_shp.is_initialized = true
@@ -281,6 +284,9 @@ func get_seq(unique_name: String) -> Seq:
 	if seqs.has(unique_name):
 		return seqs[unique_name]
 	
+	if not seq_paths.has(unique_name):
+		push_error("GameData: no indexed seq named \"%s\" (is the import path set and indexed?)" % unique_name)
+		return null
 	var file_path: String = seq_paths[unique_name]
 	var new_seq: Seq = ResourceLoader.load(file_path, "Seq")
 	new_seq.is_initialized = true
@@ -292,6 +298,9 @@ func get_map_gltf(unique_name: String) -> Node:
 	if maps_gltf.has(unique_name):
 		return maps_gltf[unique_name]
 	
+	if not map_gltf_paths.has(unique_name):
+		push_error("GameData: no indexed map_gltf named \"%s\" (is the import path set and indexed?)" % unique_name)
+		return null
 	var file_path: String = map_gltf_paths[unique_name]
 	maps_gltf[unique_name] = GltfManager.import_gltf(file_path)
 	return maps_gltf[unique_name]
@@ -301,6 +310,9 @@ func get_map_gltf_mesh(unique_name: String) -> MeshInstance3D:
 	#if maps_gltf.has(unique_name):
 		#return maps_gltf[unique_name]
 	
+	if not map_gltf_paths.has(unique_name):
+		push_error("GameData: no indexed map_gltf named \"%s\" (is the import path set and indexed?)" % unique_name)
+		return null
 	var file_path: String = map_gltf_paths[unique_name]
 	var mesh_instance: MeshInstance3D = GltfManager.import_gltf_mesh(file_path)
 	return mesh_instance
@@ -310,6 +322,9 @@ func get_map_data(unique_name: String) -> MapData:
 	if maps_data.has(unique_name):
 		return maps_data[unique_name]
 	
+	if not map_data_paths.has(unique_name):
+		push_error("GameData: no indexed map_data named \"%s\" (is the import path set and indexed?)" % unique_name)
+		return null
 	var file_path: String = map_data_paths[unique_name]
 	var new_map_data: MapData = ResourceLoader.load(file_path, "MapData")
 	var mesh_instance: MeshInstance3D = get_map_gltf_mesh(new_map_data.unique_name)
@@ -323,6 +338,9 @@ func get_vfx_data(unique_name: String) -> VisualEffectData:
 	if vfx.has(unique_name):
 		return vfx[unique_name]
 	
+	if not vfx_data_paths.has(unique_name):
+		push_error("GameData: no indexed vfx_data named \"%s\" (is the import path set and indexed?)" % unique_name)
+		return null
 	var file_path: String = vfx_data_paths[unique_name]
 	var new_vfx: VisualEffectData = ResourceLoader.load(file_path, "VisualEffectData")
 	new_vfx.texture = get_texture(new_vfx.unique_name)
@@ -334,6 +352,9 @@ func get_item(unique_name: String) -> ItemData:
 	if items.has(unique_name):
 		return items[unique_name]
 	
+	if not item_paths.has(unique_name):
+		push_error("GameData: no indexed item named \"%s\" (is the import path set and indexed?)" % unique_name)
+		return null
 	var file_path: String = item_paths[unique_name]
 	var file_text: String = FileAccess.get_file_as_string(file_path)
 	items[unique_name] = ItemData.create_from_json(file_text)
@@ -344,6 +365,9 @@ func get_status_effect(unique_name: String) -> StatusEffect:
 	if status_effects.has(unique_name):
 		return status_effects[unique_name]
 	
+	if not status_effect_paths.has(unique_name):
+		push_error("GameData: no indexed status_effect named \"%s\" (is the import path set and indexed?)" % unique_name)
+		return null
 	var file_path: String = status_effect_paths[unique_name]
 	status_effects[unique_name] = ResourceLoader.load(file_path, "StatusEffect")
 	return status_effects[unique_name]
@@ -353,6 +377,9 @@ func get_job(unique_name: String) -> JobData:
 	if jobs_data.has(unique_name):
 		return jobs_data[unique_name]
 	
+	if not job_paths.has(unique_name):
+		push_error("GameData: no indexed job named \"%s\" (is the import path set and indexed?)" % unique_name)
+		return null
 	var file_path: String = job_paths[unique_name]
 	var file_text: String = FileAccess.get_file_as_string(file_path)
 	jobs_data[unique_name] = JobData.create_from_json(file_text)
@@ -363,6 +390,9 @@ func get_skillset(unique_name: String) -> Skillset:
 	if skillsets.has(unique_name):
 		return skillsets[unique_name]
 	
+	if not skillset_paths.has(unique_name):
+		push_error("GameData: no indexed skillset named \"%s\" (is the import path set and indexed?)" % unique_name)
+		return null
 	var file_path: String = skillset_paths[unique_name]
 	skillsets[unique_name] = ResourceLoader.load(file_path, "Skillset")
 	return skillsets[unique_name]
@@ -372,6 +402,9 @@ func get_action(unique_name: String) -> Action:
 	if actions.has(unique_name):
 		return actions[unique_name]
 	
+	if not action_paths.has(unique_name):
+		push_error("GameData: no indexed action named \"%s\" (is the import path set and indexed?)" % unique_name)
+		return null
 	var file_path: String = action_paths[unique_name]
 	var file_text: String = FileAccess.get_file_as_string(file_path)
 	var new_action: Action = Action.create_from_json(file_text)
@@ -385,6 +418,9 @@ func get_triggered_action(unique_name: String) -> TriggeredAction:
 	if triggered_actions.has(unique_name):
 		return triggered_actions[unique_name]
 	
+	if not triggered_action_paths.has(unique_name):
+		push_error("GameData: no indexed triggered_action named \"%s\" (is the import path set and indexed?)" % unique_name)
+		return null
 	var file_path: String = triggered_action_paths[unique_name]
 	var file_text: String = FileAccess.get_file_as_string(file_path)
 	triggered_actions[unique_name] = TriggeredAction.create_from_json(file_text)
@@ -395,6 +431,9 @@ func get_passive_effect(unique_name: String) -> PassiveEffect:
 	if passive_effects.has(unique_name):
 		return passive_effects[unique_name]
 	
+	if not passive_effect_paths.has(unique_name):
+		push_error("GameData: no indexed passive_effect named \"%s\" (is the import path set and indexed?)" % unique_name)
+		return null
 	var file_path: String = passive_effect_paths[unique_name]
 	var file_text: String = FileAccess.get_file_as_string(file_path)
 	passive_effects[unique_name] = PassiveEffect.create_from_json(file_text)
@@ -405,6 +444,9 @@ func get_ability(unique_name: String) -> Ability:
 	if abilities.has(unique_name):
 		return abilities[unique_name]
 	
+	if not ability_paths.has(unique_name):
+		push_error("GameData: no indexed ability named \"%s\" (is the import path set and indexed?)" % unique_name)
+		return null
 	var file_path: String = ability_paths[unique_name]
 	var file_text: String = FileAccess.get_file_as_string(file_path)
 	abilities[unique_name] = Ability.create_from_json(file_text)
@@ -415,6 +457,9 @@ func get_scenario(unique_name: String) -> Scenario:
 	if scenarios.has(unique_name):
 		return scenarios[unique_name]
 	
+	if not scenario_paths.has(unique_name):
+		push_error("GameData: no indexed scenario named \"%s\" (is the import path set and indexed?)" % unique_name)
+		return null
 	var file_path: String = scenario_paths[unique_name]
 	var file_text: String = FileAccess.get_file_as_string(file_path)
 	scenarios[unique_name] = Scenario.create_from_json(file_text)
@@ -425,6 +470,9 @@ func get_texture(unique_name: String) -> Texture2D:
 	if textures.has(unique_name):
 		return textures[unique_name]
 	
+	if not texture_paths.has(unique_name):
+		push_error("GameData: no indexed texture named \"%s\" (is the import path set and indexed?)" % unique_name)
+		return null
 	var file_path: String = texture_paths[unique_name]
 	var new_image: Image = Image.load_from_file(file_path)
 	textures[unique_name] = ImageTexture.create_from_image(new_image)
@@ -435,6 +483,9 @@ func get_spritesheet_data(unique_name: String) -> UnitSpritesheetData:
 	if unit_spritesheets_data.has(unique_name):
 		return unit_spritesheets_data[unique_name]
 	
+	if not unit_spritesheet_data_paths.has(unique_name):
+		push_error("GameData: no indexed unit_spritesheet_data named \"%s\" (is the import path set and indexed?)" % unique_name)
+		return null
 	var file_path: String = unit_spritesheet_data_paths[unique_name]
 	unit_spritesheets_data[unique_name] = ResourceLoader.load(file_path, "UnitSpritesheetData")
 	return unit_spritesheets_data[unique_name]
