@@ -15,8 +15,6 @@ func run() -> void:
 	check(facade.get_script_constant_map().size() == 24, "all 24 public exports retained")
 	check(RenderingServer.get_current_rendering_method() == "gl_compatibility", "real GL Compatibility")
 	check(not ExMateriaSchema.Fold.owns(), "stock fold predicate false without override")
-	check(not ExMateriaAudioEngine.ready_ok and not ExMateriaEffectSfx.ready_ok, "installed audio remains deferred/idle")
-	check(ClassDB.class_exists("ExMateriaSpuStream"), "installed native SPU extension loaded")
 	var cam := Camera3D.new()
 	cam.name = "ProbeCamera"
 	add_child(cam)

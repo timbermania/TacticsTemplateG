@@ -8,8 +8,6 @@ func _check_startup() -> void:
 	for frame in 120:
 		await get_tree().process_frame
 	var ok := get_tree().current_scene != null
-	ok = ok and not ExMateriaAudioEngine.ready_ok and not ExMateriaEffectSfx.ready_ok
-	ok = ok and ClassDB.class_exists("ExMateriaSpuStream")
 	ok = ok and RenderingServer.get_current_rendering_method() == "gl_compatibility"
 	ok = ok and get_node_or_null("/root/EffectMultiMeshPool") != null
 	ok = ok and get_node_or_null("/root/ScreenEffectOverlay") != null

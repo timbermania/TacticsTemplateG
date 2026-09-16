@@ -1,126 +1,54 @@
-TacticsTemplateG audio/Effects-enabled distribution
-=================================================
+TacticsTemplateG Effects-enabled distribution
+============================================
 
-The combined game/audio/Effects distribution is distributed under GNU GPL version 3.
-See LICENSES/GPL-3.0.txt. This does not revoke or replace the original MIT
-license grants: LICENSE.txt remains the original TacticsTemplateG MIT license.
-Third-party works retain their own notices and applicable licenses below.
-No warranty is provided. This notice is not legal/compliance certification.
+This distribution is MIT-licensed throughout. LICENSE.txt is the original
+TacticsTemplateG MIT grant; the installed Effects selection carries its own
+upstream MIT grant in LICENSES/ExMateria-MIT.txt. Third-party works retain their
+own notices and applicable licenses below. No warranty is provided. This notice
+is not legal/compliance certification.
 
-Corresponding source must accompany binary downloads, including the game and
-addon scripts, local modifications, native sources/headers/tables, godot-cpp
-sources, build profiles/scripts, and export instructions. Use the controlled
-packaging process in docs/audio-installation.md; do not distribute a bare Godot
-export or refer recipients only to a moving upstream branch.
+🔴 THE GPL-3.0 OBLIGATION IS GONE. It came from the two addons that were removed
+and from the Effects selection's upstream root LICENSE, which has since been
+relicensed; LICENSES/GPL-3.0.txt and GPL-2.0.txt are no longer in this tree.
+Paired corresponding-source delivery is therefore no longer REQUIRED.
+tools/effects/package_release.py still produces a source archive beside the
+binary, because a reproducible source snapshot is worth having on its own terms —
+but that is now a choice, not a licence condition.
 
-ExMateria Sound and SPU
-----------------------
-Source: https://github.com/timbermania/fft-monorepo
-Snapshot: 4ca5c30abdb8423931155d44dd38f9b4fa76cb0e, exmateria-sound/
-Published project: https://github.com/timbermania/ExMateria-Sound
-Upstream license: GPL-3.0 (LICENSES/GPL-3.0.txt).
-Local modifications dated 2026-09-13: deferred content initialization, WAVESET
-input validation, live SFX teardown and stopped/active cast ownership fixes,
-GDScript debug snapshots serialized with the audio mixer, plugin documentation, platform
-support descriptor, and distribution/build integration. Original native code
-is preserved; only the build profile reduces unused godot-cpp bindings.
-Detailed origins and binary/source hashes: tools/audio/upstream.json and
- tools/audio/builds/*.json in the accompanying source.
+The ExMateria Sound and SPU addons, their native binaries and their PCSX-derived
+SPU sources were REMOVED from this project. With them went third_party/
+exmateria-sound, tools/audio, docs/audio-installation.md, the LLVM-MinGW toolchain
+notices, the godot-cpp MIT notice and the GPL-2.0 text, none of which any remaining
+code needs. No PCSX-Redux code remains: the only mentions of PCSX left in the tree
+are comments citing the emulator as a behavioural reference.
 
 ExMateria Effects selected native-GL profile and shared dependencies
 ------------------------------------------------------------------
 Source: https://github.com/timbermania/fft-monorepo
-Snapshot: 7f140717604a7906cfaf03bd9556a34d6800ccce, godot-learning/
-225 unchanged committed files selected from addons/exmateria_effects/,
+Snapshot: 6b9c2f1dff2bddcb2b1aa37d2392c2f7116fc51c, godot-learning/
+241 unchanged committed files selected from addons/exmateria_effects/,
 addons/exmateria_platform/, addons/exmateria_render/ and addons/exmateria_schema/.
-Upstream root LICENSE is GPL-3.0, reproduced exactly in LICENSES/GPL-3.0.txt
-(SHA-256 3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986).
+Upstream licence is godot-learning/LICENSE (MIT), reproduced exactly in
+LICENSES/ExMateria-MIT.txt (SHA-256 09b10887c010de66000af75528f8a9cb7a642b7443860b290287aa0b34e9d9aa).
+That grant covers godot-learning/ only and carves out its own vendor/ trees; the
+monorepo ROOT remains GPL-3.0 for packages this selection does not draw from
+(exmateria-daw-plugin links JUCE, fft-iso-patcher ports FFTPatcher EDC/ECC).
+None of the 241 selected files carries a licence header of its own, and none is
+derived from JUCE, FFTPatcher or PCSX-Redux — verified by scan, not assumed.
 Exact source/destination/revision/byte hashes and selection roles are recorded
 in tools/effects/manifest.json; profile limits and origin in upstream.json there.
 Local host configuration, verification and synthetic tests accompany the source;
-no upstream addon bytes or existing audio binaries/receipts were replaced.
+no upstream addon bytes were replaced.
 This is not the full fork/plugin distribution or a native/fold parity claim.
 Optional fold resources remain unmodified and unsupported on stock Godot.
 See docs/effects-installation.md for pending host work and source-delivery scope.
 No upstream game/editor media, almanac/battlefield package or private effect
-payload is included. The existing combined GPL source-delivery policy applies;
-the audio-only installer ZIP is not an Effects installer.
-
-Host disc-audio catalog selective port
--------------------------------------
-Source: https://github.com/mrgudenheim/TacticsTemplateG/pull/3, timbermania,
-commit 0ebc36fcbaac56dd30e02bf1b2707c71140bc2d0 (origin/add-sound-clean).
-Original project MIT grant: Copyright (c) 2025 mrgudenheim; full license in
-LICENSE.txt. The host audio_test catalog adapts audio discovery, global SED
-sound-ID semantics and per-effect FEDS section extraction. New bounded
-read-only validation replaces the PR's whole-ROM/cache pipeline. No old addon
-or native binary was imported. The installed addon retains its GPL provenance
-above; the host absent-channel bank adapter subclasses its FEDS parser.
-
-PCSX-derived SPU algorithms and tables (not the MIT encoder)
------------------------------------------------------------
-Sources: https://github.com/grumpycoders/pcsx-redux, src/spu/
-Comparison reference: 008bcf710e4df94e682f3e062955d62518b6884f.
-This reference is NOT claimed to be the original port's revision.
-
-spu.cc, adsr.cc, reverb.cc:
-  copyright            : (C) 2002 by Pete Bernert
-  email                : BlackDove@addcom.de
-
-gauss.h:
-  copyright            : (C) 2003 by Chris Moeller, eh, whatever
-  email                : chris@kode54.tk
-
-Original grant in these files:
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version. See also the license.txt file for
-  additional informations.
-
-GPL-3.0 is used for the combined distribution under the "or later" permission.
-Full GPL-2.0 and GPL-3.0 texts are included. The original source headers and
-historical credits are preserved verbatim in LICENSES/pcsx-provenance/*.txt.
-The adapted implementation is in third_party/exmateria-sound/src/shared/:
-fft_spu_mix_tools.cpp, fft_adsr_envelope.cpp, fft_spu_reverb.cpp,
-fft_spu_voice_tools.cpp, and detail/fft_gauss_table.inc.
-
-Additional source credits retained from those references:
-- Noise Waveform - Dr. Hell (Xebra); Dr. Hell - fraction.
-- ADSR: 2003/01/06 - Pete; added Neill's ADSR timings.
-- PSX reverb hardware notes by Neill Corlett:
-  Yadda yadda disclaimer yadda probably not perfect yadda well it's okay anyway yadda yadda.
-- Gaussian table history (2003/02/08 - kode54): generated by interleaving
-  table from gauss.h from the libopenspc project; a gaussian bell curve
-  table logged from the SPC-700, though Neill says he logged the same curve
-  from a PSX SPU. Also says that interleaving the coefficients together
-  runs faster. Meh.
-These are provenance credits, not assertions that the entire Xebra or
-libopenspc programs are linked dependencies.
+payload is included.
 
 MIT dependencies
 ----------------
-- PSX ADPCM encoder: Copyright (c) 2024 PCSX-Redux authors. Verbatim
-  supportpsx/adpcm.{h,cc}; origins recorded in native src/vendor/README.md.
-  Full notice: LICENSES/ExMateria-SPU-upstream-NOTICE.txt and addon NOTICE.
-- godot-cpp: Copyright (c) 2017-present Godot Engine contributors.
-  Full MIT notice: LICENSES/godot-cpp-MIT.txt. Complete pinned dependency
-  sources are under third_party/exmateria-sound/extern/godot-cpp/ in paired
-  source bundles. Git checkouts provision that exact tree using the pinned
-  tools/audio/godot_cpp.lock.json; runtime uses the committed binaries.
 - Existing Godot browser icons and gdgifexporter: retain COPYRIGHT.txt
   and addons/gdgifexporter/LICENSE.txt from the original game.
-
-Toolchain/runtime notices
--------------------------
-Windows SPU binaries use LLVM-MinGW 20250910 (UCRT, x86_64). Applicable LLVM
-Apache-2.0 WITH LLVM-exception and MinGW runtime notices are reproduced in
-LICENSES/toolchain/. These standard compiler/OS runtimes are treated as System
-Libraries, not as missing godot-cpp or application source. The exact toolchain
-archive URL/hash is recorded in tools/audio/upstream.json. Unmodified general
-purpose compilers, Python, SCons, and Godot are build/run prerequisites, not
-bundled application source. If modifying or distributing those programs,
-review their own source-delivery obligations separately.
 
 Godot engine exports must include the engine's own full license/third-party
 notices obtained from the actual export engine, in GODOT-NOTICES.txt beside the

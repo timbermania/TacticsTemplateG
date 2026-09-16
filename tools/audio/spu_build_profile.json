@@ -1,9 +1,0 @@
-{
-  "enabled_classes": [
-    "RefCounted",
-    "AudioFrame",
-    "OS",
-    "AudioStream",
-    "AudioStreamPlaybackResampled"
-  ]
-}

@@ -38,11 +38,15 @@ files describe a broader installation and still truthfully declare `engine="fork
 this document governs the narrower host profile. Do not enable those plugins or
 copy their entire packages to follow their full-install instructions.
 
-**Audio is unchanged:** both existing addon trees, all four native libraries,
-receipts, source inputs, dependency lock, deferred readiness, audition, cache and
-shutdown behavior are preserved. See [audio-installation.md](audio-installation.md)
-for their independent pins, APIs, historical results and outstanding risks.
-No new native Effects library, audio refresh, bank initialization or download occurs.
+**Audio has since been REMOVED.** This pass left the ExMateria Sound and SPU addons
+untouched, which was true of the installation; both were removed afterwards, for
+relicensing, along with `third_party/exmateria-sound`, `tools/audio`,
+`docs/audio-installation.md` and the PCSX/toolchain/godot-cpp notices. Nothing in this
+selection depended on them: `exmateria_effects` declares
+`deps="exmateria_platform exmateria_render exmateria_schema"`, and its one runtime
+reach into the sound package goes through `exmateria_platform`'s `SfxPort`, whose
+absent column is the sound engine's own not-ready behaviour — so a cast plays silently
+rather than failing. No native Effects library or download occurs either.
 
 ## Explicit configuration
 
@@ -169,17 +173,15 @@ differences do not excuse missing effects, shader failures or gameplay regressio
 ```sh
 # No network, dependency build/materialization, Godot import or writes:
 python tools/effects/verify_installation.py
-# Additionally compare every input and GPL text against pinned Git objects:
+# Additionally compare every input and the licence text against pinned Git objects:
 python tools/effects/verify_installation.py --upstream /path/to/fft-monorepo
 python -m unittest discover -s tools/effects -p 'test_*.py'
-python -m unittest discover -s tools/audio -p 'test_packaging.py'
-python -m unittest discover -s tools/audio -p 'test_dependency.py'
 
 # Linux x86_64, real display and exact pinned official 4.7.2 executable:
 python tools/effects/run_checks.py --godot /path/to/Godot_v4.7.2-stable_linux.x86_64
 ```
 
-The static verifier checks the full file inventory/hashes, retained GPL text,
+The static verifier checks the full file inventory/hashes, the retained licence text,
 explicit autoloads, nonzero globals and native GL/no-new-plugin configuration.
 CLI/root checks tolerate only Godot's generated `.import` sidecars for the two
 selected GLSL files; source staging excludes those sidecars and enforces the exact
@@ -247,13 +249,22 @@ Windows/Wine, exported-game support, visual parity or release readiness.
 
 ## Source delivery and licensing
 
-The existing combined GPL-3.0 source-delivery policy in
-`docs/audio-installation.md` remains in force, now including the selected Effects
-and shared packages. Original MIT grants and all prior third-party notices remain.
-Upstream root LICENSE exactly matches the existing `LICENSES/GPL-3.0.txt`;
-`THIRD_PARTY_NOTICES.txt` records the new pin and bounded selection.
+**This project is MIT throughout.** The selection's upstream licence is
+`godot-learning/LICENSE` (MIT), installed verbatim as `LICENSES/ExMateria-MIT.txt` and
+byte-compared against the pinned revision by `verify_installation.py --upstream`. The
+GPL-3.0 obligation that used to govern here is gone: it came from the removed audio
+addons and from the selection's upstream ROOT licence, and the upstream now offers
+`godot-learning/` under MIT. Paired corresponding-source delivery is no longer required.
 
-The explicit `tools/audio/distribution-files.txt` allowlist includes all 241
+Source delivery is owned by this document and by `tools/effects/package_release.py`,
+which moved here from `tools/audio/` when the audio addons were removed (it was never
+audio-only: it owns the distribution allowlist, which covers every shipped tree, and its
+`stage()` verifies this installation). It still produces a source archive beside the
+binary — now because a reproducible snapshot is useful, not because a licence demands
+it. Original MIT grants and the remaining third-party notices stand.
+`THIRD_PARTY_NOTICES.txt` records the pin and the bounded selection.
+
+The explicit `tools/effects/distribution-files.txt` allowlist includes all 241
 inputs and Effects verification/docs/tests/lock. Source staging rejects missing,
 altered or symlinked allowlisted inputs, extra Effects files in the staged tree,
 and incorrect native-profile settings, alongside the existing native receipt and

@@ -79,20 +79,21 @@ In the scenario editor, unit can be drag and dropped with the mouse.
 This project targets Godot 4.7 / GL Compatibility; audio integration is tested with official Godot 4.7.2.
 https://godotengine.org/
 
-## Audio addons and distribution
+## Effects addons and distribution
 
-ExMateria Sound + SPU are installed with deferred, explicit content initialization.
-The existing asset export/import workflow includes a private audio cache, and
-`src/audio_test/audio_test.tscn` auditions cached or explicitly selected disc audio.
-Gameplay music/effect routing is not connected. Ordinary Godot audio and GL
-Compatibility remain unchanged.
+ExMateria Effects (with its platform/render/schema dependencies) draws ability VFX,
+the map tint, the screen background gradient, the unit colour track and the cast
+camera track. See [effects installation, verification and scope](docs/effects-installation.md).
 
-See [audio installation, builds, tests, and release packaging](docs/audio-installation.md).
-The audio-enabled combined distribution follows GPL-3.0 terms; the original MIT
-grant in `LICENSE.txt` remains intact. Read `THIRD_PARTY_NOTICES.txt` and distribute
-matching corresponding source alongside binaries. Do not distribute ROM content.
+The ExMateria Sound and SPU addons were **removed**: their PSX SPU emulation carried
+PCSX-derived GPL sources and committed native binaries, and they are being replaced by
+differently licensed addons. Nothing that remains depended on them — the one runtime
+reach from Effects goes through `exmateria_platform`'s `SfxPort`, whose absent path is
+the sound engine's own not-ready behaviour, so casts simply play silently. Disc audio
+extraction from the ROM (`src/audio_test/`) is host code and is unaffected.
 
-The audio extension binaries for Windows/Linux x86_64 are committed: cloning and
-running does not download build dependencies. Native rebuilding or preparing a
-complete source bundle provisions checksum-pinned `godot-cpp`; source bundles
-include it for offline rebuilding. See [audio build instructions](docs/audio-installation.md#native-source-and-builds).
+**The distribution is MIT throughout.** `LICENSE.txt` is the original TacticsTemplateG
+grant; the Effects selection carries its own upstream MIT grant in
+`LICENSES/ExMateria-MIT.txt`. The GPL-3.0 obligation is gone — it came from the removed
+audio addons and from the Effects selection's upstream root licence, which has since
+been relicensed. Read `THIRD_PARTY_NOTICES.txt`. Do not distribute ROM content.

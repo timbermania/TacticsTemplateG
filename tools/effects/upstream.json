@@ -1,18 +1,18 @@
 {
   "schema_version": 1,
   "repository": "https://github.com/timbermania/fft-monorepo",
-  "revision": "7f140717604a7906cfaf03bd9556a34d6800ccce",
+  "revision": "6b9c2f1dff2bddcb2b1aa37d2392c2f7116fc51c",
   "source_prefix": "godot-learning/",
   "target_baseline": "3a9cdffc128fbe9caa13ba8fa3b9cb721bc647b6",
   "manifest": "tools/effects/manifest.json",
-  "manifest_sha256": "5224e43292d0cc6bdfddaf21f068e7c2e120bade32a24ca25f72ce1f4116c02a",
+  "manifest_sha256": "a6bda19a4260c899003061429ed189a69bc1438b427b5036c5fe4f40a7c28dad",
   "file_count": 241,
   "total_bytes": 993824,
   "selection_evidence_sha256": "01dcfc567acdd17a92d51cb9cd2efd84de060c42bada4aec12c0a1fdfcfd447f",
   "license": {
-    "source": "LICENSE",
-    "installed": "LICENSES/GPL-3.0.txt",
-    "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    "source": "godot-learning/LICENSE",
+    "installed": "LICENSES/ExMateria-MIT.txt",
+    "sha256": "09b10887c010de66000af75528f8a9cb7a642b7443860b290287aa0b34e9d9aa"
   },
   "profile": {
     "name": "selected-native-gl",
@@ -47,6 +47,6 @@
       "Gameplay audio/timing integration and active-audio lifecycle QA"
     ]
   },
-  "audio_policy": "Existing sound/SPU scripts, four native binaries, receipts, dependency lock and cache behavior are unchanged. See tools/audio/upstream.json and docs/audio-installation.md; no audio refresh or native build.",
-  "distribution_policy": "Combined GPL-3.0 source delivery via tools/audio/package_release.py; original MIT and third-party notices retained. Audio-only installer ZIP stays audio-only. No release approval."
+  "audio_policy": "SUPERSEDED. This recorded that the Effects install left the ExMateria Sound/SPU addons untouched, which was true of that pass. Both addons, third_party/exmateria-sound, tools/audio and docs/audio-installation.md were removed afterwards for relicensing; nothing in this selection depended on them (exmateria_effects deps are platform/render/schema, and its one runtime reach goes through exmateria_platform SfxPort, whose absent path is the engine own not-ready behaviour).",
+  "distribution_policy": "MIT source delivery via tools/effects/package_release.py. The selection's upstream licence is godot-learning/LICENSE (MIT, installed verbatim as LICENSES/ExMateria-MIT.txt); the monorepo ROOT stays GPL-3.0 for packages this selection does not draw from, and godot-learning's own vendor/ trees are carved out of the MIT grant \u2014 none of them are in this selection. The original TacticsTemplateG MIT grant in LICENSE.txt and the remaining third-party notices are retained. No release approval."
 }

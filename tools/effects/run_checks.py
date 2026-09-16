@@ -18,7 +18,9 @@ import time
 
 from verify_installation import ROOT, verify
 
-sys.path.insert(0, str(ROOT / "tools/audio"))
+# `package_release` is a sibling now: it moved out of `tools/audio/` with the
+# removal of the ExMateria Sound/SPU addons, which is also why this no longer
+# has to put another tool directory on `sys.path` to reach it.
 from package_release import MANIFEST, stage
 
 ERRORS = ("SCRIPT ERROR:", "ERROR:", "SHADER ERROR:", "ObjectDB instances leaked",
@@ -105,8 +107,6 @@ def main():
             destination = native / row["destination"]
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
-        for addon in ("exmateria_sound", "exmateria_spu"):
-            shutil.copytree(host / "addons" / addon, native / "addons" / addon)
         for relative in ("src/utilities/application_shutdown.gd", "tools/effects/native_regression.gd",
                          "tools/effects/native_regression.tscn"):
             destination = native / relative
@@ -117,8 +117,6 @@ def main():
             return checked_run([str(godot), "--path", str(project), *arguments], env,
                                logs / f"{name}.log", markers)
         run(host, "host-cold-import", ["--editor", "--import"])
-        run(host, "host-regression", ["--script", "res://tools/audio/host_regression.gd",
-            "--quit-after", "120", "--", str(base / "userdata/data")], ["HOST_REGRESSION: PASS"])
         # Test-only autoload triggers graceful exit while running the real main scene.
         project = host / "project.godot"
         text = project.read_text()
