@@ -189,6 +189,15 @@ const UNIT_TINT_TOLERANCE: float = 0.02
 ## How long to watch a cast for the caster/target flash. E015's unit keyframes ramp over
 ## 32 effect frames from their phase start, and the cast outlives that.
 const UNIT_SAMPLE_SECONDS: float = 6.0
+## How long to watch a REAL cast — its whole life, because the claim under test is what
+## the cast does BEFORE it is freed. Comfortably past `EffectsPlayback`'s own ceiling
+## (`CAST_CAP_MAX_SECONDS`), so this measures the cast ending rather than this arm
+## giving up on it.
+const UNIT_CAST_WATCH_SECONDS: float = 34.0
+## How many times longer the targeted unit must hold its colour than the untargeted one
+## is brushed by the plume. Measured: the target sits off base for the whole flash while
+## the bystander catches a fraction of a second of particles.
+const UNIT_SUSTAIN_RATIO: float = 3.0
 ## How long to wait for the cast to finish and withdraw its layers on its own.
 ## `EffectManager` caps a spell at roughly 10.5s.
 const UNIT_QUIET_TIMEOUT: float = 14.0
@@ -905,12 +914,21 @@ func _run_unit_surface_masks(caster: Dictionary) -> void:
 	await _settle(0.2)
 
 
-## F4. A real cast's caster and target channels land on the real unit materials.
+## F4/F5. A real cast's caster and target channels land on the real unit materials —
+## and, since `EffectsPlayback` took the cast's lifetime, the ROM's own palette RESTORE
+## runs before the cast goes, so the tint FADES instead of being snapped off by teardown.
+##
+## 🔴 THE MEASUREMENT THAT MATTERS IS "WHILE THE CAST WAS STILL ALIVE". Removing a
+## layer at teardown also puts a unit back to base, so "the tint cleared" on its own
+## says nothing about whether the colour track was honoured. `restored_while_alive`
+## below is the distinction: the stack folded back to the untinted CLUT entry while the
+## cast was still running, which only the phase2 restore op can do.
 func _run_unit_cast(control: bool, registry: Node, caster: Dictionary,
 		target: Dictionary, bystander: Dictionary) -> void:
-	var caster_body: ShaderMaterial = (caster["sprites"] as UnitSpritesManager).sprite_primary.material_override
-	var target_body: ShaderMaterial = (target["sprites"] as UnitSpritesManager).sprite_primary.material_override
-	var bystander_body: ShaderMaterial = (bystander["sprites"] as UnitSpritesManager).sprite_primary.material_override
+	var caster_body: ShaderMaterial = _probe_material(caster, UnitSpritesManager.SURFACE_BODY)
+	var target_body: ShaderMaterial = _probe_material(target, UnitSpritesManager.SURFACE_BODY)
+	var bystander_body: ShaderMaterial = _probe_material(bystander, UnitSpritesManager.SURFACE_BODY)
+	var base := Vector3(UNIT_BASE_COLOUR.r, UNIT_BASE_COLOUR.g, UNIT_BASE_COLOUR.b)
 
 	var action := Action.new()
 	action.unique_name = UNIT_TINT_ACTION["unique_name"]
@@ -920,9 +938,12 @@ func _run_unit_cast(control: bool, registry: Node, caster: Dictionary,
 		"F4 the probe ability routes to E%03d" % UNIT_TINT_ACTION["vfx_id"])
 
 	var baseline := await _grab()
+	var base_caster: Color = _unit_patch(baseline, caster, Vector3.ZERO)
+	var base_target: Color = _unit_patch(baseline, target, Vector3.ZERO)
+	var base_bystander: Color = _unit_patch(baseline, bystander, Vector3.ZERO)
 	if not control:
-		# The exact call `Unit.use_ability` makes, with the two nodes it hands over:
-		# `char_body`s, never `Unit`s.
+		# The exact call `ActionInstance.show_vfx` makes, with the two nodes it hands
+		# over: `char_body`s, never `Unit`s.
 		_unit_cast = _playback.play_action_vfx(caster["body"], target["body"], action)
 		_check(_unit_cast != null,
 			"F4 the cast spawned from the caster probe at the target probe")
@@ -938,12 +959,24 @@ func _run_unit_cast(control: bool, registry: Node, caster: Dictionary,
 	var peak_target_patch := Color.BLACK
 	var budget_exceeded := 0
 	var peak_effect_frame := 0
-	var tinted_seconds: float = 0.0
 	var addon_owners: Dictionary = {}
+	# Seconds each patch spent away from its untinted colour. A colour layer holds a
+	# sprite off base for SECONDS; a particle crossing a 25x25 px patch is over in a few
+	# frames. That difference is what tells the two apart once an effect is allowed to
+	# play far enough that its plume reaches the whole frame — a peak-only reading
+	# cannot, and scored one, E015's late flash washed the bystander to the same white.
+	var target_off_base: float = 0.0
+	var bystander_off_base: float = 0.0
+	var saw_tint := false
+	var restored_at: float = -1.0
+	var restored_while_alive := false
+	var cast_freed_at: float = -1.0
 	var elapsed: float = 0.0
-	while elapsed < UNIT_SAMPLE_SECONDS:
+	var deadline: float = UNIT_SAMPLE_SECONDS if control else UNIT_CAST_WATCH_SECONDS
+	while elapsed < deadline:
 		await get_tree().process_frame
-		elapsed += get_tree().root.get_process_delta_time()
+		var dt: float = get_tree().root.get_process_delta_time()
+		elapsed += dt
 		peak_caster_layers = maxi(peak_caster_layers, _layer_count(caster_body))
 		peak_target_layers = maxi(peak_target_layers, _layer_count(target_body))
 		peak_bystander_layers = maxi(peak_bystander_layers, _layer_count(bystander_body))
@@ -955,19 +988,38 @@ func _run_unit_cast(control: bool, registry: Node, caster: Dictionary,
 				func(total: int, snap: Dictionary) -> int: return total + snap.rgb0.size(), 0))
 		if is_instance_valid(_unit_cast):
 			peak_effect_frame = maxi(peak_effect_frame, _unit_cast.get_effect_frame())
-		if _layer_count(target_body) > 0:
-			tinted_seconds += get_tree().root.get_process_delta_time()
+		elif not control and cast_freed_at < 0.0:
+			cast_freed_at = elapsed
+
+		# 🔴 THE RESTORE, READ OFF THE CPU MIRROR AND NOT OFF PIXELS. Particles sit on
+		# the patch at exactly the frames this has to be right about, so the question
+		# "has the colour stack folded back to the untinted entry" is asked of
+		# `ColorStack.fold_packed` over the live uniforms — the same oracle F6 scores
+		# the shader against.
+		var folded: Vector3 = _fold_oracle(target, UnitSpritesManager.SURFACE_BODY)
+		if (folded - base).length() > UNIT_TINT_TOLERANCE:
+			saw_tint = true
+		elif saw_tint and restored_at < 0.0:
+			restored_at = elapsed
+			restored_while_alive = is_instance_valid(_unit_cast)
+
 		var now := await _grab()
-		peak_caster_rise = _peak_rise(peak_caster_rise,
-			_rise(_unit_patch(baseline, caster, Vector3.ZERO), _unit_patch(now, caster, Vector3.ZERO)))
+		var caster_rise := _rise(base_caster, _unit_patch(now, caster, Vector3.ZERO))
 		var target_patch: Color = _unit_patch(now, target, Vector3.ZERO)
-		var target_rise := _rise(_unit_patch(baseline, target, Vector3.ZERO), target_patch)
+		var target_rise := _rise(base_target, target_patch)
+		var bystander_rise := _rise(base_bystander, _unit_patch(now, bystander, Vector3.ZERO))
+		peak_caster_rise = _peak_rise(peak_caster_rise, caster_rise)
+		peak_bystander_rise = _peak_rise(peak_bystander_rise, bystander_rise)
 		if target_rise.length() > peak_target_rise.length():
 			peak_target_rise = target_rise
 			peak_target_patch = target_patch
-		peak_bystander_rise = _peak_rise(peak_bystander_rise,
-			_rise(_unit_patch(baseline, bystander, Vector3.ZERO),
-				_unit_patch(now, bystander, Vector3.ZERO)))
+		if target_rise.length() > UNIT_TINT_TOLERANCE:
+			target_off_base += dt
+		if bystander_rise.length() > UNIT_TINT_TOLERANCE:
+			bystander_off_base += dt
+
+		if not control and cast_freed_at >= 0.0 and elapsed > cast_freed_at + 0.5:
+			break
 
 	print("[AbilityVfx] ARM F4 CAST%s layers caster=%d target=%d bystander=%d "
 		% [" (CONTROL, no cast)" if control else "",
@@ -977,6 +1029,11 @@ func _run_unit_cast(control: bool, registry: Node, caster: Dictionary,
 		+ "rise caster=%s target=%s bystander=%s; peak target patch %s"
 			% [_v3(peak_caster_rise), _v3(peak_target_rise), _v3(peak_bystander_rise),
 				peak_target_patch])
+	print("[AbilityVfx] ARM F5 LIFETIME peak_frame=%d restore_frame=%d restored@%.1fs "
+		% [peak_effect_frame, _probe_restore_frame(), restored_at]
+		+ "(cast %s) freed@%.1fs; off-base seconds target=%.1f bystander=%.1f"
+			% ["ALIVE" if restored_while_alive else "already gone",
+				cast_freed_at, target_off_base, bystander_off_base])
 
 	if control:
 		_check(peak_caster_layers == 0 and peak_target_layers == 0,
@@ -1005,7 +1062,6 @@ func _run_unit_cast(control: bool, registry: Node, caster: Dictionary,
 		"F4 and the CASTER's sprite pixels moved (%s)" % _v3(peak_caster_rise))
 	_check(peak_target_rise.length() > UNIT_MIN_RISE,
 		"F4 and the TARGET's sprite pixels moved (%s)" % _v3(peak_target_rise))
-	_report_restore_reach(peak_effect_frame, tinted_seconds)
 	# 🔴 WHERE THE SPRITE LANDED, not merely that it moved — the ROM's own numbers as
 	# an independent oracle. E015's caster and target keyframes are blend mode 4,
 	# `base + delta`, at the full 5-bit parameter: `ColorRecipe.from_mode` normalizes
@@ -1016,14 +1072,31 @@ func _run_unit_cast(control: bool, registry: Node, caster: Dictionary,
 			and peak_target_patch.b > 0.95,
 		"F4 and it landed where the ROM's own keyframes say — mode 4 `base + 31/31` "
 		+ "saturates the CLUT entry to white (%s)" % peak_target_patch)
-	# 🔴 THE PARTICLE CONTROL. The bystander stands in the same frame, unregistered and
-	# untargeted. If the plume were what moved the two patches above, it would move this
-	# one too — so this check is what makes them evidence about COLOUR.
-	_check(peak_bystander_rise.length() < UNIT_TINT_TOLERANCE,
-		"F4 while the untargeted unit beside them did not — so what moved them was the "
-		+ "colour track, not particles (%s)" % _v3(peak_bystander_rise))
+	# The particle control, by DURATION rather than by peak. The bystander is
+	# unregistered and untargeted, so every second it spends off base is the plume
+	# crossing its patch — and the targeted unit must be off base for far longer.
+	_check(target_off_base > bystander_off_base * UNIT_SUSTAIN_RATIO,
+		"F4 the TARGET held its colour for %.1fs while the untargeted unit beside it "
+			% target_off_base + "was only brushed for %.1fs — sustained, so what moved "
+			% bystander_off_base + "it was the colour track and not particles")
 
-	# F5a: the cast withdraws its own layers when it ends.
+	# 🔴 F5, THE LIFETIME CLAIM. `EffectsPlayback._reap_cast` owns the cast now, and it
+	# keeps the node alive until the effect's own frame clock has passed
+	# `phase1_duration + phase2_delay + PALETTE_RESTORE_RAMP_FRAMES`. Before that, the
+	# addon's wall-clock poll reaped a cast mid-timeline — E015 at effect frame 134 of
+	# 227 with phase2_start 212 — so the ROM's restore op never executed and the unit
+	# was snapped back to base by teardown after holding a full white flash for seconds.
+	_check(peak_effect_frame >= _probe_restore_frame(),
+		"F5 the cast ran to its palette RESTORE — effect frame %d of the %d "
+			% [peak_effect_frame, _probe_restore_frame()]
+		+ "`phase1_duration + phase2_delay + ramp` needs")
+	_check(restored_while_alive,
+		"F5 and the unit went back to its untinted CLUT entry WHILE THE CAST WAS STILL "
+		+ "RUNNING (at %.1fs, cast freed at %.1fs) — the ROM's restore ran, rather than "
+			% [restored_at, cast_freed_at]
+		+ "teardown snapping the tint off")
+
+	# F5a: and nothing is left behind once the cast does go.
 	var waited: float = 0.0
 	while waited < UNIT_QUIET_TIMEOUT:
 		await get_tree().process_frame
@@ -1041,43 +1114,24 @@ func _run_unit_cast(control: bool, registry: Node, caster: Dictionary,
 		"F5 and the sprite is back to its untinted colour (%s)" % _v3(residue))
 
 
-## 🔴 A KNOWN UPSTREAM LIMITATION, REPORTED EVERY RUN RATHER THAN LEFT TO BE
-## REDISCOVERED — and the reason a unit can look like it "never goes back".
-##
-## Almost every effect in the corpus puts its palette RESTORE (blend mode 8/10, the op
-## that fades the flash back to the untinted CLUT entry) in **phase2**, and
-## `PaletteSubsystem.build_stream` only pushes ops for phases that have actually
-## STARTED. Phase 2 starts at `phase1_duration + phase2_delay` of the effect's OWN
-## frame clock. But `EffectManager._poll_effect_cleanup` caps a spell in WALL CLOCK —
-## 0.5s plus 100 polls at 0.1s — and an effect whose `time_scale` pacing curve runs it
-## below 30 Hz needs more wall clock than that to reach the same frame. When the cap
-## wins, the cast is destroyed mid-timeline, the restore never executes, and the unit
-## holds the flash until `EffectInstance._exit_tree` yanks the layers — which is a SNAP
-## back to base, not the fade the ROM authored.
-##
-## Measured on E073: reaped at effect frame 171 with `phase2_start` 241, the caster
-## pinned at pure white for 5.6 seconds first. Both halves of the cause live in
-## `addons/`, which is byte-pinned, so this states the number instead of fixing it.
-func _report_restore_reach(peak_frame: int, tinted_seconds: float) -> void:
+## The effect frame by which the probe ability's palette RESTORE has finished, read from
+## the ROM's own `timeline.json` header: `phase1_duration + phase2_delay` plus the
+## longest restore ramp. The PHASE numbers are read from the content here rather than
+## taken off the cast, so the arm scores the host's lifetime rule against what the ROM
+## says and not against the host's own reading of it. The ramp constant IS shared, on
+## purpose: it is one measured fact about the corpus, and a second hand-copied count
+## here would only be able to drift away from it silently.
+func _probe_restore_frame() -> int:
 	var path: String = EffectExtractPaths.EFFECTS_DIR.path_join(
 		"E%03d" % int(UNIT_TINT_ACTION["vfx_id"])).path_join("timeline.json")
-	var phase2_start := -1
-	var total_frames := -1
-	if FileAccess.file_exists(path):
-		var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
-		if typeof(parsed) == TYPE_DICTIONARY and parsed.has("header"):
-			var header: Dictionary = parsed["header"]
-			phase2_start = int(header.get("phase1_duration", 0)) + int(header.get("phase2_delay", 0))
-			total_frames = int(header.get("total_frames", -1))
-	print(("[AbilityVfx] NOTE F4 the cast reached effect frame %d of %d "
-		+ "(phase2_start %d) and held a tint for %.1fs.")
-		% [peak_frame, total_frames, phase2_start, tinted_seconds])
-	if phase2_start >= 0 and peak_frame < phase2_start:
-		print("[AbilityVfx] NOTE F4 it was reaped BEFORE phase2, so the ROM's palette "
-			+ "RESTORE never ran — the unit snapped back when the cast node freed "
-			+ "instead of fading. `EffectManager` caps a spell at 0.5s + 100 polls of "
-			+ "WALL CLOCK, which a time-scaled effect cannot always reach phase2 in. "
-			+ "Both halves are in the byte-pinned addon; see _report_restore_reach.")
+	if not FileAccess.file_exists(path):
+		return 0
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if typeof(parsed) != TYPE_DICTIONARY or not parsed.has("header"):
+		return 0
+	var header: Dictionary = parsed["header"]
+	return (int(header.get("phase1_duration", 0)) + int(header.get("phase2_delay", 0))
+		+ EffectsPlayback.PALETTE_RESTORE_RAMP_FRAMES)
 
 
 ## F5b. The other teardown: the unit leaves the tree. `Unit._exit_tree` calls

@@ -46,12 +46,46 @@ extends Node3D
 ## regression scenes, the editor previews) nothing takes the camera and nothing changes.
 @export var camera_rig: CameraController
 
+## An effect's own clock rate — `EffectTimeline.PHYSICS_TIMESTEP`, the FFT game loop.
+const EFFECT_FRAME_HZ: float = 30.0
+
+## The longest palette RESTORE ramp in the installed corpus.
+## `ColorRecipe.ramp_frames_for_time` turns a keyframe's Time byte into a DDA length
+## (0 -> 0, 1..3 -> 8, else 32 * (t >> 2)), and every phase2 restore across the 402
+## installed effects carries Time 0, 1, 2 or 4 — so 32 frames covers all of them.
+## Counted from the content, not guessed: re-run the count if the corpus is re-exported.
+const PALETTE_RESTORE_RAMP_FRAMES: int = 32
+
+## The addon's own "has this cast finished drawing" test, mirrored rather than reached:
+## `EffectManager.EFFECT_MIN_FRAME_FOR_CLEANUP`. Used for the two things that must keep
+## ending exactly when they used to — the camera hand-back and the gameplay wait.
+const VISUAL_DONE_MIN_FRAME: int = 50
+
+## Wall-clock ceiling on one cast — a hang guard, not a policy. Derived PER CAST from
+## the frame it has to reach, because `phase1_duration + phase2_delay` spans 0..618
+## frames across the corpus (median 82): one flat number would either strand the long
+## effects or hold the short ones. The slack covers `time_scale` pacing, measured as
+## low as ~0.5x real time on E073.
+const CAST_PACING_SLACK: float = 3.0
+const CAST_CAP_MIN_SECONDS: float = 12.0
+const CAST_CAP_MAX_SECONDS: float = 30.0
+
 var _producer: ExMateriaEffects.EngineFoldCompositor
 var _host: EffectsCastHost
 var _manager: ExMateriaEffects.EffectManager
 ## Pumps `camera_rig` from whichever cast currently owns it. Built lazily so a playback
 ## with no rig never adds a node that would only ever no-op.
 var _camera_track: EffectCameraTrack
+
+## The casts this node spawned and must free itself — see `play_action_vfx`. The
+## cinematic spawn deliberately does NOT enter the addon's `_owned_effects`, so its
+## stage-exit sweep does not reach them.
+var _owned_casts: Array[Node3D] = []
+
+## The cast currently driving `camera_rig`, or null. Tracked here rather than read off
+## `EffectCameraTrack._cast` so the camera hand-back below never reaches into another
+## file's private state.
+var _camera_cast: Node3D = null
 
 ## Why playback is unavailable, or "" when it is. Read this instead of guessing:
 ## every refusal below is a quiet-by-design failure mode.
@@ -117,6 +151,15 @@ func _end() -> void:
 	# mid-track with nothing left to advance it.
 	if is_instance_valid(_camera_track):
 		_camera_track.release()
+	_camera_cast = null
+	# 🔴 OURS TO FREE. `spawn_cinematic_effect` does not enter the addon's
+	# `_owned_effects`, so `EffectManager._on_stage_exiting`'s sweep does not reach
+	# these — a torn-down battle would otherwise leave every in-flight cast alive,
+	# still holding a unit tint and a map tint.
+	for cast: Node3D in _owned_casts:
+		if is_instance_valid(cast):
+			cast.queue_free()
+	_owned_casts.clear()
 	_manager = null
 	_host = null
 	if is_instance_valid(_producer):
@@ -213,29 +256,38 @@ func play_action_vfx(caster: Node3D, target: Node3D, action: Action) -> Node3D:
 				+ "nothing. Copy the per-effect `E###` directories into the content root.")
 				% [dir, effect_id, action.unique_name])
 		return null
-	# 🔴 `ability_id` is SIGNAL PAYLOAD ONLY on this path — `spawn_spell_effect` never
-	# asks the host for an `AbilityVisual`, it only forwards this int through
-	# `ability_react_triggered` / `hit_reaction_triggered`. TacticsG's `Action` carries
-	# no numeric ability id (only `unique_name`), so -1 is passed deliberately rather
-	# than a fabricated number that a future reaction listener would trust.
-	# 🔴 The manager's spell spawn returns VOID, so the node is identified by diffing the
-	# stage's children across the call. TacticsG needs the reference for TIMING, not for
-	# rendering: `ActionInstance` used to hold the old `VfxEffectInstance` and wait for it
-	# to free itself before returning units to idle. Without a handle that wait silently
-	# becomes a flat timer and every ability's pacing changes.
-	var stage: Node = battle_manager
-	var before: Dictionary = {}
-	for child: Node in stage.get_children():
-		before[child.get_instance_id()] = true
-	_manager.spawn_spell_effect(caster, target, -1, effect_id)
-	for child: Node in stage.get_children():
-		if before.has(child.get_instance_id()) or child.is_queued_for_deletion():
-			continue
-		if child.has_method("get_active_particle_count"):
-			_offer_camera(child)
-			return child as Node3D
-	# Initialization failed; the manager already freed its instance.
-	return null
+	# 🔴 `ability_id` is SIGNAL PAYLOAD ONLY on this path — the spawn never asks the host
+	# for an `AbilityVisual`, it only forwards this int through `ability_react_triggered`
+	# / `hit_reaction_triggered`. TacticsG's `Action` carries no numeric ability id (only
+	# `unique_name`), so -1 is passed deliberately rather than a fabricated number that a
+	# future reaction listener would trust.
+	#
+	# 🔴 THE CINEMATIC SPAWN, AND THE HOST OWNS THE LIFETIME. See `_reap_cast`: the
+	# spell spawn attaches `EffectManager._poll_effect_cleanup`, which ends a cast on a
+	# WALL-CLOCK budget while the effect's own clock is in frames — so it routinely
+	# destroys a cast mid-timeline, before the ROM's palette RESTORE has run, and leaves
+	# the caster and target holding their flash. `spawn_cinematic_effect` is the same
+	# spawn with that poll left off ("the cinematic lifecycle is owned by the caller"),
+	# so the host ends the cast on the ROM's terms instead.
+	#
+	# It is also simply a better entry point for this call site: it RETURNS the instance,
+	# which `spawn_spell_effect` (void) did not, so the cast no longer has to be
+	# identified by diffing the stage's children across the call and duck-typing the new
+	# node. And it seeds `map_center_godot` from `arena_bounds()` itself.
+	#
+	# The two documented costs of this route do not apply here. `is_cinematic` opts the
+	# instance out of the `combat_visuals` group, which NOTHING in this repo or the addon
+	# ever reads (verified by grep — every hit is an `add_to_group` or a comment). And the
+	# missing `_owned_effects` bookkeeping, which is only the addon's stage-exit sweep, is
+	# replaced by `_owned_casts` + `_end()`.
+	var cast: Node3D = _manager.spawn_cinematic_effect(caster, target, -1, effect_id)
+	if cast == null:
+		# Initialization failed; the manager already freed its instance.
+		return null
+	_owned_casts.append(cast)
+	_offer_camera(cast)
+	_reap_cast(cast)
+	return cast
 
 
 ## Offer a freshly spawned cast the camera rig.
@@ -261,10 +313,95 @@ func _offer_camera(cast: Node) -> void:
 		_camera_track = EffectCameraTrack.new(camera_rig)
 		add_child(_camera_track)
 	_camera_track.rig = camera_rig
-	if _camera_track.adopt(cast) and _host != null:
-		# `EFFECT_CTR` keyframes anchor on the map centre, which the addon's spell spawn
-		# never sets — the host is the only side that knows the arena's size.
+	if not _camera_track.adopt(cast):
+		return
+	# Remembered so `_reap_cast` can hand the rig back at the beat the node used to die
+	# on, without reaching into `EffectCameraTrack`'s own private `_cast`.
+	_camera_cast = cast as Node3D
+	if _host != null:
+		# `EFFECT_CTR` keyframes anchor on the map centre, which the addon's spawn never
+		# sets — the host is the only side that knows the arena's size.
 		_camera_track.set_map_bounds(_host.arena_bounds())
+
+
+## Own one cast's lifetime, and end it on the ROM's terms.
+##
+## 🔴 WHY THE HOST DOES THIS AT ALL. `EffectManager._poll_effect_cleanup` — the reaper
+## the SPELL spawn attaches, and the one this replaces — frees a cast on a WALL-CLOCK
+## budget: 0.5s plus 100 polls at 0.1s. An effect's own clock is in FRAMES and is paced
+## by its `time_scale` curve, which routinely runs below 30 Hz, so that budget expires
+## mid-timeline. Measured: E073 reaped at effect frame 171 of 278, E015 at 134 of 227.
+##
+## That is not just a truncated animation. Almost every effect puts its palette RESTORE
+## — the mode 8/10 op that fades a caster/target flash back to the untinted CLUT entry —
+## in PHASE 2, and `PaletteSubsystem.build_stream` only pushes ops for phases that have
+## actually STARTED. Reaped before `phase1_duration + phase2_delay`, the restore never
+## executes: the unit holds its flash until `EffectInstance._exit_tree` yanks the layers,
+## which is a SNAP back to base rather than the authored fade. Measured on E073, the
+## caster sat at pure white for 5.6 seconds and then jumped.
+##
+## 🔴 ONLY THE NODE LIVES LONGER. Everything the player can see or feel still ends when
+## it used to: the camera goes back at `_cast_visual_done` (below), and `await_casts`
+## returns on the same test, so ability pacing is unchanged. What the extra frames buy
+## is the colour track running to its restore — the cast is silent and particle-free by
+## then, and it costs a few subsystem ticks over nothing.
+func _reap_cast(cast: Node3D) -> void:
+	var restore_frame: int = _palette_restore_frame(cast)
+	# A hang guard, not a policy: if the effect never gets there, the cast still goes.
+	var budget: float = clampf(
+		float(restore_frame) / EFFECT_FRAME_HZ * CAST_PACING_SLACK,
+		CAST_CAP_MIN_SECONDS, CAST_CAP_MAX_SECONDS)
+	var waited: float = 0.0
+	var handed_back: bool = false
+	while is_instance_valid(cast) and waited < budget:
+		var tree := get_tree()
+		if tree == null:
+			return
+		await tree.process_frame
+		if not is_instance_valid(cast) or not is_inside_tree():
+			break
+		waited += tree.root.get_process_delta_time()
+		var visual_done: bool = _cast_visual_done(cast)
+		if visual_done and not handed_back:
+			handed_back = true
+			# The rig used to come back when the node died. It still comes back HERE,
+			# which is that same moment — not at the end of the colour tail.
+			if is_instance_valid(_camera_track) and _camera_cast == cast:
+				_camera_track.release()
+				_camera_cast = null
+		if visual_done and cast.get_effect_frame() >= restore_frame:
+			break
+	_owned_casts.erase(cast)
+	if _camera_cast == cast:
+		if is_instance_valid(_camera_track):
+			_camera_track.release()
+		_camera_cast = null
+	if is_instance_valid(cast):
+		cast.queue_free()
+
+
+## The effect frame by which the ROM's palette restore has finished: phase 2's start
+## plus the longest restore ramp. Read off the cast's OWN parsed timeline header, so
+## re-exporting the corpus changes this without touching the host. 0 when an effect
+## carries no timeline, which makes the wall-clock floor the whole budget.
+func _palette_restore_frame(cast: Node3D) -> int:
+	if not is_instance_valid(cast) or cast.effect_data == null \
+			or cast.effect_data.timeline == null:
+		return 0
+	var timeline = cast.effect_data.timeline
+	return int(timeline.phase1_duration) + int(timeline.phase2_delay) \
+		+ PALETTE_RESTORE_RAMP_FRAMES
+
+
+## Has this cast finished DRAWING? The addon's own condition, mirrored: no live
+## particles, past its minimum frame. This is the beat the camera goes back on and the
+## beat `await_casts` returns on, so both keep the timing they had when the addon's
+## poll freed the node here.
+func _cast_visual_done(cast: Node3D) -> bool:
+	if not is_instance_valid(cast):
+		return true
+	return cast.get_active_particle_count() == 0 \
+		and cast.get_effect_frame() > VISUAL_DONE_MIN_FRAME
 
 
 ## The live camera track, or null if nothing has ever claimed the rig. Exposed so a test
@@ -293,7 +430,18 @@ func play_action_vfx_at(caster: Node3D, world_position: Vector3, action: Action)
 	if cast == null:
 		marker.queue_free()
 		return null
-	get_tree().create_timer(12.0).timeout.connect(
+	# 🔴 TIED TO THE CAST, not to a flat 12s. The addon parents a tracking anchor to
+	# whatever it is given as the target, so the marker has to outlive the cast — and
+	# `_reap_cast` now runs a cast to its palette restore, which can be longer than the
+	# twelve seconds this used to assume. Freeing on the cast's own exit keeps the two in
+	# step whatever the effect's length; the timer stays as the guard for a cast that
+	# somehow never leaves the tree, one beat past the reaper's own ceiling.
+	cast.tree_exited.connect(
+		func() -> void:
+			if is_instance_valid(marker):
+				marker.queue_free(),
+		CONNECT_ONE_SHOT)
+	get_tree().create_timer(CAST_CAP_MAX_SECONDS + 2.0).timeout.connect(
 		func() -> void:
 			if is_instance_valid(marker):
 				marker.queue_free(),
@@ -369,8 +517,16 @@ func await_casts(casts: Array[Node3D], fallback_seconds: float = 0.5,
 	if live.is_empty():
 		await tree.create_timer(fallback_seconds).timeout
 		return
+	# 🔴 WAITS ON THE VISUAL, NOT ON THE NODE — and that is what KEEPS this timing the
+	# same. It used to wait for the instance to free itself, which happened when the
+	# addon's poll saw the particles finish. `_reap_cast` now keeps the node alive past
+	# that point so the ROM's palette restore can run (see there), so waiting on node
+	# validity would silently add the whole colour tail to every ability's resolution.
+	# `_cast_visual_done` is the addon's own finished-drawing test, so an ability
+	# resolves on exactly the beat it always did.
 	var waited: float = 0.0
 	while waited < max_seconds and live.any(
-			func(c: Node3D) -> bool: return is_instance_valid(c)):
+			func(c: Node3D) -> bool:
+				return is_instance_valid(c) and not _cast_visual_done(c)):
 		await tree.process_frame
 		waited += tree.root.get_process_delta_time()
