@@ -113,5 +113,60 @@ func run() -> void:
 	check(ResourceLoader.exists("res://src/file_formats/vfx/projectile_effect_instance.gd"),
 		"weapon projectiles survive — the addon has no equivalent")
 
+	_check_unit_tint_surface()
+
 	print("PROBE: " + ("PASS" if not failed else "FAIL"))
 	get_tree().quit(1 if failed else 0)
+
+
+## Sprite materials must be filed under `char_body`'s instance id, not the `Unit`'s (see
+## `UnitSpritesManager.bind_tint_surface`). Checked on a real `Unit`, because only
+## `unit.tscn` plus `unit.gd` can show which id actually gets used.
+func _check_unit_tint_surface() -> void:
+	var registry: Node = get_tree().root.get_node_or_null(^"/root/TintedSurfaces")
+	check(registry != null, "the TintedSurfaces autoload is present to register into")
+	if registry == null:
+		return
+	# A fixture: `Unit._ready` reaches `GameData` for the status-icon sheet, which is empty
+	# in a probe with no ROM, so without these the run buries itself in texture errors.
+	var had_texture: bool = GameData.textures.has("misc")
+	var had_palette: bool = GameData.palettes.has("misc")
+	if not had_texture:
+		GameData.textures["misc"] = ImageTexture.create_from_image(
+			Image.create_empty(8, 8, false, Image.FORMAT_RGBA8))
+	if not had_palette:
+		var stub := PackedColorArray()
+		stub.resize(256)
+		GameData.palettes["misc"] = stub
+
+	var unit: Unit = Unit.instantiate()
+	add_child(unit)
+
+	var body_id: int = unit.char_body.get_instance_id()
+	check(unit.tint_surface_token() == body_id,
+		"a Unit registers its CHAR_BODY's instance id (%d), which is what the addon "
+			% body_id + "keys caster/target tints on — not its own (%d)"
+			% unit.get_instance_id())
+	check(registry.is_surface_registered(body_id),
+		"and TintedSurfaces knows that token, so update_stack does not early-return")
+	check(not registry.is_surface_registered(unit.get_instance_id()),
+		"and the Unit's own id is NOT a surface — registering it would tint nothing")
+	var materials: Array = registry._surface_materials.get(body_id, [])
+	check(materials.size() >= 2,
+		"with the unit's sprite materials on it (%d)" % materials.size())
+
+	# `BattleManager` reparents `battle_view` in and out of the editor's SubViewport, so the
+	# pair must survive a round trip, not just a teardown.
+	remove_child(unit)
+	check(not registry.is_surface_registered(body_id),
+		"leaving the tree unregisters the surface rather than leaking it")
+	add_child(unit)
+	check(registry.is_surface_registered(body_id)
+			and registry._surface_materials.get(body_id, []).size() >= 2,
+		"and coming back re-registers it — a reparent must not kill a unit's tint")
+	unit.queue_free()
+
+	if not had_texture:
+		GameData.textures.erase("misc")
+	if not had_palette:
+		GameData.palettes.erase("misc")
