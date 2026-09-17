@@ -200,6 +200,12 @@ func _begin_effects_playback() -> void:
 	effects_playback.name = "EffectsPlayback"
 	effects_playback.enabled = true
 	effects_playback.battle_manager = self
+	# 388 of the 401 installed effects move the camera, and not only the charge-time
+	# cinematics — ordinary spell casts do too. What is handed over is the
+	# `CameraController` rig rather than `main_camera`, because an effect asks for a
+	# point to orbit, an orbit and a zoom, which is exactly the rig plus its child
+	# camera, and because the handover has to drop `follow_node` and put it back.
+	effects_playback.camera_rig = camera_controller
 	# Declared at runtime, not in project.godot: the content is ROM-derived and
 	# gitignored, so a committed default would point every contentless checkout at a
 	# root that cannot exist. Left empty when the directory is absent, which makes

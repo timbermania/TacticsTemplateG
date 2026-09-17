@@ -14,9 +14,15 @@ extends Node3D
 ## refuses with a reason rather than letting every cast fail as a missing file.
 @export var content_root: String = ""
 
+## The rig a cast's CAMERA track drives, or null to leave the camera alone. 388 of 401
+## effects carry a camera track, not gated on `is_cinematic`, so ordinary casts have one.
+@export var camera_rig: CameraController
+
 var _producer: ExMateriaEffects.EngineFoldCompositor
 var _host: EffectsCastHost
 var _manager: ExMateriaEffects.EffectManager
+## Moves `camera_rig` for whichever cast currently has it. Created on first use.
+var _camera_track: EffectCameraTrack
 
 ## Why playback is unavailable, or "" when it is. Every refusal below is quiet by design.
 var unavailable_reason: String = ""
@@ -74,6 +80,9 @@ func end() -> void:
 
 
 func _end() -> void:
+	# Before the manager goes, or the rig freezes mid-track with nothing to advance it.
+	if is_instance_valid(_camera_track):
+		_camera_track.release()
 	_manager = null
 	_host = null
 	if is_instance_valid(_producer):
@@ -156,9 +165,34 @@ func play_action_vfx(caster: Node3D, target: Node3D, action: Action) -> Node3D:
 		if before.has(child.get_instance_id()) or child.is_queued_for_deletion():
 			continue
 		if child.has_method("get_active_particle_count"):
+			_offer_camera(child)
 			return child as Node3D
 	# Initialization failed; the manager already freed its instance.
 	return null
+
+
+## Offer a freshly spawned cast the camera rig. Polled, not signalled — see
+## `EffectCameraTrack.adopt`.
+##
+## TODO: route charge-time abilities through `spawn_cinematic_effect` if they need the
+## real callbacks.
+func _offer_camera(cast: Node) -> void:
+	if not is_instance_valid(camera_rig):
+		return
+	if not is_instance_valid(_camera_track):
+		_camera_track = EffectCameraTrack.new(camera_rig)
+		add_child(_camera_track)
+	_camera_track.rig = camera_rig
+	if _camera_track.adopt(cast) and _host != null:
+		# Some keyframes are placed relative to the middle of the map, which the addon
+		# cannot work out on its own — only this side knows the arena's size.
+		_camera_track.set_map_bounds(_host.arena_bounds())
+
+
+## The live camera track, or null. Public so a test can read what the addon asked for and
+## what the camera actually did, side by side.
+func camera_track() -> EffectCameraTrack:
+	return _camera_track
 
 
 ## For a call site with a target POSITION but no target node. The addon parents a tracking

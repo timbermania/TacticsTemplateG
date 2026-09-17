@@ -1,6 +1,6 @@
 extends Node3D
 ## Scores a real battle ABILITY drawing through `addons/exmateria_effects`: the `E###`
-## mapping, the cast's pixels, the TRAP handlers and the SCREEN track.
+## mapping, the cast's pixels, the TRAP handlers and the SCREEN and CAMERA tracks.
 ##
 ##   Godot --path . res://tools/effects/ability_vfx_regression.tscn -- auto [--actions=DIR]
 ##   Godot --path . res://tools/effects/ability_vfx_regression.tscn -- auto noplay [...]
@@ -43,6 +43,53 @@ const BG_MIN_DELTA: float = 0.02
 ## Covers readback rounding only; the control's honest reading is 0.0.
 const BG_CONTROL_TOLERANCE: float = 0.004
 
+## The shipped rig: its projection, child stand-off and starting zoom are under test.
+const CAMERA_RIG_SCENE := preload("res://src/camera_controller.tscn")
+## Loaded by path, not through the addon's entry-point script whose export count another
+## check pins. This is the addon's own answer for which way a given PSX yaw faces.
+const FACING_RESOLVER_PATH := "res://addons/exmateria_effects/camera/CinematicFacingResolver.gd"
+## The addon's own active-keyframe gate, used directly so the count cannot drift from it.
+const CAMERA_DATA_PATH := "res://addons/exmateria_effects/file_model/CameraData.gd"
+## E016's camera track runs ~71 effect frames at 30 Hz; the cast outlives it.
+const CAM_SAMPLE_SECONDS: float = 6.0
+## A spell is capped at ~10.5s, so past this a stuck camera is a defect, not a slow test.
+const CAM_RELEASE_TIMEOUT: float = 14.0
+## Float noise only — the camera is given exactly the numbers the conversion produced.
+const CAM_TRACK_EPSILON: float = 0.0005
+## Godot units of focus travel the rig must show.
+const CAM_MIN_FOCUS_MOVE: float = 0.5
+## The restore must land on the pre-cast numbers, not near them.
+const CAM_RESTORE_EPSILON: float = 0.001
+const CAM_CONTROL_TOLERANCE: float = 0.004
+## PSX yaw 1024 = 90 degrees.
+const CAM_PROBE_YAW: float = 1024.0
+## Two tiles sideways, with no cast in the scene, so only the camera can repaint.
+const CAM_PIXEL_OFFSET_PSX := Vector3(56.0, 0.0, 0.0)   # 2 tiles, 28 units each
+const CAM_MIN_MOVED_PX: int = 2000
+const CAM_RETURN_TOLERANCE_PX: int = 50
+## A spell is capped at roughly 10.5s.
+const CAM_QUIET_TIMEOUT: float = 14.0
+## What the camera move is measured against; an empty frame does not move when the camera
+## does. Unshaded, and spread so a pan, orbit and zoom each repaint a different part.
+const CAM_LANDMARKS: Array[Vector3] = [
+	Vector3(0, 0, 0), Vector3(3, 0, 0), Vector3(-3, 0, 0),
+	Vector3(0, 0, 3), Vector3(0, 0, -3),
+]
+const CAM_LANDMARK_SIZE := Vector3(1.6, 1.6, 1.6)
+
+## E016's angle keyframes are `TARGET` with a zero offset, leaving the ABSOLUTE-yaw path
+## untested. E063's `DIRECT ang=[302, 3584, 0]` names one, where chirality cannot hide.
+const CAM_YAW_PROBE := {"unique_name": "e063-yaw-probe", "vfx_name": "e_063", "vfx_id": 63}
+## PSX 3584 = 315 degrees, consumed RAW, so the rig must land on exactly this.
+const CAM_YAW_TARGET_PSX: float = 3584.0
+## The short way round: -512 PSX = -45 degrees. The wrong direction reads +315.
+const CAM_YAW_EXPECTED_DELTA: float = -45.0
+const CAM_YAW_EPSILON: float = 1.0
+const CAM_YAW_SAMPLE_SECONDS: float = 5.0
+## A synthetic arena so `arena_bounds()` has a known value. Not square: a transposed x/y
+## fails.
+const FAKE_MAP_TILES := Vector2i(12, 7)
+
 var _playback: EffectsPlayback
 var _caster: Node3D
 var _background: ScreenBackgroundQuad
@@ -75,6 +122,11 @@ func _ready() -> void:
 	# Off the origin, or "at the caster" and "at the origin" are the same pixels.
 	_caster.position = CASTER_ORIGIN_OFFSET
 	units.append(_caster)
+
+	# Read off the battle for `arena_bounds()` -> `CameraSubsystem.map_center`.
+	for x in FAKE_MAP_TILES.x:
+		for y in FAKE_MAP_TILES.y:
+			total_map_tiles[Vector2i(x, y)] = true
 
 	_playback = EffectsPlayback.new()
 	_playback.enabled = true
@@ -246,6 +298,7 @@ func _run_pixel_arm() -> void:
 				% [peak, MIN_DREW_PX])
 	await _run_trap_arm(control)
 	await _run_background_arm(control)
+	await _run_camera_arm(control)
 	_finish(true)
 
 
@@ -446,6 +499,452 @@ func _mean_of(image: Image, top: bool) -> Color:
 ## moved by N% of full scale".
 func _distance(a: Color, b: Color) -> float:
 	return maxf(maxf(absf(a.r - b.r), absf(a.g - b.g)), absf(a.b - b.b))
+
+
+# --- ARM E: the camera track ----------------------------------------------------
+
+## Proves the addon's CAMERA track reaches TacticsG's camera rig. A `CameraSubsystem` runs
+## for any effect with active camera keyframes, not just cinematics, and a host that never
+## reads its output gets no error. Measures in arm D's pairs, for arm D's reason.
+func _run_camera_arm(control: bool) -> void:
+	_background.visible = false
+	_run_camera_coverage()
+
+	# The rig the game ships, not a bare Camera3D: its projection and its child
+	# stand-off are two of the things under test.
+	var rig: CameraController = CAMERA_RIG_SCENE.instantiate()
+	add_child(rig)
+	rig.global_position = Vector3.ZERO
+	rig.camera.current = true
+	var landmarks := _add_camera_landmarks()
+	await _settle(SETTLE_SECONDS)
+
+	# `CameraCalibration` speaks ORTHOGRAPHIC size (12.6 at zoom 4096), so the rig being
+	# ortho decides the whole zoom mapping; nothing is forced or restored per cast.
+	_check(rig.camera.projection == Camera3D.PROJECTION_ORTHOGONAL,
+		"E0 the shipped rig is ORTHOGRAPHIC, so CameraCalibration's ortho size is "
+		+ "the zoom mapping directly (projection=%d)" % rig.camera.projection)
+
+	await _run_camera_chirality(rig)
+	await _run_camera_pixels(rig)
+
+	# Re-point the producer at the rig's camera and hand the rig over. Arms B-D ran on
+	# the scene's own camera and are finished.
+	if not _playback.begin(rig.camera):
+		_fail("E camera arm: playback unavailable on the rig camera: "
+			+ _playback.unavailable_reason)
+		return
+	_playback.camera_rig = rig
+
+	var pre_position: Vector3 = rig.global_position
+	var pre_rotation: Vector3 = rig.rotation_degrees
+	var pre_zoom: float = rig.zoom
+	var pre_size: float = rig.camera.size
+	var pre_projection: int = rig.camera.projection
+	var baseline := await _grab()
+
+	if not control:
+		var cast_action := Action.new()
+		cast_action.unique_name = PROBE_ACTION["unique_name"]
+		cast_action.vfx_name = PROBE_ACTION["vfx_name"]
+		cast_action.vfx_id = PROBE_ACTION["vfx_id"]
+		_check(_playback.play_action_vfx_at(
+				_caster, _caster.global_position + Vector3(0, 1.0, 0), cast_action) != null,
+			"camera arm spawned a cast")
+
+	var track: EffectCameraTrack = _playback.camera_track()
+	if not control:
+		_check(track != null and track.takeovers == 1,
+			"E2 the cast claimed the rig (takeovers=%d)"
+				% [track.takeovers if track != null else -1])
+		# `EFFECT_CTR` keyframes anchor on the map centre, which the spawn defaults to the
+		# origin. The host alone knows the arena's size; this line carries it across.
+		var expected_centre := Vector3(
+			float(FAKE_MAP_TILES.x) * 14.0, 0.0, float(FAKE_MAP_TILES.y) * 14.0)
+		_check(track != null and track._subsystem != null
+				and track._subsystem.map_center.is_equal_approx(expected_centre),
+			"E2 the host handed the subsystem the map centre for EFFECT_CTR (%s, expected %s)"
+				% [_v3(track._subsystem.map_center) if track != null and track._subsystem != null
+					else "<none>", _v3(expected_centre)])
+
+	var drift: float = 0.0          # worst host-vs-converted-subsystem disagreement
+	var stale: int = 0              # frames where the adapter read a stale subsystem
+	var peak_focus: float = 0.0
+	var peak_yaw: float = 0.0
+	var peak_size: float = 0.0
+	var peak_image: Image = null
+	var samples: int = 0
+	var logged: int = 0
+	var elapsed: float = 0.0
+	# No per-frame pixel scan: `_changed_pixels` costs ~78 ms a call, which would drop this
+	# loop to watching a 30 Hz track at 13 Hz. The framebuffer claim is E4's.
+	while elapsed < CAM_SAMPLE_SECONDS:
+		await get_tree().process_frame
+		elapsed += get_tree().root.get_process_delta_time()
+		if track == null or not track.is_driving():
+			continue
+		samples += 1
+		# E2a: THIS frame's subsystem values, not last frame's. `EffectCameraTrack` pumps
+		# at priority 100, after the EffectInstance that advances the subsystem.
+		var live: Vector3 = track._subsystem.current_position
+		if not live.is_equal_approx(track.last_psx_position):
+			stale += 1
+		# E2b: and the camera carries exactly what the conversion produced.
+		drift = maxf(drift, (rig.global_position - track.last_focus).length())
+		drift = maxf(drift, (rig.rotation_degrees - track.last_orbit_degrees).length())
+		drift = maxf(drift, absf(rig.camera.size - track.last_ortho_size))
+		var focus_travel: float = (rig.global_position - pre_position).length()
+		if focus_travel > peak_focus:
+			peak_focus = focus_travel
+			peak_image = await _grab()   # the frame at the far end of the pan
+		peak_focus = maxf(peak_focus, focus_travel)
+		# Wrapped to (-180, 180]: the seed adds a whole turn to keep the 45-degree snap
+		# positive, and an unwrapped reading reports that no-op as a 360-degree spin.
+		peak_yaw = maxf(peak_yaw,
+			absf(fposmod(rig.rotation_degrees.y - pre_rotation.y + 180.0, 360.0) - 180.0))
+		peak_size = maxf(peak_size, absf(rig.camera.size - pre_size))
+		if logged < 6:
+			logged += 1
+			# Subsystem values beside host values: "no errors in the log" is not
+			# evidence, two columns that track each other is.
+			print(("[AbilityVfx]   E2 f%-3d SUBSYS pos=%s ang=%s zoom=%.0f"
+				+ "  ->  HOST pos=%s rot=%s size=%.3f")
+				% [samples, _v3(track.last_psx_position), _v3(track.last_psx_angles),
+					track.last_psx_zoom, _v3(rig.global_position),
+					_v3(rig.rotation_degrees), rig.camera.size])
+
+	# How many times this loop CAUGHT the track driving, not how many effect frames ran:
+	# render rate against a fixed 30 Hz clock. It bounds the evidence, not the effect.
+	print(("[AbilityVfx] ARM E CAMERA%s samples_driving=%d drift=%.6f stale=%d "
+		+ "peak_focus=%.3f peak_yaw=%.2f peak_size=%.3f")
+		% [" (CONTROL, no cast)" if control else "", samples, drift, stale,
+			peak_focus, peak_yaw, peak_size])
+	var suffix: String = "-control" if control else ""
+	if peak_image != null:
+		peak_image.save_png("user://ability-vfx-camera%s.png" % suffix)
+		print("[AbilityVfx] screenshot user://ability-vfx-camera%s.png" % suffix)
+
+	if control:
+		_check(track == null or track.takeovers == 0,
+			"CONTROL nothing claimed the camera (takeovers=%d)"
+				% [track.takeovers if track != null else 0])
+		_check(rig.global_position.is_equal_approx(pre_position)
+				and rig.rotation_degrees.is_equal_approx(pre_rotation)
+				and absf(rig.camera.size - pre_size) <= CAM_CONTROL_TOLERANCE,
+			"CONTROL the rig never moved (pos %s rot %s size %.3f)"
+				% [_v3(rig.global_position), _v3(rig.rotation_degrees), rig.camera.size])
+		var drifted := _changed_pixels(baseline, await _grab())
+		_check(drifted <= CONTROL_TOLERANCE_PX,
+			"CONTROL the frame is unchanged (%d <= %d px)"
+				% [drifted, CONTROL_TOLERANCE_PX])
+		_free_all(landmarks)
+		rig.queue_free()
+		return
+
+	_check(samples > 0, "E2 the track drove the rig at all (%d samples)" % samples)
+	_check(stale == 0,
+		"E2 every applied pose came from the LIVE subsystem, not a frame behind "
+		+ "(%d stale of %d)" % [stale, samples])
+	_check(drift <= CAM_TRACK_EPSILON,
+		"E2 the rig carries exactly the converted subsystem pose (worst drift %.6f <= %.6f)"
+			% [drift, CAM_TRACK_EPSILON])
+	_check(peak_focus > CAM_MIN_FOCUS_MOVE,
+		"E3 a real cast moved the camera (%.3f > %.3f units of focus travel)"
+			% [peak_focus, CAM_MIN_FOCUS_MOVE])
+
+	# E5. The cast frees itself when the spell ends and `camera_finished` fires from its
+	# `_exit_tree`; the camera must come back WITHOUT this test asking for it.
+	var waited: float = 0.0
+	while waited < CAM_RELEASE_TIMEOUT and track != null and track.is_driving():
+		await get_tree().process_frame
+		waited += get_tree().root.get_process_delta_time()
+	_check(track == null or not track.is_driving(),
+		"E5 the cast handed the camera back on its own within %.0fs (waited %.1fs)"
+			% [CAM_RELEASE_TIMEOUT, waited])
+	if track != null and track.is_driving():
+		track.release()   # so the restore assertions below still mean something
+	_check(not rig.is_effect_driven(), "E5 the rig is no longer in a driven state")
+	print("[AbilityVfx]   E5 pre=%s/%s/%.3f  post=%s/%s/%.3f"
+		% [_v3(pre_position), _v3(pre_rotation), pre_size,
+			_v3(rig.global_position), _v3(rig.rotation_degrees), rig.camera.size])
+	_check((rig.global_position - pre_position).length() <= CAM_RESTORE_EPSILON
+			and (rig.rotation_degrees - pre_rotation).length() <= CAM_RESTORE_EPSILON
+			and absf(rig.zoom - pre_zoom) <= CAM_RESTORE_EPSILON
+			and absf(rig.camera.size - pre_size) <= CAM_RESTORE_EPSILON
+			and rig.camera.projection == pre_projection,
+		"E5 the rig is back at its exact pre-cast state")
+
+	await _run_camera_yaw_arm(rig)
+	_free_all(landmarks)
+	rig.queue_free()
+
+
+## E0. All 401 `camera.json` files carry 59 fixed slots per table, so "every effect has a
+## camera track" says nothing. The gate is `has_active_keyframes()`.
+func _run_camera_coverage() -> void:
+	var camera_data_script: Script = load(CAMERA_DATA_PATH)
+	if camera_data_script == null:
+		_fail("E0: cannot load " + CAMERA_DATA_PATH)
+		return
+	var dir := DirAccess.open(EffectExtractPaths.EFFECTS_DIR)
+	if dir == null:
+		print("[AbilityVfx] ARM E0 COVERAGE: SKIPPED — no content at "
+			+ EffectExtractPaths.EFFECTS_DIR)
+		return
+	var total := 0
+	var active := 0
+	var rolled: Array[String] = []
+	var inactive: Array[String] = []
+	for effect_name: String in dir.get_directories():
+		var path: String = EffectExtractPaths.EFFECTS_DIR.path_join(effect_name).path_join(
+			"camera.json")
+		if not FileAccess.file_exists(path):
+			continue
+		var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+		if typeof(parsed) != TYPE_DICTIONARY:
+			continue
+		total += 1
+		var data: Variant = camera_data_script.from_json(parsed)
+		if not data.has_active_keyframes():
+			inactive.append(effect_name)
+			continue
+		active += 1
+		# ROLL, the one channel this host drops — the rig has no roll axis. A whole turn is
+		# the identity, so E242's single 4096 component is not a roll.
+		for table_name: String in ["phase1", "for_each", "phase2"]:
+			var table: Variant = data.get_table(table_name)
+			if table == null or table.max_keyframe <= 0:
+				continue
+			for i in range(table.max_keyframe + 1):
+				var kf: Variant = table.get_keyframe(i)
+				if kf == null or (kf.channel_mask & 1) == 0:
+					continue
+				if absf(fposmod(float(kf.angle.z) + 2048.0, 4096.0) - 2048.0) > 1.0:
+					if not rolled.has(effect_name):
+						rolled.append(effect_name)
+	print("[AbilityVfx] ARM E0 COVERAGE %d/%d effects pass has_active_keyframes(); "
+		% [active, total] + "%d carry a real ROLL %s; inactive: %s"
+		% [rolled.size(), str(rolled), str(inactive)])
+	_check(total > 0 and active > 0,
+		"E0 the installed corpus has camera tracks to drive (%d of %d)" % [active, total])
+	# Not an academic entry: fifteen physical abilities (Attack, the Breaks, the Aims,
+	# Throw Stone, Accumulate, Seal Evil) resolve to E000.
+	_check(inactive.has("E000"),
+		"E0 E000 — the effect every physical attack resolves to — has NO camera track, "
+		+ "so a plain Attack must not move the camera")
+
+
+## E1. Which way does a PSX yaw turn? At pitch 0 and PSX yaw 1024 (= 90 degrees) the rig
+## looks down world -X, putting world +Z on its LEFT; the wrong direction puts it on the
+## right with no complaint from the engine. Driven through `apply_pose`, no cast.
+func _run_camera_chirality(rig: CameraController) -> void:
+	var track := EffectCameraTrack.new(rig)
+	add_child(track)
+	_check(rig.begin_effect_takeover(), "E1 the rig accepts a takeover")
+	track.apply_pose(Vector3.ZERO, Vector3(0.0, CAM_PROBE_YAW, 0.0), 4096.0)
+	await get_tree().process_frame
+
+	var forward: Vector3 = (rig.camera.global_transform.basis * Vector3(0, 0, -1)).normalized()
+	_check(forward.is_equal_approx(Vector3(-1, 0, 0)),
+		"E1 PSX yaw %.0f looks down world -X (forward %s)" % [CAM_PROBE_YAW, _v3(forward)])
+
+	# Ask the addon itself where that pose looks, as an independent answer: if this side
+	# applied it to the wrong node, in the wrong units, or with the wrong euler order,
+	# the two disagree.
+	var resolver_script: Script = load(FACING_RESOLVER_PATH)
+	if resolver_script != null:
+		var resolver: Variant = resolver_script.new(rig, Callable())
+		var addon_forward: Vector3 = resolver._view_forward(0.0, CAM_PROBE_YAW)
+		_check(forward.is_equal_approx(addon_forward),
+			"E1 the host rig points exactly where the ADDON's own CinematicFacingResolver "
+			+ "says that pose looks (%s vs %s)" % [_v3(forward), _v3(addon_forward)])
+
+	# The same claim in screen space, which is what a wrong-way yaw looks like: a
+	# landmark at world +Z must land LEFT of centre.
+	var marker := Node3D.new()
+	add_child(marker)
+	marker.global_position = Vector3(0, 0, 1)
+	await get_tree().process_frame
+	var cam := get_viewport().get_camera_3d()
+	_check(cam == rig.camera, "E1 the rig's camera is the one rendering")
+	var at_marker: Vector2 = rig.camera.unproject_position(marker.global_position)
+	var centre: Vector2 = Vector2(get_viewport().get_visible_rect().size) * 0.5
+	_check(at_marker.x < centre.x,
+		"E1 world +Z lands LEFT of centre at PSX yaw %.0f (x %.1f < %.1f) — the yaw "
+			% [CAM_PROBE_YAW, at_marker.x, centre.x] + "turns the way the ROM means")
+
+	# The inverse conversions must return the pose the forward ones produced; a mismatched
+	# pair drifts further from the player's camera on every cast.
+	var psx_back := Vector3(
+		ExMateriaPlatform.PsxMagnitude.deg_to_angle(-rig.rotation_degrees.x),
+		ExMateriaPlatform.PsxMagnitude.deg_to_angle(rig.rotation_degrees.y),
+		0.0)
+	_check(is_equal_approx(fposmod(psx_back.y, 4096.0), fposmod(CAM_PROBE_YAW, 4096.0))
+			and absf(psx_back.x) < 0.001,
+		"E1 the inverse conversion round-trips the pose (%s -> %s)"
+			% [_v3(Vector3(0.0, CAM_PROBE_YAW, 0.0)), _v3(psx_back)])
+	_check(is_equal_approx(
+			ExMateriaPlatform.CameraCalibration.ortho_size_to_zoom(rig.camera.size), 4096.0),
+		"E1 zoom round-trips through CameraCalibration (size %.4f)" % rig.camera.size)
+
+	rig.end_effect_takeover()
+	marker.queue_free()
+	track.queue_free()
+
+
+## E6. The ABSOLUTE-yaw path through a real cast: a ROM keyframe naming an absolute PSX yaw
+## must arrive as its exact degree equivalent, the short way. A wrong turn is silent.
+func _run_camera_yaw_arm(rig: CameraController) -> void:
+	var dir: String = ExMateriaEffects.EffectsContent.effect_dir(
+		"E%03d" % CAM_YAW_PROBE["vfx_id"])
+	if dir.is_empty() or not DirAccess.dir_exists_absolute(dir):
+		print("[AbilityVfx] ARM E6 YAW: SKIPPED — no content at " + dir)
+		return
+	await _await_quiet_frame()
+	var pre_rotation: Vector3 = rig.rotation_degrees
+	var pre_position: Vector3 = rig.global_position
+	var action := Action.new()
+	action.unique_name = CAM_YAW_PROBE["unique_name"]
+	action.vfx_name = CAM_YAW_PROBE["vfx_name"]
+	action.vfx_id = CAM_YAW_PROBE["vfx_id"]
+	_check(_playback.play_action_vfx_at(
+			_caster, _caster.global_position + Vector3(0, 1.0, 0), action) != null,
+		"E6 the yaw probe spawned a cast")
+	var track: EffectCameraTrack = _playback.camera_track()
+
+	var extreme: float = 0.0      # signed, largest-magnitude wrapped yaw delta seen
+	var best_landing: float = 999.0
+	var subsystem_yaw_at_landing: float = 0.0
+	var elapsed: float = 0.0
+	while elapsed < CAM_YAW_SAMPLE_SECONDS:
+		await get_tree().process_frame
+		elapsed += get_tree().root.get_process_delta_time()
+		if track == null or not track.is_driving():
+			continue
+		var delta: float = fposmod(
+			rig.rotation_degrees.y - pre_rotation.y + 180.0, 360.0) - 180.0
+		if absf(delta) > absf(extreme):
+			extreme = delta
+		# Where the host yaw sits against the keyframe's absolute PSX yaw, in degrees.
+		var landing: float = absf(fposmod(
+			rig.rotation_degrees.y
+			- ExMateriaPlatform.PsxMagnitude.angle_to_deg(CAM_YAW_TARGET_PSX)
+			+ 180.0, 360.0) - 180.0)
+		if landing < best_landing:
+			best_landing = landing
+			subsystem_yaw_at_landing = track.last_psx_angles.y
+
+	print(("[AbilityVfx] ARM E6 YAW extreme_delta=%+.2f deg (expected %+.2f) "
+		+ "closest_to_PSX_%.0f=%.3f deg  subsystem_yaw_there=%.1f")
+		% [extreme, CAM_YAW_EXPECTED_DELTA, CAM_YAW_TARGET_PSX, best_landing,
+			subsystem_yaw_at_landing])
+	_check(absf(extreme - CAM_YAW_EXPECTED_DELTA) <= CAM_YAW_EPSILON,
+		"E6 a real DIRECT yaw keyframe turned the host rig %+.2f deg, the short way, "
+			% extreme + "as the ROM's %.0f asks (expected %+.2f +/- %.1f)"
+			% [CAM_YAW_TARGET_PSX, CAM_YAW_EXPECTED_DELTA, CAM_YAW_EPSILON])
+	_check(best_landing <= CAM_YAW_EPSILON,
+		"E6 and it landed on the degree equivalent of PSX %.0f (%.3f deg off, <= %.1f) "
+			% [CAM_YAW_TARGET_PSX, best_landing, CAM_YAW_EPSILON]
+		+ "— the yaw is consumed RAW, not negated")
+	_check(is_equal_approx(fposmod(subsystem_yaw_at_landing, 4096.0),
+			fposmod(CAM_YAW_TARGET_PSX, 4096.0)),
+		"E6 and the SUBSYSTEM said so too (%.1f PSX) — the host did not arrive there "
+			% subsystem_yaw_at_landing + "on its own")
+
+	var waited: float = 0.0
+	while waited < CAM_RELEASE_TIMEOUT and track != null and track.is_driving():
+		await get_tree().process_frame
+		waited += get_tree().root.get_process_delta_time()
+	if track != null and track.is_driving():
+		track.release()
+	_check((rig.rotation_degrees - pre_rotation).length() <= CAM_RESTORE_EPSILON
+			and (rig.global_position - pre_position).length() <= CAM_RESTORE_EPSILON,
+		"E6 and the turn was given back (rot %s -> %s)"
+			% [_v3(pre_rotation), _v3(rig.rotation_degrees)])
+
+
+## E4. The camera against the FRAMEBUFFER, no cast — a live spell repaints the frame
+## whether or not the camera moved. No `_is_disturbance` either (see arm D); the arm is its
+## own control, since a disturbance does not undo itself on `end_effect_takeover()`.
+func _run_camera_pixels(rig: CameraController) -> void:
+	var track := EffectCameraTrack.new(rig)
+	add_child(track)
+	# Against a quiescent frame: baseline during a decaying cast puts particle churn into
+	# BOTH readings, and even the release that should read zero reads tens of thousands.
+	var quiet_seconds := await _await_quiet_frame()
+	var baseline := await _grab()
+	_check(quiet_seconds >= 0.0,
+		"E4 the frame went quiet before measuring (settled in %.1fs)" % quiet_seconds)
+	_check(rig.begin_effect_takeover(), "E4 the rig accepts the pixel-arm takeover")
+	# Same pose the rig already holds, shifted two tiles: only the camera can have
+	# repainted anything.
+	track.apply_pose(CAM_PIXEL_OFFSET_PSX,
+		Vector3(ExMateriaPlatform.PsxMagnitude.deg_to_angle(-rig.rotation_degrees.x),
+			0.0, 0.0),
+		ExMateriaPlatform.CameraCalibration.ortho_size_to_zoom(rig.camera.size))
+	await get_tree().process_frame
+	var moved_image := await _grab()
+	var moved := _changed_pixels(baseline, moved_image)
+	moved_image.save_png("user://ability-vfx-camera-moved.png")
+	track.release()
+	await get_tree().process_frame
+	var returned := _changed_pixels(baseline, await _grab())
+	print("[AbilityVfx] ARM E4 PIXELS moved=%d/%d px returned=%d px"
+		% [moved, _sampled_total, returned])
+	print("[AbilityVfx] screenshot user://ability-vfx-camera-moved.png")
+	_check(moved > CAM_MIN_MOVED_PX,
+		"E4 driving the rig repainted the frame (%d changed px must be > %d)"
+			% [moved, CAM_MIN_MOVED_PX])
+	_check(returned <= CAM_RETURN_TOLERANCE_PX,
+		"E4 releasing it put the frame back (%d changed px must be <= %d) — which a "
+			% [returned, CAM_RETURN_TOLERANCE_PX]
+		+ "desktop disturbance would not do")
+	track.queue_free()
+
+
+## Block until two consecutive frames match within the return tolerance. Returns seconds
+## waited, or -1.0 if it never settled.
+func _await_quiet_frame() -> float:
+	var waited: float = 0.0
+	var previous := await _grab()
+	while waited < CAM_QUIET_TIMEOUT:
+		await get_tree().process_frame
+		waited += get_tree().root.get_process_delta_time()
+		var current := await _grab()
+		if _changed_pixels(previous, current) <= CAM_RETURN_TOLERANCE_PX:
+			return waited
+		previous = current
+	return -1.0
+
+
+## Something for a camera move to move. See `CAM_LANDMARKS`.
+func _add_camera_landmarks() -> Array[Node3D]:
+	var mesh := BoxMesh.new()
+	mesh.size = CAM_LANDMARK_SIZE
+	var made: Array[Node3D] = []
+	for i in CAM_LANDMARKS.size():
+		var material := StandardMaterial3D.new()
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		# Distinct per landmark, so a MIRRORED view is not pixel-identical to a correct one
+		# — a change count over a symmetric arrangement could not tell them apart.
+		material.albedo_color = Color.from_hsv(float(i) / float(CAM_LANDMARKS.size()), 0.85, 0.95)
+		var box := MeshInstance3D.new()
+		box.mesh = mesh
+		box.material_override = material
+		add_child(box)
+		box.global_position = CAM_LANDMARKS[i]
+		made.append(box)
+	return made
+
+
+func _free_all(nodes: Array[Node3D]) -> void:
+	for node: Node3D in nodes:
+		if is_instance_valid(node):
+			node.queue_free()
+
+
+func _v3(v: Vector3) -> String:
+	return "(%.2f,%.2f,%.2f)" % [v.x, v.y, v.z]
 
 
 # --- scoring -------------------------------------------------------------------
