@@ -3,6 +3,10 @@ extends StaticBody3D
 
 const MAP_SCENE: PackedScene = preload("uid://buljw4afjva1d")
 
+## For `SURFACE_MAP`: the `TintedSurfaces` autoload is a node, and a node cannot serve a
+## script const.
+const TintedSurfacesPort := preload("res://addons/exmateria_effects/install/TintedSurfacesPort.gd")
+
 @export var mesh_instance: MeshInstance3D
 @export var collision_shape: CollisionShape3D
 @export var map_shader: Shader
@@ -73,3 +77,7 @@ func set_mesh_shader(texture: Texture2D, texture_palettes: PackedColorArray, lig
 	chunk_lighting.apply_to_material(new_mesh_material)
 
 	mesh_instance.material_override = new_mesh_material
+
+	# Without this, effect tints on the map are computed and silently discarded.
+	if is_instance_valid(TintedSurfaces):
+		TintedSurfaces.register_surface(TintedSurfacesPort.SURFACE_MAP, new_mesh_material)
