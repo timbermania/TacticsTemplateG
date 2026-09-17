@@ -16,6 +16,8 @@ uniform vec2[32] canvas_size;
 uniform vec2[32] frame_pos;
 uniform float[32] frame_idx;
 
+#include "res://src/shaders/psx_window_depth.gdshaderinc"
+
 uniform bool debug_depth = false;
 
 // ==== PSX per-vertex lighting (MapLighting, decoded from the map's own mesh
@@ -66,7 +68,7 @@ void vertex() {
 	v_diffuse = psx_diffuse(normalize(NORMAL));
 
 	vec4 centroid_clip = PROJECTION_MATRIX * MODELVIEW_MATRIX * vec4(CUSTOM0.xyz, 1.0);
-	face_center_depth = centroid_clip.z / centroid_clip.w;
+	face_center_depth = psx_window_depth(centroid_clip.z / centroid_clip.w);
 
 	hide_polygon = 0.0;
 	// see MapData.DirectionFlag
