@@ -634,6 +634,8 @@ func equip_ability(slot: AbilitySlot, ability: Ability) -> void:
 
 
 func equip_skillset(skillset_idx: int, new_skillset: Skillset) -> void:
+	if new_skillset == null:
+		return
 	skillsets_names[skillset_idx] = new_skillset.unique_name
 	var all_passive_effects: Array[PassiveEffect] = get_all_passive_effects()
 	set_available_actions(all_passive_effects)
@@ -1339,7 +1341,9 @@ func set_job(new_job_name: String) -> void:
 	set_sprite_by_job(new_job_name)
 	
 	# skillsets_names.fill("")
-	equip_skillset(0, GameData.get_skillset(job_data.skillset_unique_name))
+	var job_skillset: Skillset = GameData.get_skillset(job_data.skillset_unique_name)
+	if job_skillset != null:
+		equip_skillset(0, job_skillset)
 	
 	job_nickname = job_data.display_name
 	
@@ -1372,6 +1376,8 @@ func set_ability(new_action_name: String) -> void:
 func set_primary_weapon(new_weapon_unique_name: String) -> void:
 	equip_slots[0].item_unique_name = new_weapon_unique_name
 	primary_weapon = GameData.get_item(new_weapon_unique_name)
+	if primary_weapon == null:
+		return
 	#animation_manager.weapon_id = new_weapon_id
 	var weapon_palette_id: int = primary_weapon.wep_frame_palette
 	var weapon_eff_id: int = primary_weapon.wep_eff_palette
@@ -1527,6 +1533,8 @@ func get_native_passive_effects(exclude_passives: PackedStringArray = []) -> Arr
 	if global_battle_manager != null:
 		native_passive_effects.append_array(global_battle_manager.global_passive_effects)
 
+	# Any source above can yield null when its name is not indexed; drop those before dereferencing.
+	native_passive_effects = native_passive_effects.filter(func(passive_effect: PassiveEffect) -> bool: return passive_effect != null)
 	native_passive_effects = native_passive_effects.filter(func(passive_effect: PassiveEffect) -> bool: return passive_effect.effect_range == 0)
 	native_passive_effects = native_passive_effects.filter(func(passive_effect: PassiveEffect) -> bool: return not exclude_passives.has(passive_effect.unique_name))
 	
