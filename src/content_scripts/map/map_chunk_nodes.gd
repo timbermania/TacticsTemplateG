@@ -59,10 +59,17 @@ func play_animations(local_map_data: MapData) -> void:
 			local_map_data.animate_uv(texture_animation, self, anim_id, anim_fps)
 
 
-func set_mesh_shader(texture: Texture2D, texture_palettes: PackedColorArray) -> void:
+func set_mesh_shader(texture: Texture2D, texture_palettes: PackedColorArray, lighting: MapLighting = null) -> void:
 	var new_mesh_material: ShaderMaterial = ShaderMaterial.new()
 	new_mesh_material.shader = map_shader
 	new_mesh_material.set_shader_parameter("albedo_texture_color_indicies", texture)
 	new_mesh_material.set_shader_parameter("palettes_colors", texture_palettes)
-	
+
+	# `lighting` is null for a `.map_data.tres` saved without `MapLighting`.
+	var chunk_lighting: MapLighting = lighting
+	if chunk_lighting == null:
+		push_warning("MapChunkNodes: no ROM lighting for \"%s\"; rendering flat. Re-export this map." % name)
+		chunk_lighting = MapLighting.unlit()
+	chunk_lighting.apply_to_material(new_mesh_material)
+
 	mesh_instance.material_override = new_mesh_material
