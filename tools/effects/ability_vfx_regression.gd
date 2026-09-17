@@ -1,13 +1,13 @@
 extends Node3D
 ## Scores a real battle ABILITY drawing through `addons/exmateria_effects`: the `E###`
-## mapping, the cast's pixels and the TRAP handlers.
+## mapping, the cast's pixels, the TRAP handlers and the SCREEN track.
 ##
 ##   Godot --path . res://tools/effects/ability_vfx_regression.tscn -- auto [--actions=DIR]
 ##   Godot --path . res://tools/effects/ability_vfx_regression.tscn -- auto noplay [...]
 ##
-## Arm A needs `--actions=<dir>`. Never `--headless`: arm B reads a framebuffer.
+## Arm A needs `--actions=<dir>`. Never `--headless`: arms B/C/D read a framebuffer.
 
-## Must be the path `RomReader.export_effects_content()` writes and `BattleManager` reads.
+## Must be the path `RomReader.generate_effects_content()` writes and `BattleManager` reads.
 const EffectExtractPaths := preload("res://src/file_formats/vfx/effect_extract.gd")
 const CONTENT_ROOT := EffectExtractPaths.CONTENT_ROOT
 
@@ -34,8 +34,18 @@ const CASTER_ORIGIN_OFFSET := Vector3(2.2, 0.0, 0.0)
 ## The cast must land nearer the caster than the origin by at least this ratio.
 const POSITION_MARGIN: float = 1.5
 
+## Far apart in every channel, so a top/bottom swap fails the orientation check.
+const BG_TOP := Color(0.10, 0.06, 0.30)
+const BG_BOTTOM := Color(0.75, 0.45, 0.20)
+## The sampled sky patch: top eighth of the frame, clear of the centre where casts play.
+const BG_PATCH_FRACTION: float = 0.125
+const BG_MIN_DELTA: float = 0.02
+## Covers readback rounding only; the control's honest reading is 0.0.
+const BG_CONTROL_TOLERANCE: float = 0.004
+
 var _playback: EffectsPlayback
 var _caster: Node3D
+var _background: ScreenBackgroundQuad
 var _failures: Array[String] = []
 var _checks: int = 0
 
@@ -52,6 +62,12 @@ func _ready() -> void:
 	camera.position = Vector3(0, 2.2, 5.0)
 	camera.look_at_from_position(Vector3(0, 2.2, 5.0), Vector3(0, 1.0, 0), Vector3.UP)
 	add_child(camera)
+
+	# Attached with the camera, as `BattleManager._ready` does — the overlay latches its
+	# material on the first screen frame. Hidden until arm D, or B and C re-baseline.
+	_background = ScreenBackgroundQuad.attach(camera)
+	_background.set_gradient(BG_TOP, BG_BOTTOM)
+	_background.visible = false
 
 	_caster = Node3D.new()
 	_caster.name = "Caster"
@@ -229,6 +245,7 @@ func _run_pixel_arm() -> void:
 			"ability pixels reached the framebuffer (%d changed px must be > %d)"
 				% [peak, MIN_DREW_PX])
 	await _run_trap_arm(control)
+	await _run_background_arm(control)
 	_finish(true)
 
 
@@ -321,6 +338,114 @@ func _changed_pixels(before: Image, after: Image) -> int:
 			if absf(a.r - b.r) + absf(a.g - b.g) + absf(a.b - b.b) > PIXEL_EPSILON:
 				count += 1
 	return count
+
+
+# --- ARM D: the background ------------------------------------------------------
+
+## Proves the SCREEN track reaches the background. `_is_disturbance` would reject this arm's
+## own signal, so it measures D1 the corner colours and D2 a patch of sky; D2 without D1 is
+## interference, so both print.
+func _run_background_arm(control: bool) -> void:
+	# Only now: everything above is scored against a flat clear.
+	_background.visible = true
+	await _settle(SETTLE_SECONDS)
+
+	var rest := _background.corners()
+	_check(rest[0].is_equal_approx(BG_TOP) and rest[1].is_equal_approx(BG_TOP)
+			and rest[2].is_equal_approx(BG_BOTTOM) and rest[3].is_equal_approx(BG_BOTTOM),
+		"at rest the host's two map colours sit on the addon's four corners (%s)" % [rest])
+
+	# The overlay's own lookup asks the ROOT viewport, which has no camera while the battle
+	# is in the editor's SubViewport, so the material is handed over directly.
+	var overlay: Node = get_tree().root.get_node_or_null(^"/root/ScreenEffectOverlay")
+	_check(overlay != null and "_material" in overlay
+			and overlay._material == _background.material_override,
+		"the overlay is primed with the host quad's material, not a camera search")
+
+	# `Gradient.colors[0]` is the BOTTOM, `[1]` the TOP; an inverted sky renders without
+	# complaint, so it is checked against pixels.
+	var sky := await _patch_mean(true)
+	var ground := await _patch_mean(false)
+	_check(_distance(sky, BG_TOP) < _distance(sky, BG_BOTTOM)
+			and _distance(ground, BG_BOTTOM) < _distance(ground, BG_TOP),
+		"the gradient is the right way up (sky %s vs top %s, ground %s vs bottom %s)"
+			% [sky, BG_TOP, ground, BG_BOTTOM])
+
+	var baseline := await _patch_mean(true)
+	if not control:
+		var cast_action := Action.new()
+		cast_action.unique_name = PROBE_ACTION["unique_name"]
+		cast_action.vfx_name = PROBE_ACTION["vfx_name"]
+		cast_action.vfx_id = PROBE_ACTION["vfx_id"]
+		_check(_playback.play_action_vfx_at(_caster, Vector3(0, 1.0, 0), cast_action) != null,
+			"background arm spawned a cast")
+
+	var peak_px: float = 0.0
+	var peak_corner: float = 0.0
+	var peak_image: Image = null
+	var elapsed: float = 0.0
+	while elapsed < SAMPLE_SECONDS:
+		await get_tree().process_frame
+		elapsed += get_tree().root.get_process_delta_time()
+		var now := await _grab()
+		var patch := _mean_of(now, true)
+		var d_px := _distance(patch, baseline)
+		if d_px > peak_px:
+			peak_px = d_px
+			peak_image = now
+		var corners := _background.corners()
+		for i in 4:
+			var default_colour: Color = BG_TOP if i < 2 else BG_BOTTOM
+			peak_corner = maxf(peak_corner, _distance(corners[i], default_colour))
+
+	print("[AbilityVfx] ARM D BACKGROUND%s peak_d_rgb=%.4f peak_d_corner=%.4f"
+		% [" (CONTROL, no cast)" if control else "", peak_px, peak_corner])
+	var suffix: String = "-control" if control else ""
+	if peak_image != null:
+		peak_image.save_png("user://ability-vfx-background%s.png" % suffix)
+		print("[AbilityVfx] screenshot user://ability-vfx-background%s.png" % suffix)
+
+	if control:
+		_check(peak_corner <= BG_CONTROL_TOLERANCE,
+			"CONTROL never moved the gradient corners (%.4f <= %.4f)"
+				% [peak_corner, BG_CONTROL_TOLERANCE])
+		_check(peak_px <= BG_CONTROL_TOLERANCE,
+			"CONTROL background patch is unchanged (%.4f <= %.4f)"
+				% [peak_px, BG_CONTROL_TOLERANCE])
+	else:
+		_check(peak_corner > BG_MIN_DELTA,
+			"D1 the cast drove the addon's gradient corners (%.4f > %.4f)"
+				% [peak_corner, BG_MIN_DELTA])
+		_check(peak_px > BG_MIN_DELTA,
+			"D2 and it reached the framebuffer (%.4f > %.4f)" % [peak_px, BG_MIN_DELTA])
+
+
+## Mean colour of a sky (top) or ground (bottom) band, every other row and column.
+func _patch_mean(top: bool) -> Color:
+	return _mean_of(await _grab(), top)
+
+
+func _mean_of(image: Image, top: bool) -> Color:
+	var height := image.get_height()
+	var band := maxi(2, int(height * BG_PATCH_FRACTION))
+	var first: int = 0 if top else height - band
+	var total := Vector3.ZERO
+	var count := 0
+	for y in range(first, mini(first + band, height), 2):
+		for x in range(0, image.get_width(), 2):
+			var c := image.get_pixel(x, y)
+			total += Vector3(c.r, c.g, c.b)
+			count += 1
+	if count == 0:
+		return Color.BLACK
+	total /= float(count)
+	return Color(total.x, total.y, total.z, 1.0)
+
+
+## Largest per-channel difference. Max, not sum, so a threshold reads as "this channel
+## moved by N% of full scale".
+func _distance(a: Color, b: Color) -> float:
+	return maxf(maxf(absf(a.r - b.r), absf(a.g - b.g)), absf(a.b - b.b))
 
 
 # --- scoring -------------------------------------------------------------------
