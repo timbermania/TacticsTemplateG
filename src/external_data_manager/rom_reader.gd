@@ -24,6 +24,10 @@ const NUM_VFX: int = 511
 const NUM_ITEMS: int = 254 # 256?
 const NUM_WEAPONS: int = 122
 
+## Preloaded, not a `class_name`: global classes register only on an editor import pass, so
+## tools run on a fresh checkout would fail to parse.
+const EffectExtractScript := preload("res://src/file_formats/vfx/effect_extract.gd")
+
 var is_ready: bool = false
 
 var rom: PackedByteArray = []
@@ -821,6 +825,8 @@ func export_data(save_path: String) -> void:
 	await export_maps(save_path) # needs to be before data tables so maps will be initialized
 	await export_data_tables(save_path)
 	await export_vfx(save_path)
+	# No `save_path`: this content lives inside the project (see `generate_effects_content`).
+	await generate_effects_content()
 
 
 func export_unit_spritesheets(save_path: String) -> void:
@@ -1123,6 +1129,83 @@ func export_vfx(save_path: String) -> void:
 		new_mesh_instance.name = "projectile_" + ProjectileEffectInstance.ProjectileType.keys()[model_id]
 		GltfManager.save_node(new_mesh_instance, vfx_path, new_mesh_instance.name + ".projectile.glb")
 		new_mesh_instance.queue_free()
+
+
+## Generate `res://content/effects/E###/`, the directories `addons/exmateria_effects` loads.
+## Unlike the `export_*` functions this writes inside the project: textures load through
+## `ResourceLoader`, and outside an imported `res://` path they come back null and the
+## effect draws nothing. `effects_dir` overrides the destination for the regression.
+## Zero-length `.BIN` slots are skipped.
+func generate_effects_content(effects_dir: String = "") -> Dictionary:
+	if effects_dir.is_empty():
+		effects_dir = EffectExtractScript.EFFECTS_DIR
+	message.emit("Exporting effects content...")
+	await get_tree().process_frame
+
+	DirAccess.make_dir_recursive_absolute(effects_dir)
+	var battle_bin: PackedByteArray = get_file_data("BATTLE.BIN")
+	var written: int = 0
+	var skipped_empty: int = 0
+	var stale_textures: Array[String] = []
+	var unimported_textures: Array[String] = []
+	var failures: Array[String] = []
+	var last_frame_time: int = Time.get_ticks_msec()
+
+	for vfx_file: VisualEffectData in vfx:
+		last_frame_time = await keep_60_fps(last_frame_time,
+			"Exporting effects content: " + vfx_file.file_name)
+
+		var buf: PackedByteArray = get_file_data(vfx_file.file_name)
+		if buf.is_empty():
+			skipped_empty += 1
+			continue
+
+		var effect_name: String = vfx_file.file_name.get_basename()
+		var effect_dir: String = effects_dir.path_join(effect_name)
+		var built: Dictionary = EffectExtractScript.build(buf, battle_bin, vfx_file.vfx_id,
+			effect_name)
+		if not built["ok"]:
+			for problem: String in built["errors"]:
+				failures.append(problem)
+			continue
+
+		# Checked before the write destroys the evidence: a changed `.tga` under a stale import
+		# still loads the old sheet, with no error.
+		var texture_path: String = effect_dir.path_join("texture.tga")
+		if FileAccess.file_exists(texture_path) \
+				and built["files"].get("texture.tga", PackedByteArray()) \
+					!= FileAccess.get_file_as_bytes(texture_path):
+			stale_textures.append(effect_name)
+
+		var result: Dictionary = EffectExtractScript.write(built["files"], effect_dir)
+		if not result["ok"]:
+			for problem: String in result["errors"]:
+				failures.append(problem)
+			continue
+		written += 1
+		if not ResourceLoader.exists(texture_path):
+			unimported_textures.append(effect_name)
+
+	var summary: Dictionary = {
+		"written": written,
+		"skipped_empty": skipped_empty,
+		"failures": failures,
+		"stale_textures": stale_textures,
+		"unimported_textures": unimported_textures,
+	}
+	for problem: String in failures.slice(0, 10):
+		push_warning("effects content: " + problem)
+	if not unimported_textures.is_empty() or not stale_textures.is_empty():
+		push_warning(("effects content: %d texture(s) not imported and %d changed under an "
+			+ "existing import. Open the project in the editor once so Godot imports them; "
+			+ "until then those effects load, simulate and draw nothing (or draw the "
+			+ "previous sheet).") % [unimported_textures.size(), stale_textures.size()])
+	message.emit("Exported %d effects (%d empty slots skipped, %d failed)"
+		% [written, skipped_empty, failures.size()])
+	print("effects content: %d written, %d empty skipped, %d failed, %d unimported, %d stale"
+		% [written, skipped_empty, failures.size(), unimported_textures.size(),
+			stale_textures.size()])
+	return summary
 
 
 func keep_60_fps(last_frame_time_msec: int, message_text: String) -> int:

@@ -6,7 +6,11 @@ signal unit_created(new_unit: Unit)
 signal delayed_action_completed
 
 ## Where the gitignored ROM-derived Effects content lives.
-const EFFECTS_CONTENT_ROOT: String = "res://content/"
+## Not a second literal: `RomReader.export_effects_content()` generates that tree, so the
+## path playback reads and the path the exporter writes must be one value — a drift between
+## them shows up as effects that load nothing, with no error anywhere.
+const EffectExtractPaths := preload("res://src/file_formats/vfx/effect_extract.gd")
+const EFFECTS_CONTENT_ROOT: String = EffectExtractPaths.CONTENT_ROOT
 
 const SCALE: float = 1.0 / FftMapData.TILE_SIDE_LENGTH
 const SCALED_UNITS_PER_HEIGHT: float = SCALE * FftMapData.UNITS_PER_HEIGHT
