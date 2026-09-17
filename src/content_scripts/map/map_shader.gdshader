@@ -18,6 +18,11 @@ uniform float[32] frame_idx;
 
 #include "res://src/shaders/psx_window_depth.gdshaderinc"
 
+// Supplies the `color_layer_*` and `quantize` uniforms an effect writes when it tints
+// the map, and the `color_apply()` that applies them. Keep in sync with
+// `src/Unit/shaders/unit_sprite.gdshader`, which tints unit sprites the same way.
+#include "res://addons/exmateria_schema/colour_model/color_stack.gdshaderinc"
+
 uniform bool debug_depth = false;
 
 // ==== PSX per-vertex lighting (MapLighting, decoded from the map's own mesh
@@ -121,7 +126,11 @@ void fragment() {
 		if (new_color.a < 0.5) {
 			discard;
 		}
-		vec3 base = new_color.rgb;
+		// TINT FIRST, THEN LIGHT. The effect palette track is a CLUT REWRITE: the PSX
+		// changes the palette entry and the polygon is lit THROUGH the modified entry.
+		// Folding the tint after the lighting multiply gives a tint that barely moves a
+		// dark face and blows out a bright one.
+		vec3 base = color_apply(new_color.rgb, 0);
 		if (lighting_enabled) {
 			vec3 diffuse = lighting_per_vertex ? v_diffuse : psx_diffuse(normalize(v_normal));
 			// The only clamp in the model: pixel = texture x (ambient + SUM gain *
@@ -132,7 +141,8 @@ void fragment() {
 		ALBEDO.rgb = base;
 	}
 	else {
-		// Untextured flat-colour polygons carry no normal, so there is nothing to light.
+		// Untextured flat-colour polygons carry no palette index and no normal, so there
+		// is nothing to tint or light.
 		ALBEDO.rgb = COLOR.rgb;
 	}
 	if (debug_depth) {
