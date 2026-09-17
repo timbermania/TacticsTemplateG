@@ -8,6 +8,15 @@ uniform bool billboard_enabled = false;
 
 #include "res://src/shaders/psx_depth_common.gdshaderinc"
 
+// Effects recolour a unit through these `color_layer_*` uniforms, which `TintedSurfaces`
+// writes once `UnitSpritesManager.bind_tint_surface` registers it; until then
+// `color_apply()` is a no-op. Keep in sync with `map_shader.gdshader`.
+#include "res://addons/exmateria_schema/colour_model/color_stack.gdshaderinc"
+
+// Which part this material paints (`UnitSpritesManager.SURFACE_*`). The three need distinct
+// ids, or a change meant for one recolours all three. 0 for unregistered materials.
+uniform int color_surface_id : hint_range(0, 2) = 0;
+
 void vertex() {
 	if (billboard_enabled) {
 		mat4 modified_model_view = VIEW_MATRIX * mat4(
@@ -31,10 +40,14 @@ void fragment() {
 	int palette_index = int(round(tex.x * 255.0));
 	tex = palette_colors[palette_index];
 	vec4 col = tex * COLOR;
+	// Keep the discard ahead of `color_apply`: an effect must not revive texels the sprite
+	// never drew, or a white caster flash lights the whole bounding rectangle.
 	if (col.a < 0.01 || (col.r < 0.01 && col.g < 0.01 && col.b < 0.01)) {
 		discard;
 	}
-	ALBEDO = clamp(col.rgb + unit_tint, vec3(0.0), vec3(1.0));
+	// Effect colours replace the palette entry first, as on the PSX; `unit_tint` is
+	// TacticsG's own highlight, added on top.
+	ALBEDO = clamp(color_apply(col.rgb, color_surface_id) + unit_tint, vec3(0.0), vec3(1.0));
 	ALPHA = 1.0;
 	DEPTH = computed_depth;
 }

@@ -326,7 +326,22 @@ func _ready() -> void:
 		initialize_unit()
 
 
+## Register this unit's sprite materials under `char_body`'s instance id so effects can
+## recolour them. `_enter_tree`, not `_ready`: the scenario editor takes units out of the tree
+## and back, and `_exit_tree` unregisters.
+func _enter_tree() -> void:
+	if char_body == null or animation_manager == null:
+		return
+	var sprites: UnitSpritesManager = animation_manager.unit_sprites_manager
+	if sprites != null:
+		sprites.bind_tint_surface(char_body.get_instance_id())
+
+
 func _exit_tree() -> void:
+	# Unconditional: a dead unit left registered leaks its materials, and its reused instance
+	# id would recolour some other object.
+	if animation_manager != null and animation_manager.unit_sprites_manager != null:
+		animation_manager.unit_sprites_manager.unbind_tint_surface()
 	if global_battle_manager != null and is_queued_for_deletion():
 		var unit_index: int = global_battle_manager.units.find(self)
 		for action_instance: ActionInstance in actions_data.values():
@@ -380,7 +395,9 @@ func initialize_unit() -> void:
 	eff_material.set_shader_parameter("sprite_texture", eff_frame_grid)
 	eff_material.set_shader_parameter("palette_colors", GameData.get_spritesheet_data("eff").color_palette.slice(0 * 16, 1 * 16))
 	eff_material.set_shader_parameter("depth_mode", VfxConstants.DepthMode.UNIT)
-	animation_manager.unit_sprites_manager.sprite_effect.material_override = eff_material
+	# Through the manager, not onto the Sprite3D, so this per-unit duplicate is what gets
+	# registered for tinting rather than the scene's shared material.
+	animation_manager.unit_sprites_manager.set_effect_material(eff_material)
 
 	#animation_manager.item_spr = RomReader.sprs[RomReader.file_records["ITEM.BIN"].type_index]
 	
@@ -1678,6 +1695,14 @@ func modulate_sprite_color(new_modulate_color: Color) -> void:
 
 func set_sprite_tint(tint: Vector3) -> void:
 	animation_manager.unit_sprites_manager.set_tint(tint)
+
+
+## The id this unit's sprite materials are registered under, or 0 while out of the tree.
+## Pass it to `TintedSurfaces.update_stack`, `update_layer` or `remove_layer` to colour the unit.
+func tint_surface_token() -> int:
+	if animation_manager == null or animation_manager.unit_sprites_manager == null:
+		return 0
+	return animation_manager.unit_sprites_manager.tint_surface_token()
 
 
 func set_submerged_depth(new_depth: int) -> void:
