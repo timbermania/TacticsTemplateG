@@ -7,7 +7,9 @@ extends Node3D
 ##
 ## Arm A needs `--actions=<dir>`. Never `--headless`: arm B reads a framebuffer.
 
-const CONTENT_ROOT := "res://content/"
+## Must be the path `RomReader.export_effects_content()` writes and `BattleManager` reads.
+const EffectExtractPaths := preload("res://src/file_formats/vfx/effect_extract.gd")
+const CONTENT_ROOT := EffectExtractPaths.CONTENT_ROOT
 
 ## Fire: bright, centred and long-lived, so arm B cannot fail for dimness.
 const PROBE_ACTION := {"unique_name": "fire", "vfx_name": "e_016", "vfx_id": 16}
