@@ -191,6 +191,9 @@ func _begin_effects_playback() -> void:
 	effects_playback.name = "EffectsPlayback"
 	effects_playback.enabled = true
 	effects_playback.battle_manager = self
+	# The rig, not `main_camera`: effects orbit a focus point, and the takeover must drop and
+	# restore `follow_node`.
+	effects_playback.camera_rig = camera_controller
 	# Set at runtime, not in project.godot: the content is gitignored, so a committed default
 	# would point a fresh checkout at a missing directory.
 	if DirAccess.dir_exists_absolute(EFFECTS_CONTENT_ROOT):
