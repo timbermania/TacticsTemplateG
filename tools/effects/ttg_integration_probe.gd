@@ -70,7 +70,9 @@ func run() -> void:
 	# Playback refuses loudly rather than rendering nothing.
 	var play = play_script.new()
 	add_child(play)
-	check(not play.enabled, "playback is OPT-IN, so it COEXISTS with TacticsG's VFX")
+	# Defaults OFF: a bare EffectsPlayback draws nothing until an owner opts it in, so a
+	# scene that forgets fails loudly through `unavailable_reason` below.
+	check(not play.enabled, "playback is OPT-IN: it builds nothing until an owner enables it")
 	check(not play.begin(null), "begin() refuses while disabled")
 	check(play.unavailable_reason.begins_with("disabled"), "refusal states a reason: " + play.unavailable_reason)
 	check(not play.is_available(), "no manager exists after a refusal")
@@ -98,9 +100,18 @@ func run() -> void:
 	ProjectSettings.set_setting(ExMateriaEffects.EffectsContent.ROOT_SETTING, previous_root)
 	camera.queue_free()
 
-	# TacticsG's own VFX path must be untouched by any of this.
-	check(ClassDB.class_exists("Node") and load("res://src/file_formats/vfx/trap_effect_instance.gd") != null,
-		"TacticsG's own TrapEffectInstance is still present — this is coexistence, not replacement")
+	# The renderers must be absent while the data/exporter layer survives: `VisualEffectData`
+	# is the only in-repo path from a ROM to effect content.
+	check(not ResourceLoader.exists("res://src/file_formats/vfx/trap_effect_instance.gd"),
+		"TacticsG's own TRAP renderer is retired — the addon draws these now")
+	check(not ResourceLoader.exists("res://src/file_formats/vfx/vfx_effect_instance.gd"),
+		"TacticsG's own spell VFX renderer is retired — the addon draws these now")
+	check(ResourceLoader.exists("res://src/file_formats/vfx/visual_effect_data.gd"),
+		"the VFX DATA model survives the renderer's retirement (ROM export still works)")
+	check(ResourceLoader.exists("res://src/file_formats/vfx/vfx_constants.gd"),
+		"VfxConstants survives — units and shadows read DepthMode.UNIT from it")
+	check(ResourceLoader.exists("res://src/file_formats/vfx/projectile_effect_instance.gd"),
+		"weapon projectiles survive — the addon has no equivalent")
 
 	print("PROBE: " + ("PASS" if not failed else "FAIL"))
 	get_tree().quit(1 if failed else 0)

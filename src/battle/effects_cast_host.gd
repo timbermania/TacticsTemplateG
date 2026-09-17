@@ -32,7 +32,14 @@ func actors() -> Array[Node3D]:
 	if battle == null:
 		return result
 	for unit in battle.units:
-		result.append(unit as Node3D if is_instance_valid(unit) else null)
+		# `char_body`, not the Unit: a `Unit` never moves, and the lookup below has to
+		# match whatever the cast sites passed in.
+		if not is_instance_valid(unit):
+			result.append(null)
+			continue
+		# Duck-typed: a `Unit` answers with its body, a stage of plain Node3Ds with itself.
+		var body: Node3D = unit.get("char_body") as Node3D
+		result.append(body if body != null else unit as Node3D)
 	return result
 
 

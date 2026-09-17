@@ -5,6 +5,9 @@ signal map_input_event(action_instance: ActionInstance, camera: Camera3D, event:
 signal unit_created(new_unit: Unit)
 signal delayed_action_completed
 
+## Where the gitignored ROM-derived Effects content lives.
+const EFFECTS_CONTENT_ROOT: String = "res://content/"
+
 const SCALE: float = 1.0 / FftMapData.TILE_SIDE_LENGTH
 const SCALED_UNITS_PER_HEIGHT: float = SCALE * FftMapData.UNITS_PER_HEIGHT
 
@@ -45,8 +48,12 @@ var current_cursor_map_position: Vector3
 @export var game_state_label: Label
 @export var scenario_editor: ScenarioEditor
 
-var trap_instance: TrapEffectInstance
+## Weapon projectiles (arrow/stone/shuriken) are TacticsG's own; the effects addon has
+## no equivalent.
 var projectile_instance: ProjectileEffectInstance
+
+## The ability-VFX path. Built in `on_data_ready` once the camera is in the tree.
+var effects_playback: EffectsPlayback
 
 var event_num: int = 0 # TODO handle event timeline
 
@@ -137,14 +144,6 @@ func on_data_ready() -> void:
 	#push_warning("on data ready")
 	load_rom_button.visible = false
 
-	if trap_instance != null:
-		trap_instance.stop()
-		trap_instance.queue_free()
-	trap_instance = TrapEffectInstance.new()
-	trap_instance.name = "TrapEffectInstance"
-	battle_view.add_child(trap_instance)
-	trap_instance.initialize()
-
 	if projectile_instance != null:
 		projectile_instance.stop()
 		projectile_instance.queue_free()
@@ -153,6 +152,8 @@ func on_data_ready() -> void:
 	battle_view.add_child(projectile_instance)
 	projectile_instance.initialize()
 
+	_begin_effects_playback()
+
 	scenario_editor.populate_option_lists()
 	scenario_editor.visible = true
 	# var default_scenario: Scenario = GameData.get_scenario("map_032_slums_in_dorter_01")
@@ -160,6 +161,41 @@ func on_data_ready() -> void:
 	# scenario_editor.init_scenario(default_scenario)
 	scenario_editor.init_scenario()
 	set_unit_statbars_visible(show_statbar_check.button_pressed)
+
+
+## Stand up `addons/exmateria_effects` for this battle.
+##
+## Effects hang off this BattleManager, not off `battle_view`, for two reasons.
+## `EffectsCastHost` reads `units` and `total_map_tiles`, which only this node has; and
+## every spawned spell is parented here, so this node has to share the camera's World3D.
+## It does — the editor's SubViewport has `own_world_3d` unset, so `battle_view` resolves
+## to the same world in both of its parentings. Hanging casts off `battle_view` would put
+## them through `reparent()`, which briefly takes them out of the tree.
+func _begin_effects_playback() -> void:
+	if effects_playback != null:
+		effects_playback.end()
+		effects_playback.queue_free()
+	effects_playback = EffectsPlayback.new()
+	effects_playback.name = "EffectsPlayback"
+	effects_playback.enabled = true
+	effects_playback.battle_manager = self
+	# Declared at runtime, not in project.godot: the content is ROM-derived and
+	# gitignored, so a committed default would point every contentless checkout at a
+	# root that cannot exist. Left empty when the directory is absent, which makes
+	# `begin()` refuse with a reason instead of failing per cast.
+	if DirAccess.dir_exists_absolute(EFFECTS_CONTENT_ROOT):
+		effects_playback.content_root = EFFECTS_CONTENT_ROOT
+	add_child(effects_playback)
+	# `begin()` runs the addon's `setup_native()` initialisation. A refusal is an ordinary
+	# outcome (stock GL, no content, no camera), not an error being swallowed here.
+	if not effects_playback.begin(main_camera):
+		push_warning("BattleManager: ability VFX unavailable — "
+			+ effects_playback.unavailable_reason)
+	else:
+		# "No error" and "the addon is live" look identical in a log; this tells them
+		# apart.
+		print("BattleManager: ability VFX ready (exmateria_effects, content root %s)"
+			% EFFECTS_CONTENT_ROOT)
 
 
 func update_total_map_tiles(map_chunks: Array[Scenario.MapChunk]) -> void:
