@@ -2,9 +2,9 @@ extends RefCounted
 ## Subsystem adapter (renamed from SoundTrack, #31) that lets the
 ## [EffectTimeline] pump the exmateria-sound addon's `EffectSoundController`
 ## uniformly (ADR-0012). The addon stays untouched — the `Subsystem` contract
-## is godot-learning's orchestration vocabulary, not the sound package's
+## is this addon's orchestration vocabulary, not the sound package's
 ## domain. (The addon-side class name `EffectSoundController` is a exmateria-sound
-## concern; from godot-learning's perspective this adapter IS the sound
+## concern; from this addon's perspective this adapter IS the sound
 ## subsystem.)
 ##
 ## `advance(frame, phase)` → `controller.update(frame, controller.fire_sub_tick)`:

@@ -42,7 +42,7 @@ extends RefCounted
 ## unmodified rather than a `null` propagated into a `maxf`.
 ##
 ## It also decouples 3 call sites from the autoload's SPELLING.
-## [#583](https://github.com/timbermania/fft-monorepo/issues/583) renames
+## A follow-up renames
 ## `PSXDisplay` to `DisplayCalibration` (ADR-0171 dec. 4); after this port, that
 ## rename reaches the node path on the line below and nothing in any addon.
 

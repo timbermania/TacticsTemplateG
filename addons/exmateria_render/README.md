@@ -80,8 +80,8 @@ lines land on it, from four systems (`UI` 21, `Cutscene` 2, `Battlefield` 2,
 `Battle` 1). It is an autoload: `extends Node`, no `class_name`, five signals.
 
 > **This member is leaving, and the sentence above is what gave it away**
-> ([ADR-0171](../../docs/adr/0171-the-display-port-is-platforms-and-render-is-the-fold-bracket.md),
-> resolving [#575](https://github.com/timbermania/fft-monorepo/issues/575)). A system's
+> ([ADR-0171](../../docs/adr/0171-the-display-port-is-platforms-and-render-is-the-fold-bracket.md)).
+> A system's
 > addon whose *entire* published surface is one port reached by eight buckets is not
 > publishing a system — it is hosting a port. `PSXDisplay` is booked to the `platform`
 > bucket on its **shape** (an autoload with I/O and mutable state, coalescing `Tune` and

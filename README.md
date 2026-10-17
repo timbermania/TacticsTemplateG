@@ -78,11 +78,3 @@ In the scenario editor, unit can be drag and dropped with the mouse.
 # Building From Source
 This project targets Godot 4.7 / GL Compatibility.
 https://godotengine.org/
-
-## Effects addon
-
-ExMateria Effects (with its platform/render/schema dependencies) draws ability VFX,
-the map tint, the screen background gradient, the unit colour and the cast camera.
-It is MIT-licensed, and its grant is included as `LICENSES/ExMateria-MIT.txt`.
-
-Do not distribute ROM content.

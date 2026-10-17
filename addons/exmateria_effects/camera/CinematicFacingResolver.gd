@@ -54,7 +54,7 @@ const PsxChirality = ExMateriaPlatform.PsxChirality
 const QUARTER_TURN := 1024.0   # PSX 0x400 = 90 deg
 const HALF_TURN := 2048.0      # 180 deg
 
-# Collision layers (godot-learning/CLAUDE.md): tiles = 2, units = 4.
+# Collision layers: tiles = 2, units = 4.
 const MASK_UNITS := 4
 
 # Silhouette sample heights (Godot units above the unit origin / feet). The

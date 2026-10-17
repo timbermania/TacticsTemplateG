@@ -31,7 +31,7 @@ name, which is what makes ADR-0146 dec. 2's `ls` test answerable here. It also
 lets [ADR-0129](../../docs/adr/0129-the-fold-is-renders-and-a-producer-keeps-its-shader.md)
 dec. 10 — *"only `par` wants a longer name (`pixel_aspect`)"* — be honoured by
 the address today without renaming the file, which is
-[#583](https://github.com/timbermania/fft-monorepo/issues/583)'s work along with
+follow-up work along with
 the `PSXDisplay` → `DisplayCalibration` rename (ADR-0171 dec. 4).
 
 ## 🔴 Shipping these files is not shipping what they need

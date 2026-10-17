@@ -3,7 +3,7 @@
 **What a cast looks like.** The parsed `E###.BIN` file model, the cast that runs
 it, the four channel subsystems, the particle pool, the TRAP family, the twelve
 fold/native shaders and the engine-fold compositor. **Extraction #7** of the
-`godot-learning` refactor — selected and audited at
+original project's refactor — selected and audited at
 [ADR-0286](../../docs/adr)/[0287](../../docs/adr)/[0288](../../docs/adr), moved
 here at [ADR-0295](../../docs/adr/0295-the-forty-five-class-names-collapse-to-twenty-one-and-forty-eight-vault-notes-are-held-by-two-anchors.md).
 
@@ -149,7 +149,7 @@ fixed addon-owned policy. No host timing constants or map internals are read bac
 The in-repo `CombatCastHost` demonstrates translating a richer game into this
 contract without making that game's actor type part of the addon API.
 
-The runtime witness is `tests/EffectManagerNode3DAnchorTest.tscn` in the monorepo:
+The runtime witness is `tests/EffectManagerNode3DAnchorTest.tscn` (not shipped here):
 it drives casts, live slots, explicit charge color, logging order and asynchronous
 cleanup with an independent host. Real sibling charges and detached spell/item
 instances exercise terminal disposal; a cinematic survives until its caller reaps it.
@@ -166,9 +166,7 @@ indexed texture with its palette are extracted from a disc the repo does not
 redistribute; `assets/effects/` is gitignored outright. ADR-0202 dec. 5 calls this Class
 B and rules that the *hardcoding* was the defect while the *dependency* is a legitimate
 contract — so the addon stopped naming `res://assets/` and takes a search root from the
-host instead ([#1224](https://github.com/timbermania/fft-monorepo/issues/1224)'s sibling
-item; the register rows were seeded by
-[#1225](https://github.com/timbermania/fft-monorepo/issues/1225)).
+host instead.
 
 Declare it in the consuming project's `project.godot`:
 

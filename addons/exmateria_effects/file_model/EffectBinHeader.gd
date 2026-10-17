@@ -4,7 +4,7 @@ extends RefCounted
 ##
 ## WHY THIS IS HERE AT ALL. Until now this package parsed NO binary: `EffectData.gd`'s own
 ## docstring reads *"loads pre-converted JSON from parser"*, and the parser is
-## `godot-learning/tools/parse_effect.py` — 2,556 lines of host Python, run offline, whose
+## the original project's `parse_effect.py` — 2,556 lines of host Python, run offline, whose
 ## output `assets/effects/E###/*.json` is the de-facto interface between the ROM and 110 files
 ## downstream. Python owned both directions of the format and GDScript owned neither. This is
 ## the first slice of the read direction coming back: the 40 bytes that ARE the format

@@ -31,7 +31,7 @@ var counters: PackedInt32Array = PackedInt32Array([0, 0, 0, 0])
 
 
 static func from_sound_containers(containers_doc: Dictionary):
-	## Build a resolver from godot-learning's sound_containers.json shape.
+	## Build a resolver from the sound_containers.json shape.
 	## Untyped return so this script compiles in --script mode (no class
 	## registry); callers get an EffectSoundResolver instance.
 	var r = load("res://addons/exmateria_platform/sound_schedule/EffectSoundResolver.gd").new()

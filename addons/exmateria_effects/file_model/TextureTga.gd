@@ -2,7 +2,7 @@ extends RefCounted
 ## The studio's RGBA TGA codec (#280, ADR-0199 decision 6).
 ##
 ## #280's round-trip format is "an RGBA .tga matching
-## `godot-learning/tools/extract_effect_texture.lua` exactly". Godot READS TGA
+## `extract_effect_texture.lua` exactly". Godot READS TGA
 ## (`Image.load_tga_from_buffer`) but cannot WRITE one, and the studio owns both
 ## directions of the artist loop, so the 18-byte layout is written by hand here:
 ##

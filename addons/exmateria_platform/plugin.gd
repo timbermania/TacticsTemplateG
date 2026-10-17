@@ -61,7 +61,7 @@ extends EditorPlugin
 ## `ProjectSettings.save()` is the whole mechanism (ADR-0203 dec. 5).
 ##
 ## 🔴 IN THIS REPO THIS CODE NEVER RUNS, AND THAT IS A STATED FACT, NOT AN OVERSIGHT.
-## `godot-learning/project.godot` has no `[editor_plugins]` section, so no `plugin.gd` in
+## The host `project.godot` does not enable it under `[editor_plugins]`, so no `plugin.gd` in
 ## this package has ever had `_enter_tree` called. Two consequences:
 ##
 ##   1. The host keeps declaring all six names itself, and SHOULD (ADR-0203 dec. 4).
