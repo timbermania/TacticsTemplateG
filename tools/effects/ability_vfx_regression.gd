@@ -137,7 +137,8 @@ var _playback: EffectsPlayback
 ## Arm F's cast, kept so it can be waited out before arm D takes the frame.
 var _unit_cast: Node3D
 var _caster: Node3D
-var _background: ScreenBackgroundQuad
+var _background: ScreenBackground
+var _environment: Environment
 var _failures: Array[String] = []
 var _checks: int = 0
 
@@ -155,11 +156,24 @@ func _ready() -> void:
 	camera.look_at_from_position(Vector3(0, 2.2, 5.0), Vector3(0, 1.0, 0), Vector3.UP)
 	add_child(camera)
 
-	# Attached with the camera, as `BattleManager._ready` does — the overlay latches its
-	# material on the first screen frame. Hidden until arm D, or B and C re-baseline.
-	_background = ScreenBackgroundQuad.attach(camera)
+	# Built the way `battle_manager.tscn` builds it: a window-filling TextureRect on a
+	# CanvasLayer that a Canvas-mode environment draws behind the 3D scene. Hidden until
+	# arm D, or B and C re-baseline.
+	_environment = Environment.new()
+	var world := WorldEnvironment.new()
+	world.environment = _environment
+	add_child(world)
+	var layer := CanvasLayer.new()
+	layer.layer = -3
+	_environment.background_canvas_max_layer = layer.layer
+	add_child(layer)
+	_background = ScreenBackground.new()
+	_background.texture = GradientTexture2D.new()
+	_background.texture.gradient = Gradient.new()
+	_background.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(_background)
 	_background.set_gradient(BG_TOP, BG_BOTTOM)
-	_background.visible = false
+	_show_background(false)
 
 	_caster = Node3D.new()
 	_caster.name = "Caster"
@@ -1006,7 +1020,7 @@ func _probe_visible(image: Image, probe: Dictionary, offset: Vector3) -> bool:
 ## interference, so both print.
 func _run_background_arm(control: bool) -> void:
 	# Only now: everything above is scored against a flat clear.
-	_background.visible = true
+	_show_background(true)
 	await _settle(SETTLE_SECONDS)
 
 	var rest := _background.corners()
@@ -1014,12 +1028,10 @@ func _run_background_arm(control: bool) -> void:
 			and rest[2].is_equal_approx(BG_BOTTOM) and rest[3].is_equal_approx(BG_BOTTOM),
 		"at rest the host's two map colours sit on the addon's four corners (%s)" % [rest])
 
-	# The overlay's own lookup asks the ROOT viewport, which has no camera while the battle
-	# is in the editor's SubViewport, so the material is handed over directly.
 	var overlay: Node = get_tree().root.get_node_or_null(^"/root/ScreenEffectOverlay")
 	_check(overlay != null and "_material" in overlay
-			and overlay._material == _background.material_override,
-		"the overlay is primed with the host quad's material, not a camera search")
+			and overlay._material == _background.material,
+		"the overlay writes to the host background's material")
 
 	# `Gradient.colors[0]` is the BOTTOM, `[1]` the TOP; an inverted sky renders without
 	# complaint, so it is checked against pixels.
@@ -1079,6 +1091,13 @@ func _run_background_arm(control: bool) -> void:
 			"D2 and it reached the framebuffer (%.4f > %.4f)" % [peak_px, BG_MIN_DELTA])
 
 
+## Canvas mode is switched with the background, so the arms that score against a flat
+## clear get the same clear colour they would without one.
+func _show_background(on: bool) -> void:
+	_background.visible = on
+	_environment.background_mode = Environment.BG_CANVAS if on else Environment.BG_CLEAR_COLOR
+
+
 ## Mean colour of a sky (top) or ground (bottom) band, every other row and column.
 func _patch_mean(top: bool) -> Color:
 	return _mean_of(await _grab(), top)
@@ -1113,7 +1132,7 @@ func _distance(a: Color, b: Color) -> float:
 ## for any effect with active camera keyframes, not just cinematics, and a host that never
 ## reads its output gets no error.
 func _run_camera_arm(control: bool) -> void:
-	_background.visible = false
+	_show_background(false)
 	_run_camera_coverage()
 
 	var rig: CameraController = CAMERA_RIG_SCENE.instantiate()

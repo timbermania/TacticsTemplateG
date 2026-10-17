@@ -4,9 +4,9 @@ extends Node
 ## This is the BACKGROUND layer - map, units, and particles render ON TOP of it.
 ## Supports multi-effect composition via delta-based blending.
 ##
-## Implementation: Finds the ScreenBackground quad in the camera scene.
-## The quad is positioned at z=-100 behind everything else.
-## render_priority -100 ensures it draws before (behind) other objects.
+## Implementation: the host hands over its background's ShaderMaterial with
+## set_background_material(). The material needs the color_tl/tr/bl/br uniforms and the
+## ColorStack include; whether it draws on a 2D Control or a 3D mesh is the host's call.
 ## Vault: [[Color Screen Opcode]]
 ## Vault: [[Screen Effect Gradient System]]
 
@@ -64,42 +64,14 @@ func get_default_bottom() -> Color:
 	return Color((default_bl.r + default_br.r) * 0.5, (default_bl.g + default_br.g) * 0.5,
 		(default_bl.b + default_br.b) * 0.5, 1.0)
 
-# Cached references
 var _material: ShaderMaterial = null
-var _initialized: bool = false
 
 
-func _ready() -> void:
-	# Material will be found when first effect tries to set color
-	pass
-
-
-func _find_background_material() -> void:
-	"""Find the ScreenBackground quad's material in the camera scene"""
-	if _initialized:
-		return
-
-	var viewport = get_viewport()
-	if not viewport:
-		return
-
-	var camera = viewport.get_camera_3d()
-	if not camera:
-		push_error("ScreenEffectOverlay: No camera found")
-		return
-
-	# Find the ScreenBackground node (child of camera)
-	var bg_quad = camera.get_node_or_null("ScreenBackground")
-	if not bg_quad:
-		push_error("ScreenEffectOverlay: ScreenBackground node not found in camera")
-		return
-
-	_material = bg_quad.material_override as ShaderMaterial
-	if not _material:
-		push_error("ScreenEffectOverlay: ScreenBackground has no ShaderMaterial")
-		return
-
-	_initialized = true
+## The material every colour below is written to. Until a host sets one, effects still
+## compose but draw nothing. Re-applies the current state, so it can be set mid-effect.
+func set_background_material(material: ShaderMaterial) -> void:
+	_material = material
+	_recomposite()
 
 
 func set_corners(c_tl: Color, c_tr: Color, c_bl: Color, c_br: Color, owner_id: int) -> void:
@@ -113,10 +85,6 @@ func set_corners(c_tl: Color, c_tr: Color, c_bl: Color, c_br: Color, owner_id: i
 		owner_id: Unique ID of the calling effect (for tracking ownership)
 	"""
 	current_owner_id = owner_id
-
-	# Ensure we have the material reference
-	if not _initialized:
-		_find_background_material()
 
 	if _material:
 		_material.set_shader_parameter("color_tl", Vector3(c_tl.r, c_tl.g, c_tl.b))
@@ -136,9 +104,6 @@ func set_tint(tint: Color, owner_id: int) -> void:
 		owner_id: Unique ID of the calling effect (for tracking ownership)
 	"""
 	current_owner_id = owner_id
-
-	if not _initialized:
-		_find_background_material()
 
 	if _material:
 		_push_color_stack(Vector3(tint.r, tint.g, tint.b))
