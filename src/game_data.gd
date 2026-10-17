@@ -238,13 +238,21 @@ func index_data(directory_path: String) -> void:
 	data_indexed.emit()
 
 
+## An empty name means the data has none (a job without a skillset, a unit without a
+## weapon), so it is not reported. A non-empty name that is not indexed is bad data.
+func _report_missing(kind: String, unique_name: String) -> void:
+	if unique_name.is_empty():
+		return
+	push_error("GameData: no indexed %s named \"%s\" (is the import path set and indexed?)" % [kind, unique_name])
+
+
 ## Lazy loading functions
 func get_shp(unique_name: String) -> Shp:
 	if shps.has(unique_name):
 		return shps[unique_name]
 	
 	if not shp_paths.has(unique_name):
-		push_error("GameData: no indexed shp named \"%s\" (is the import path set and indexed?)" % unique_name)
+		_report_missing("shp", unique_name)
 		return null
 	var file_path: String = shp_paths[unique_name]
 	var new_shp: Shp = ResourceLoader.load(file_path, "Shp")
@@ -258,7 +266,7 @@ func get_seq(unique_name: String) -> Seq:
 		return seqs[unique_name]
 	
 	if not seq_paths.has(unique_name):
-		push_error("GameData: no indexed seq named \"%s\" (is the import path set and indexed?)" % unique_name)
+		_report_missing("seq", unique_name)
 		return null
 	var file_path: String = seq_paths[unique_name]
 	var new_seq: Seq = ResourceLoader.load(file_path, "Seq")
@@ -272,7 +280,7 @@ func get_map_gltf(unique_name: String) -> Node:
 		return maps_gltf[unique_name]
 	
 	if not map_gltf_paths.has(unique_name):
-		push_error("GameData: no indexed map_gltf named \"%s\" (is the import path set and indexed?)" % unique_name)
+		_report_missing("map_gltf", unique_name)
 		return null
 	var file_path: String = map_gltf_paths[unique_name]
 	maps_gltf[unique_name] = GltfManager.import_gltf(file_path)
@@ -284,7 +292,7 @@ func get_map_gltf_mesh(unique_name: String) -> MeshInstance3D:
 		#return maps_gltf[unique_name]
 	
 	if not map_gltf_paths.has(unique_name):
-		push_error("GameData: no indexed map_gltf named \"%s\" (is the import path set and indexed?)" % unique_name)
+		_report_missing("map_gltf", unique_name)
 		return null
 	var file_path: String = map_gltf_paths[unique_name]
 	var mesh_instance: MeshInstance3D = GltfManager.import_gltf_mesh(file_path)
@@ -296,7 +304,7 @@ func get_map_data(unique_name: String) -> MapData:
 		return maps_data[unique_name]
 	
 	if not map_data_paths.has(unique_name):
-		push_error("GameData: no indexed map_data named \"%s\" (is the import path set and indexed?)" % unique_name)
+		_report_missing("map_data", unique_name)
 		return null
 	var file_path: String = map_data_paths[unique_name]
 	var new_map_data: MapData = ResourceLoader.load(file_path, "MapData")
@@ -312,7 +320,7 @@ func get_vfx_data(unique_name: String) -> VisualEffectData:
 		return vfx[unique_name]
 	
 	if not vfx_data_paths.has(unique_name):
-		push_error("GameData: no indexed vfx_data named \"%s\" (is the import path set and indexed?)" % unique_name)
+		_report_missing("vfx_data", unique_name)
 		return null
 	var file_path: String = vfx_data_paths[unique_name]
 	var new_vfx: VisualEffectData = ResourceLoader.load(file_path, "VisualEffectData")
@@ -326,7 +334,7 @@ func get_item(unique_name: String) -> ItemData:
 		return items[unique_name]
 	
 	if not item_paths.has(unique_name):
-		push_error("GameData: no indexed item named \"%s\" (is the import path set and indexed?)" % unique_name)
+		_report_missing("item", unique_name)
 		return null
 	var file_path: String = item_paths[unique_name]
 	var file_text: String = FileAccess.get_file_as_string(file_path)
@@ -339,7 +347,7 @@ func get_status_effect(unique_name: String) -> StatusEffect:
 		return status_effects[unique_name]
 	
 	if not status_effect_paths.has(unique_name):
-		push_error("GameData: no indexed status_effect named \"%s\" (is the import path set and indexed?)" % unique_name)
+		_report_missing("status_effect", unique_name)
 		return null
 	var file_path: String = status_effect_paths[unique_name]
 	status_effects[unique_name] = ResourceLoader.load(file_path, "StatusEffect")
@@ -351,7 +359,7 @@ func get_job(unique_name: String) -> JobData:
 		return jobs_data[unique_name]
 	
 	if not job_paths.has(unique_name):
-		push_error("GameData: no indexed job named \"%s\" (is the import path set and indexed?)" % unique_name)
+		_report_missing("job", unique_name)
 		return null
 	var file_path: String = job_paths[unique_name]
 	var file_text: String = FileAccess.get_file_as_string(file_path)
@@ -364,7 +372,7 @@ func get_skillset(unique_name: String) -> Skillset:
 		return skillsets[unique_name]
 	
 	if not skillset_paths.has(unique_name):
-		push_error("GameData: no indexed skillset named \"%s\" (is the import path set and indexed?)" % unique_name)
+		_report_missing("skillset", unique_name)
 		return null
 	var file_path: String = skillset_paths[unique_name]
 	skillsets[unique_name] = ResourceLoader.load(file_path, "Skillset")
@@ -376,7 +384,7 @@ func get_action(unique_name: String) -> Action:
 		return actions[unique_name]
 	
 	if not action_paths.has(unique_name):
-		push_error("GameData: no indexed action named \"%s\" (is the import path set and indexed?)" % unique_name)
+		_report_missing("action", unique_name)
 		return null
 	var file_path: String = action_paths[unique_name]
 	var file_text: String = FileAccess.get_file_as_string(file_path)
@@ -392,7 +400,7 @@ func get_triggered_action(unique_name: String) -> TriggeredAction:
 		return triggered_actions[unique_name]
 	
 	if not triggered_action_paths.has(unique_name):
-		push_error("GameData: no indexed triggered_action named \"%s\" (is the import path set and indexed?)" % unique_name)
+		_report_missing("triggered_action", unique_name)
 		return null
 	var file_path: String = triggered_action_paths[unique_name]
 	var file_text: String = FileAccess.get_file_as_string(file_path)
@@ -405,7 +413,7 @@ func get_passive_effect(unique_name: String) -> PassiveEffect:
 		return passive_effects[unique_name]
 	
 	if not passive_effect_paths.has(unique_name):
-		push_error("GameData: no indexed passive_effect named \"%s\" (is the import path set and indexed?)" % unique_name)
+		_report_missing("passive_effect", unique_name)
 		return null
 	var file_path: String = passive_effect_paths[unique_name]
 	var file_text: String = FileAccess.get_file_as_string(file_path)
@@ -418,7 +426,7 @@ func get_ability(unique_name: String) -> Ability:
 		return abilities[unique_name]
 	
 	if not ability_paths.has(unique_name):
-		push_error("GameData: no indexed ability named \"%s\" (is the import path set and indexed?)" % unique_name)
+		_report_missing("ability", unique_name)
 		return null
 	var file_path: String = ability_paths[unique_name]
 	var file_text: String = FileAccess.get_file_as_string(file_path)
@@ -431,7 +439,7 @@ func get_scenario(unique_name: String) -> Scenario:
 		return scenarios[unique_name]
 	
 	if not scenario_paths.has(unique_name):
-		push_error("GameData: no indexed scenario named \"%s\" (is the import path set and indexed?)" % unique_name)
+		_report_missing("scenario", unique_name)
 		return null
 	var file_path: String = scenario_paths[unique_name]
 	var file_text: String = FileAccess.get_file_as_string(file_path)
@@ -444,7 +452,7 @@ func get_texture(unique_name: String) -> Texture2D:
 		return textures[unique_name]
 	
 	if not texture_paths.has(unique_name):
-		push_error("GameData: no indexed texture named \"%s\" (is the import path set and indexed?)" % unique_name)
+		_report_missing("texture", unique_name)
 		return null
 	var file_path: String = texture_paths[unique_name]
 	var new_image: Image = Image.load_from_file(file_path)
@@ -457,7 +465,7 @@ func get_spritesheet_data(unique_name: String) -> UnitSpritesheetData:
 		return unit_spritesheets_data[unique_name]
 	
 	if not unit_spritesheet_data_paths.has(unique_name):
-		push_error("GameData: no indexed unit_spritesheet_data named \"%s\" (is the import path set and indexed?)" % unique_name)
+		_report_missing("unit_spritesheet_data", unique_name)
 		return null
 	var file_path: String = unit_spritesheet_data_paths[unique_name]
 	unit_spritesheets_data[unique_name] = ResourceLoader.load(file_path, "UnitSpritesheetData")
