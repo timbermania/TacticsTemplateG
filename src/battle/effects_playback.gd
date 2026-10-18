@@ -60,8 +60,8 @@ func manager() -> ExMateriaEffects.EffectManager:
 
 ## Set everything up for `camera`. On failure returns false with `unavailable_reason`
 ## filled in, and leaves nothing half-built.
-func begin(camera: Camera3D) -> bool:
-	_end()
+func initialize(camera: Camera3D) -> bool:
+	_shutdown()
 	if not enabled:
 		unavailable_reason = "disabled: EffectsPlayback.enabled is false"
 		return false
@@ -97,11 +97,11 @@ func begin(camera: Camera3D) -> bool:
 	return true
 
 
-func end() -> void:
-	_end()
+func shutdown() -> void:
+	_shutdown()
 
 
-func _end() -> void:
+func _shutdown() -> void:
 	# Before the manager goes, or the rig freezes mid-track with nothing to advance it.
 	if is_instance_valid(_camera_track):
 		_camera_track.release()
@@ -120,7 +120,7 @@ func _end() -> void:
 
 
 func _exit_tree() -> void:
-	_end()
+	_shutdown()
 
 
 ## The `E###` number `action` should draw, or -1 for nothing. Only the digits of `vfx_name`

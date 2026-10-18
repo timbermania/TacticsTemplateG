@@ -69,30 +69,30 @@ func run() -> void:
 	add_child(play)
 	# Defaults off: a bare EffectsPlayback draws nothing until an owner opts in.
 	check(not play.enabled, "playback is OPT-IN: it builds nothing until an owner enables it")
-	check(not play.begin(null), "begin() refuses while disabled")
+	check(not play.initialize(null), "initialize() refuses while disabled")
 	check(play.unavailable_reason.begins_with("disabled"), "refusal states a reason: " + play.unavailable_reason)
 	check(not play.is_available(), "no manager exists after a refusal")
 	play.enabled = true
-	check(not play.begin(null), "begin() still refuses with no battle_manager")
+	check(not play.initialize(null), "initialize() still refuses with no battle_manager")
 	check(play.unavailable_reason.begins_with("no battle"), "second refusal names the battle: " + play.unavailable_reason)
 	play.battle_manager = self
-	check(not play.begin(null), "begin() refuses a null camera rather than calling setup_native")
+	check(not play.initialize(null), "initialize() refuses a null camera rather than calling setup_native")
 	check(play.unavailable_reason.begins_with("no camera"), "third refusal names the camera: " + play.unavailable_reason)
 
-	# With a content root, an in-tree camera and a battle, `begin()` must reach a checked
+	# With a content root, an in-tree camera and a battle, `initialize()` must reach a checked
 	# `setup_native()` — the arm that catches "installed but renders nothing".
 	var previous_root: String = str(ProjectSettings.get_setting(
 		ExMateriaEffects.EffectsContent.ROOT_SETTING, ""))
 	ProjectSettings.set_setting(ExMateriaEffects.EffectsContent.ROOT_SETTING, "res://tools/effects/")
 	var camera := Camera3D.new()
 	add_child(camera)
-	var began: bool = play.begin(camera)
-	check(began, "begin() reaches CHECKED setup_native and succeeds: " + play.unavailable_reason)
-	check(play.is_available() == began, "is_available() agrees with what begin() returned")
-	if began:
+	var initialized: bool = play.initialize(camera)
+	check(initialized, "initialize() reaches CHECKED setup_native and succeeds: " + play.unavailable_reason)
+	check(play.is_available() == initialized, "is_available() agrees with what initialize() returned")
+	if initialized:
 		check(play.manager() != null, "an EffectManager exists over the TacticsG host")
-		play.end()
-		check(not play.is_available(), "end() tears the manager back down")
+		play.shutdown()
+		check(not play.is_available(), "shutdown() tears the manager back down")
 	ProjectSettings.set_setting(ExMateriaEffects.EffectsContent.ROOT_SETTING, previous_root)
 	camera.queue_free()
 

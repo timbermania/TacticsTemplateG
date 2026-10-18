@@ -152,7 +152,7 @@ func on_data_ready() -> void:
 	battle_view.add_child(projectile_instance)
 	projectile_instance.initialize()
 
-	_begin_effects_playback()
+	_initialize_effects_playback()
 
 	scenario_editor.populate_option_lists()
 	scenario_editor.visible = true
@@ -166,9 +166,9 @@ func on_data_ready() -> void:
 ## Stand up `addons/exmateria_effects` for this battle. Casts are parented here, not under
 ## `battle_view`: `EffectsCastHost` reads this node's `units` and `total_map_tiles`, and
 ## `battle_view` is reparented in and out of the editor's SubViewport.
-func _begin_effects_playback() -> void:
+func _initialize_effects_playback() -> void:
 	if effects_playback != null:
-		effects_playback.end()
+		effects_playback.shutdown()
 		effects_playback.queue_free()
 	effects_playback = EffectsPlayback.new()
 	effects_playback.name = "EffectsPlayback"
@@ -183,7 +183,7 @@ func _begin_effects_playback() -> void:
 		effects_playback.content_root = EFFECTS_CONTENT_ROOT
 	add_child(effects_playback)
 	# Refusal is an ordinary outcome: stock GL, no content, or no camera.
-	if not effects_playback.begin(main_camera):
+	if not effects_playback.initialize(main_camera):
 		push_warning("BattleManager: ability VFX unavailable — "
 			+ effects_playback.unavailable_reason)
 	else:

@@ -199,7 +199,7 @@ func _ready() -> void:
 
 	_run_mapping_arm()
 
-	if not _playback.begin(camera):
+	if not _playback.initialize(camera):
 		_fail("playback unavailable: " + _playback.unavailable_reason)
 		_finish(false)
 		return
@@ -296,7 +296,7 @@ func _run_pixel_arm() -> void:
 	_check(EffectsPlayback.effect_id_for(action) == PROBE_ACTION["vfx_id"],
 		"probe ability \"%s\" routes to E%03d" % [action.unique_name, PROBE_ACTION["vfx_id"]])
 
-	# The producer's first frames after `begin()` are not steady enough to baseline on.
+	# The producer's first frames after `initialize()` are not steady enough to baseline on.
 	await _settle(SETTLE_SECONDS)
 	var baseline := await _grab()
 	var control: bool = "noplay" in OS.get_cmdline_user_args()
@@ -1151,7 +1151,7 @@ func _run_camera_arm(control: bool) -> void:
 	await _run_camera_chirality(rig)
 	await _run_camera_pixels(rig)
 
-	if not _playback.begin(rig.camera):
+	if not _playback.initialize(rig.camera):
 		_fail("E camera arm: playback unavailable on the rig camera: "
 			+ _playback.unavailable_reason)
 		return

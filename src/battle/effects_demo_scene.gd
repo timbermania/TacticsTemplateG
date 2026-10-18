@@ -62,7 +62,7 @@ func _ready() -> void:
 	_playback.battle_manager = self     # this scene stands in for the battle
 	add_child(_playback)
 
-	if not _playback.begin(camera):
+	if not _playback.initialize(camera):
 		_say("PLAYBACK UNAVAILABLE: " + _playback.unavailable_reason)
 		push_error("EffectsDemo: " + _playback.unavailable_reason)
 		return
@@ -72,7 +72,7 @@ func _ready() -> void:
 
 
 ## Evidence that particles reach the framebuffer: reads the viewport back and counts pixels
-## that are not the clear colour. "ready" only proves `begin()` succeeded.
+## that are not the clear colour. "ready" only proves `initialize()` succeeded.
 func _auto_capture() -> void:
 	await get_tree().process_frame
 	var before := await _lit_pixels()
