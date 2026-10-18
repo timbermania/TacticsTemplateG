@@ -19,7 +19,6 @@ var seqs: Dictionary[String, Seq] = {} # [unique_name (eg. filename without exte
 var maps_gltf: Dictionary[String, Node] = {}
 var maps_data: Dictionary[String, MapData] = {} # var map_tiles: Dictionary[Vector2i, Array] = {} # Array[TerrainTile], palettes, animations
 var map_tile_meshes: Dictionary[TerrainTile.SlopeType, ArrayMesh] = {}
-var vfx: Dictionary[String, VisualEffectData] = {}
 var shared_vfx_data: TrapEffectData
 var projectiles_gltf: Dictionary[String, Node] = {}
 var items: Dictionary[String, ItemData] = {} # [unique_name, ItemData]
@@ -43,7 +42,6 @@ var shp_paths: Dictionary[String, String] = {}
 var seq_paths: Dictionary[String, String] = {}
 var map_gltf_paths: Dictionary[String, String] = {}
 var map_data_paths: Dictionary[String, String] = {}
-var vfx_data_paths: Dictionary[String, String] = {}
 var item_paths: Dictionary[String, String] = {}
 var status_effect_paths: Dictionary[String, String] = {}
 var job_paths: Dictionary[String, String] = {}
@@ -102,7 +100,6 @@ func clear_data() -> void:
 	maps_gltf = {}
 	maps_data = {}
 	map_tile_meshes = {}
-	vfx = {}
 	projectiles_gltf = {}
 	items = {} 
 	status_effects = {} 
@@ -123,7 +120,6 @@ func clear_data() -> void:
 	seq_paths.clear()
 	map_gltf_paths.clear()
 	map_data_paths.clear()
-	vfx_data_paths.clear()
 	item_paths.clear()
 	status_effect_paths.clear()
 	job_paths.clear()
@@ -220,8 +216,6 @@ func index_data(directory_path: String) -> void:
 		elif file_path.ends_with("animation_data.tres"):
 			var new_animation_data: AnimationData = ResourceLoader.load(file_path, "AnimationData")
 			animation_layer_priorities = new_animation_data.animation_layer_priorities.duplicate()
-		elif file_path.to_lower().ends_with(".vfx_data.tres"):
-			vfx_data_paths[file_path.get_file().trim_suffix(".vfx_data.tres")] = file_path
 		elif file_path.to_lower().ends_with("shared_vfx.data.tres"):
 			shared_vfx_data = ResourceLoader.load(file_path, "TrapEffectData")
 		elif file_path.ends_with(".projectile.glb"):
@@ -315,20 +309,6 @@ func get_map_data(unique_name: String) -> MapData:
 	return maps_data[unique_name]
 
 
-func get_vfx_data(unique_name: String) -> VisualEffectData:
-	if vfx.has(unique_name):
-		return vfx[unique_name]
-	
-	if not vfx_data_paths.has(unique_name):
-		_report_missing("vfx_data", unique_name)
-		return null
-	var file_path: String = vfx_data_paths[unique_name]
-	var new_vfx: VisualEffectData = ResourceLoader.load(file_path, "VisualEffectData")
-	new_vfx.texture = get_texture(new_vfx.unique_name)
-	vfx[unique_name] = new_vfx
-	return vfx[unique_name]
-
-
 func get_item(unique_name: String) -> ItemData:
 	if items.has(unique_name):
 		return items[unique_name]
@@ -389,8 +369,6 @@ func get_action(unique_name: String) -> Action:
 	var file_path: String = action_paths[unique_name]
 	var file_text: String = FileAccess.get_file_as_string(file_path)
 	var new_action: Action = Action.create_from_json(file_text)
-	if new_action.vfx_name != "":
-		new_action.vfx_data = get_vfx_data(new_action.vfx_name)
 	actions[unique_name] = new_action
 	return actions[unique_name]
 
@@ -481,8 +459,6 @@ func load_all_data() -> void:
 		get_map_gltf(file_name)
 	for file_name: String in map_data_paths.keys():
 		get_map_data(file_name)
-	for file_name: String in vfx_data_paths.keys():
-		get_vfx_data(file_name)
 	for file_name: String in item_paths.keys():
 		get_item(file_name)
 	for file_name: String in status_effect_paths.keys():

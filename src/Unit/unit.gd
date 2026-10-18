@@ -10,7 +10,6 @@ signal data_updated(unit: Unit)
 signal ability_assigned(name: String)
 signal ability_completed()
 signal primary_weapon_assigned(item_unique_name: String)
-signal image_changed(new_image: ImageTexture)
 signal knocked_out(unit: Unit)
 signal spritesheet_changed(new_spritesheet: ImageTexture)
 @warning_ignore("unused_signal")
@@ -1389,12 +1388,6 @@ func set_job(new_job_name: String) -> void:
 func set_ability(new_action_name: String) -> void:
 	active_ability_name = new_action_name
 	action_data = GameData.get_action(new_action_name)
-	
-	# if not action_data.vfx_data.is_initialized:
-	# 	action_data.vfx_data.init_from_file()
-	
-	image_changed.emit(GameData.get_texture(action_data.vfx_name))
-	#debug_menu.sprite_viewer.texture = ImageTexture.create_from_image(action_data.vfx_data.vfx_spr.spritesheet)
 	ability_assigned.emit(new_action_name)
 
 

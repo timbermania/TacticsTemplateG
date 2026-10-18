@@ -25,6 +25,7 @@ const EffectsDebug = preload("res://addons/exmateria_effects/install/EffectsDebu
 const EffectsContent = preload("res://addons/exmateria_effects/install/EffectsContent.gd")
 const TrapConstants = preload("res://addons/exmateria_effects/trap/TrapConstants.gd")
 const UnifiedPrimStager = preload("res://addons/exmateria_effects/render/UnifiedPrimStager.gd")
+const TextureTga = preload("res://addons/exmateria_effects/file_model/TextureTga.gd")
 
 ## ADR-0212 dec. 1 — `addons/exmateria_platform` publishes one global,
 ## `ExMateriaPlatform`; aliasing a member back keeps every use site below
@@ -251,7 +252,7 @@ func initialize(trap_type: int = 7, element_index: int = 0) -> bool:
 
 func _load_json(path: String, callback: Callable) -> bool:
 	"""Load JSON file and call callback with parsed data."""
-	if not ResourceLoader.exists(path):
+	if not FileAccess.file_exists(path):
 		push_error("TrapEffect: File not found: %s" % path)
 		return false
 
@@ -289,12 +290,13 @@ func _setup_textures() -> bool:
 	if indexed_path.is_empty() or palette_path.is_empty():
 		return false
 
-	_texture = load(indexed_path)
+	# From disk, not through the importer, so the content root may sit outside res://.
+	_texture = TextureTga.load_texture(indexed_path)
 	if not _texture:
 		push_error("TrapEffect: Failed to load indexed texture: %s" % indexed_path)
 		return false
 
-	_palette_texture = load(palette_path)
+	_palette_texture = TextureTga.load_texture(palette_path)
 	if not _palette_texture:
 		push_error("TrapEffect: Failed to load palette texture: %s" % palette_path)
 		return false

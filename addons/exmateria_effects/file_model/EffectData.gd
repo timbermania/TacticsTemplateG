@@ -15,6 +15,7 @@ const ScreenDataClass = preload("res://addons/exmateria_effects/file_model/Scree
 const PaletteDataClass = preload("res://addons/exmateria_effects/file_model/PaletteData.gd")
 const CameraDataClass = preload("res://addons/exmateria_effects/file_model/CameraData.gd")
 const CurveExplode = preload("res://addons/exmateria_effects/file_model/CurveExplode.gd")
+const TextureTga = preload("res://addons/exmateria_effects/file_model/TextureTga.gd")
 
 ## ADR-0318 dec. 7 — the FEDS bank arrives through the PLATFORM PORT, not a `preload`
 ## of the `Audio` package's façade.
@@ -182,14 +183,8 @@ static func load_from_directory(dir_path: String) -> _Self:
 	if tex_meta is Dictionary:
 		data.texture_meta = tex_meta
 
-	# Load texture from effect directory (now consolidated with JSON files)
-	var tex_path = dir_path.path_join("texture.tga")
-	# Load the imported texture (the .tga is imported lossless — compress/mode=0,
-	# no mipmaps — so this is the same pixels, but the optimized/export-safe path).
-	# ResourceLoader.exists() gates on it being imported, so an un-imported tga is
-	# skipped instead of emitting the "loaded as image file" warning.
-	if ResourceLoader.exists(tex_path):
-		data.texture = load(tex_path)
+	# Read from disk, not through the importer, so the content root may sit outside res://.
+	data.texture = TextureTga.load_texture(dir_path.path_join("texture.tga"))
 
 	# Load timeline
 	var timeline_path = dir_path.path_join("timeline.json")

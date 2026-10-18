@@ -1,17 +1,14 @@
 extends Node
-## Does TacticsG's own parse of `E###.BIN` reproduce `content/effects/E###/`? Diffs every
-## file against an independently produced copy, reading through the ROM so the header-offset
-## arithmetic is exercised too.
-## The copy must not be this exporter's own output: once `generate_effects_content()` has
-## written `res://content/effects`, point `--oracle=` elsewhere or every check passes.
+## Does TacticsG's own parse of `E###.BIN` reproduce an `effects/E###/` tree? Diffs every
+## file against an independently produced copy (`--oracle=DIR`), reading through the ROM so
+## the header-offset arithmetic is exercised too.
+## The copy must not be this exporter's own output, such as `<IMPORT_PATH>/effects`, or every
+## check passes.
 ##
-## Run: <GODOT> --path . res://tools/effects/effect_extract_regression.tscn -- auto [export] [--oracle=DIR]
+## Run: <GODOT> --path . res://tools/effects/effect_extract_regression.tscn -- auto [export] --oracle=DIR
 
 const EffectExtractScript := preload("res://src/file_formats/vfx/effect_extract.gd")
 const BinHeader := preload("res://addons/exmateria_effects/file_model/EffectBinHeader.gd")
-
-## What it compares against unless told otherwise: the extract already committed here.
-const CONTENT_EFFECTS := "res://content/effects"
 
 ## Floats get a relative tolerance because the committed numbers were written by Python's
 ## JSON and read back by Godot's; below this, numbers compare exactly.
@@ -21,8 +18,8 @@ const FLOAT_REL_TOLERANCE := 1e-9
 ## systematic error can otherwise sit unnoticed under the tolerance above.
 const FLOAT_NOISE_CEILING := 1e-12
 
-## The directory actually compared against — `--oracle=DIR` overrides `CONTENT_EFFECTS`.
-var _oracle := CONTENT_EFFECTS
+## The directory compared against, from `--oracle=DIR`.
+var _oracle := ""
 
 var _passed := 0
 var _failed := 0
@@ -37,6 +34,10 @@ func _ready() -> void:
 			_oracle = arg.trim_prefix("--oracle=").rstrip("/")
 	if not _auto:
 		print("effect_extract_regression: pass `-- auto` to run.")
+		return
+	if _oracle.is_empty():
+		print("[FAIL] no --oracle=DIR — nothing independent to compare against")
+		_quit(1)
 		return
 	_run.call_deferred()
 
@@ -59,7 +60,7 @@ func _run() -> void:
 
 	var battle_bin: PackedByteArray = RomReader.get_file_data("BATTLE.BIN")
 	_test_header_offsets_agree(battle_bin)
-	await _test_the_extract_matches_the_committed_content(battle_bin)
+	await _test_the_extract_matches_the_committed_content()
 	_test_a_corrupt_buffer_refuses()
 	if "export" in OS.get_cmdline_user_args():
 		await _test_the_exporter_writes_a_matching_tree()
@@ -93,7 +94,7 @@ func _test_header_offsets_agree(battle_bin: PackedByteArray) -> void:
 
 
 ## ARM 2 + ARM 3 — the extract against the committed content, and its JSON round trip.
-func _test_the_extract_matches_the_committed_content(battle_bin: PackedByteArray) -> void:
+func _test_the_extract_matches_the_committed_content() -> void:
 	var names: Array = _effect_dir_names(_oracle)
 	_assert_true(names.size() > 390, "found the committed extract — %d directories"
 		% names.size())
@@ -120,7 +121,8 @@ func _test_the_extract_matches_the_committed_content(battle_bin: PackedByteArray
 			refused.append("%s: no such file in the ROM" % eff)
 			continue
 		var buf: PackedByteArray = RomReader.get_file_data(file_name)
-		var built: Dictionary = EffectExtractScript.build(buf, battle_bin, vfx_id, eff)
+		var built: Dictionary = EffectExtractScript.build(buf,
+			RomReader.battle_bin_data.ability_vfx_header_offsets[vfx_id], eff)
 		if not built["ok"]:
 			for e in (built["errors"] as Array).slice(0, 2):
 				refused.append(str(e))
@@ -197,21 +199,22 @@ func _test_a_corrupt_buffer_refuses() -> void:
 	var junk := PackedByteArray()
 	junk.resize(4096)
 	junk.fill(0xAB)
-	var built: Dictionary = EffectExtractScript.build(junk, PackedByteArray(), 1, "JUNK")
+	var built: Dictionary = EffectExtractScript.build(junk, -1, "JUNK")
 	_assert_true(not built["ok"], "a buffer of junk refuses to extract")
 	var tiny := PackedByteArray()
 	tiny.resize(8)
-	var built_tiny: Dictionary = EffectExtractScript.build(tiny, PackedByteArray(), 1, "TINY")
+	var built_tiny: Dictionary = EffectExtractScript.build(tiny, -1, "TINY")
 	_assert_true(not built_tiny["ok"], "a buffer too short for a header refuses to extract")
 
 
 ## ARM 5 — `-- auto export`: scores `write()` rather than `build()`. Off by default, ~224 MB.
-## Writes to a scratch directory, never `res://content/effects/`: that tree is gitignored, so
-## a bad build written over it cannot be recovered.
+## Writes to a scratch directory, never the import path, so a bad build cannot overwrite the
+## content the game runs on.
 func _test_the_exporter_writes_a_matching_tree() -> void:
-	var out_dir: String = ProjectSettings.globalize_path("user://effect_extract_check")
-	print("exporting to %s" % out_dir)
-	var summary: Dictionary = await RomReader.generate_effects_content(out_dir)
+	var save_path: String = ProjectSettings.globalize_path("user://effect_extract_check")
+	print("exporting to %s" % save_path)
+	var summary: Dictionary = await RomReader.export_vfx(save_path)
+	var out_dir: String = EffectExtractScript.effects_dir(save_path)
 
 	_assert_eq(int(summary["written"]), 401, "the exporter wrote 401 effect directories")
 	_assert_eq(int(summary["skipped_empty"]), 111, "it skipped the 111 empty EFFECT slots")

@@ -7,7 +7,7 @@ extends Node3D
 ##   Left/Right  cycle element — recolours the particles
 ##   Space       stop any continuous charge effect
 
-const CONTENT_ROOT := "res://content/"
+const EffectExtractPaths := preload("res://src/file_formats/vfx/effect_extract.gd")
 
 ## handler id -> label. These are the addon's own TRAP handler numbers.
 const HANDLERS := {
@@ -30,7 +30,7 @@ func _ready() -> void:
 	# Set here rather than in project.godot, so a checkout with no content keeps failing
 	# legibly.
 	ProjectSettings.set_setting(
-		ExMateriaEffects.EffectsContent.ROOT_SETTING, CONTENT_ROOT)
+		ExMateriaEffects.EffectsContent.ROOT_SETTING, EffectExtractPaths.content_root())
 
 	var camera := Camera3D.new()
 	camera.position = Vector3(0, 2.2, 5.0)

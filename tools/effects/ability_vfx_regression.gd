@@ -8,9 +8,8 @@ extends Node3D
 ##
 ## Arm A needs `--actions=<dir>`. Never `--headless`: arms B/C/D read a framebuffer.
 
-## Must be the path `RomReader.generate_effects_content()` writes and `BattleManager` reads.
+## The same lookup `BattleManager` makes, so this reads the content the game would.
 const EffectExtractPaths := preload("res://src/file_formats/vfx/effect_extract.gd")
-const CONTENT_ROOT := EffectExtractPaths.CONTENT_ROOT
 
 ## Fire: bright, centred and long-lived, so arm B cannot fail for dimness.
 const PROBE_ACTION := {"unique_name": "fire", "vfx_name": "e_016", "vfx_id": 16}
@@ -141,6 +140,7 @@ var _background: ScreenBackground
 var _environment: Environment
 var _failures: Array[String] = []
 var _checks: int = 0
+var _effects_dir: String = ""
 
 ## `EffectsCastHost` reads these off the battle, so the names must match `BattleManager`'s.
 var units: Array = []
@@ -148,8 +148,10 @@ var total_map_tiles: Dictionary = {}
 
 
 func _ready() -> void:
+	var content_root: String = EffectExtractPaths.content_root()
+	_effects_dir = EffectExtractPaths.effects_dir(content_root)
 	ProjectSettings.set_setting(
-		ExMateriaEffects.EffectsContent.ROOT_SETTING, CONTENT_ROOT)
+		ExMateriaEffects.EffectsContent.ROOT_SETTING, content_root)
 
 	var camera := Camera3D.new()
 	camera.position = Vector3(0, 2.2, 5.0)
@@ -190,7 +192,7 @@ func _ready() -> void:
 	_playback = EffectsPlayback.new()
 	_playback.enabled = true
 	_playback.battle_manager = self
-	_playback.content_root = CONTENT_ROOT
+	_playback.content_root = content_root
 	add_child(_playback)
 
 	if not "auto" in OS.get_cmdline_user_args():
@@ -872,7 +874,7 @@ func _run_unit_cast(control: bool, registry: Node, caster: Dictionary,
 ## The effect frame the probe's palette RESTORE finishes on, from the content's own
 ## `timeline.json`. The ramp constant is shared with `EffectsPlayback` — keep it that way.
 func _probe_restore_frame() -> int:
-	var path: String = EffectExtractPaths.EFFECTS_DIR.path_join(
+	var path: String = _effects_dir.path_join(
 		"E%03d" % int(UNIT_TINT_ACTION["vfx_id"])).path_join("timeline.json")
 	if not FileAccess.file_exists(path):
 		return 0
@@ -1304,17 +1306,17 @@ func _run_camera_coverage() -> void:
 	if camera_data_script == null:
 		_fail("E0: cannot load " + CAMERA_DATA_PATH)
 		return
-	var dir := DirAccess.open(EffectExtractPaths.EFFECTS_DIR)
+	var dir := DirAccess.open(_effects_dir)
 	if dir == null:
 		print("[AbilityVfx] ARM E0 COVERAGE: SKIPPED — no content at "
-			+ EffectExtractPaths.EFFECTS_DIR)
+			+ _effects_dir)
 		return
 	var total := 0
 	var active := 0
 	var rolled: Array[String] = []
 	var inactive: Array[String] = []
 	for effect_name: String in dir.get_directories():
-		var path: String = EffectExtractPaths.EFFECTS_DIR.path_join(effect_name).path_join(
+		var path: String = _effects_dir.path_join(effect_name).path_join(
 			"camera.json")
 		if not FileAccess.file_exists(path):
 			continue

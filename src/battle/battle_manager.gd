@@ -5,10 +5,7 @@ signal map_input_event(action_instance: ActionInstance, camera: Camera3D, event:
 signal unit_created(new_unit: Unit)
 signal delayed_action_completed
 
-## Where the gitignored, ROM-derived effects content lives. Shared with
-## `RomReader.generate_effects_content()`, which writes it; a mismatch silently loads nothing.
 const EffectExtractPaths := preload("res://src/file_formats/vfx/effect_extract.gd")
-const EFFECTS_CONTENT_ROOT: String = EffectExtractPaths.CONTENT_ROOT
 
 const SCALE: float = 1.0 / FftMapData.TILE_SIDE_LENGTH
 const SCALED_UNITS_PER_HEIGHT: float = SCALE * FftMapData.UNITS_PER_HEIGHT
@@ -177,10 +174,11 @@ func _initialize_effects_playback() -> void:
 	# The rig, not `main_camera`: effects orbit a focus point, and the takeover must drop and
 	# restore `follow_node`.
 	effects_playback.camera_rig = camera_controller
-	# Set at runtime, not in project.godot: the content is gitignored, so a committed default
-	# would point a fresh checkout at a missing directory.
-	if DirAccess.dir_exists_absolute(EFFECTS_CONTENT_ROOT):
-		effects_playback.content_root = EFFECTS_CONTENT_ROOT
+	# Set at runtime: the content is ROM-derived and lives with the imported data. Left empty
+	# when absent, so `initialize()` refuses with a reason instead of failing per cast.
+	var effects_content_root: String = EffectExtractPaths.content_root()
+	if DirAccess.dir_exists_absolute(EffectExtractPaths.effects_dir(effects_content_root)):
+		effects_playback.content_root = effects_content_root
 	add_child(effects_playback)
 	# Refusal is an ordinary outcome: stock GL, no content, or no camera.
 	if not effects_playback.initialize(main_camera):
@@ -188,7 +186,7 @@ func _initialize_effects_playback() -> void:
 			+ effects_playback.unavailable_reason)
 	else:
 		print("BattleManager: ability VFX ready (exmateria_effects, content root %s)"
-			% EFFECTS_CONTENT_ROOT)
+			% effects_content_root)
 
 
 func update_total_map_tiles(map_chunks: Array[Scenario.MapChunk]) -> void:

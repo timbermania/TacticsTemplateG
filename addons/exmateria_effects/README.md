@@ -176,6 +176,10 @@ Declare it in the consuming project's `project.godot`:
 content_root="res://assets/"
 ```
 
+The root may also be an absolute path outside `res://`, set at runtime with
+`ProjectSettings.set_setting()`: the `.tga` sheets are read from disk, not through Godot's
+importer, so the content needs no import step.
+
 `EffectsContent` resolves every subpath against that root:
 
 | subpath | what needs it |

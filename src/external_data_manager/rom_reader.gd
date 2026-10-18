@@ -825,8 +825,6 @@ func export_data(save_path: String) -> void:
 	await export_maps(save_path) # needs to be before data tables so maps will be initialized
 	await export_data_tables(save_path)
 	await export_vfx(save_path)
-	# No `save_path`: this content lives inside the project (see `generate_effects_content`).
-	await generate_effects_content()
 
 
 func export_unit_spritesheets(save_path: String) -> void:
@@ -1074,51 +1072,22 @@ func export_map(save_path: String, fft_map_data: FftMapData, export_full_color_t
 		push_warning("error saving map data " + fft_map_data.unique_name + ": " + error_string(error))
 
 
-func export_vfx(save_path: String) -> void:
+## Write the `effects/E###/` directories `addons/exmateria_effects` loads, plus what the
+## addon does not cover: the TRAP element data and the weapon projectile meshes.
+##
+## Empty `.BIN` slots are skipped: 111 of the 512 EFFECT records are zero-length
+## placeholders with no effect assigned, and the 401 that remain are exactly the
+## directories the addon expects.
+func export_vfx(save_path: String) -> Dictionary:
 	message.emit("Exporting vfx...")
 	await get_tree().process_frame
-	
-	var vfx_path: String = save_path + "/vfx/"
+
+	var vfx_path: String = save_path.path_join("vfx")
 	DirAccess.make_dir_recursive_absolute(vfx_path)
-	var last_frame_time: int = Time.get_ticks_msec()
-	var error: Error
-	for vfx_file: VisualEffectData in vfx:
-		last_frame_time = await keep_60_fps(last_frame_time, "Exporting vfx: " + vfx_file.file_name)
-		
-		vfx_file.init_from_file()
-		if not vfx_file.is_initialized: # skip empty vfx files
-			continue
-
-		var vfx_data_file_path: String = vfx_path.path_join(vfx_file.unique_name + ".vfx_data.tres")
-		error = ResourceSaver.save(vfx_file, vfx_data_file_path)
-		if error != Error.OK:
-			push_warning("error saving vfx " + vfx_file.unique_name + ": " + error_string(error))
-
-		var vfx_texture_webp_file_path: String = vfx_path.path_join(vfx_file.unique_name + ".texture.webp")
-		vfx_file.texture.get_image().save_webp(vfx_texture_webp_file_path)
-
-	
-	var trap_texture_webp_file_path: String = vfx_path.path_join("shared_vfx.texture.webp")
-	trap_effect_data.trap_spr.get_index_image().save_webp(trap_texture_webp_file_path)
-	
-	var shared_vfx_data_file_path: String = vfx_path.path_join("shared_vfx.data.tres")
-	error = ResourceSaver.save(trap_effect_data, shared_vfx_data_file_path)
+	var error: Error = ResourceSaver.save(trap_effect_data, vfx_path.path_join("shared_vfx.data.tres"))
 	if error != Error.OK:
 		push_warning("error saving shared vfx data: " + error_string(error))
 
-	var shared_vfx_texture_palettes_file_path: String = vfx_path.path_join("shared_vfx.palette.tres")
-	var shared_vfx_color_palette: ColorPalette = ColorPalette.new()
-	shared_vfx_color_palette.colors = trap_effect_data.trap_spr.color_palette
-	error = ResourceSaver.save(shared_vfx_color_palette, shared_vfx_texture_palettes_file_path)
-	if error != Error.OK:
-		push_warning("error saving palette data shared_vfx.palette.tres: " + str(error))
-	
-	for palette_idx: int in 16:
-		var full_color_texture_webp_file_path: String = vfx_path.path_join("shared_vfx_%02d.texture.webp" % palette_idx)
-		trap_effect_data.trap_spr.set_pixel_colors(palette_idx)
-		trap_effect_data.trap_spr.get_rgba8_image().save_webp(full_color_texture_webp_file_path)
-
-	# projectiles
 	var models_data: Dictionary = RomReader.battle_bin_data.projectile_model_data
 	for model_id: int in models_data:
 		var verts: Array[Vector3] = models_data[model_id]["vertices"]
@@ -1130,30 +1099,16 @@ func export_vfx(save_path: String) -> void:
 		GltfManager.save_node(new_mesh_instance, vfx_path, new_mesh_instance.name + ".projectile.glb")
 		new_mesh_instance.queue_free()
 
-
-## Generate `res://content/effects/E###/`, the directories `addons/exmateria_effects` loads.
-## Unlike the `export_*` functions this writes inside the project: textures load through
-## `ResourceLoader`, and outside an imported `res://` path they come back null and the
-## effect draws nothing. `effects_dir` overrides the destination for the regression.
-## Zero-length `.BIN` slots are skipped.
-func generate_effects_content(effects_dir: String = "") -> Dictionary:
-	if effects_dir.is_empty():
-		effects_dir = EffectExtractScript.EFFECTS_DIR
-	message.emit("Exporting effects content...")
-	await get_tree().process_frame
-
+	var effects_dir: String = EffectExtractScript.effects_dir(save_path)
 	DirAccess.make_dir_recursive_absolute(effects_dir)
-	var battle_bin: PackedByteArray = get_file_data("BATTLE.BIN")
+	var header_offsets: PackedInt32Array = battle_bin_data.ability_vfx_header_offsets
 	var written: int = 0
 	var skipped_empty: int = 0
-	var stale_textures: Array[String] = []
-	var unimported_textures: Array[String] = []
 	var failures: Array[String] = []
 	var last_frame_time: int = Time.get_ticks_msec()
 
 	for vfx_file: VisualEffectData in vfx:
-		last_frame_time = await keep_60_fps(last_frame_time,
-			"Exporting effects content: " + vfx_file.file_name)
+		last_frame_time = await keep_60_fps(last_frame_time, "Exporting vfx: " + vfx_file.file_name)
 
 		var buf: PackedByteArray = get_file_data(vfx_file.file_name)
 		if buf.is_empty():
@@ -1161,51 +1116,25 @@ func generate_effects_content(effects_dir: String = "") -> Dictionary:
 			continue
 
 		var effect_name: String = vfx_file.file_name.get_basename()
-		var effect_dir: String = effects_dir.path_join(effect_name)
-		var built: Dictionary = EffectExtractScript.build(buf, battle_bin, vfx_file.vfx_id,
-			effect_name)
+		var header_offset: int = -1
+		if vfx_file.vfx_id < header_offsets.size():
+			header_offset = header_offsets[vfx_file.vfx_id]
+		var built: Dictionary = EffectExtractScript.build(buf, header_offset, effect_name)
 		if not built["ok"]:
-			for problem: String in built["errors"]:
-				failures.append(problem)
+			failures.append_array(built["errors"])
 			continue
 
-		# Checked before the write destroys the evidence: a changed `.tga` under a stale import
-		# still loads the old sheet, with no error.
-		var texture_path: String = effect_dir.path_join("texture.tga")
-		if FileAccess.file_exists(texture_path) \
-				and built["files"].get("texture.tga", PackedByteArray()) \
-					!= FileAccess.get_file_as_bytes(texture_path):
-			stale_textures.append(effect_name)
-
-		var result: Dictionary = EffectExtractScript.write(built["files"], effect_dir)
+		var result: Dictionary = EffectExtractScript.write(built["files"], effects_dir.path_join(effect_name))
 		if not result["ok"]:
-			for problem: String in result["errors"]:
-				failures.append(problem)
+			failures.append_array(result["errors"])
 			continue
 		written += 1
-		if not ResourceLoader.exists(texture_path):
-			unimported_textures.append(effect_name)
 
-	var summary: Dictionary = {
-		"written": written,
-		"skipped_empty": skipped_empty,
-		"failures": failures,
-		"stale_textures": stale_textures,
-		"unimported_textures": unimported_textures,
-	}
 	for problem: String in failures.slice(0, 10):
-		push_warning("effects content: " + problem)
-	if not unimported_textures.is_empty() or not stale_textures.is_empty():
-		push_warning(("effects content: %d texture(s) not imported and %d changed under an "
-			+ "existing import. Open the project in the editor once so Godot imports them; "
-			+ "until then those effects load, simulate and draw nothing (or draw the "
-			+ "previous sheet).") % [unimported_textures.size(), stale_textures.size()])
+		push_warning("vfx export: " + problem)
 	message.emit("Exported %d effects (%d empty slots skipped, %d failed)"
 		% [written, skipped_empty, failures.size()])
-	print("effects content: %d written, %d empty skipped, %d failed, %d unimported, %d stale"
-		% [written, skipped_empty, failures.size(), unimported_textures.size(),
-			stale_textures.size()])
-	return summary
+	return {"written": written, "skipped_empty": skipped_empty, "failures": failures}
 
 
 func keep_60_fps(last_frame_time_msec: int, message_text: String) -> int:

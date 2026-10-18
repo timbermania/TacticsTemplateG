@@ -106,6 +106,22 @@ static func encode(width: int, height: int, pixels: PackedByteArray) -> PackedBy
 	return out
 
 
+## A `.tga` read straight from disk as a texture, skipping Godot's import step, so content
+## can sit outside `res://`. An unimported sheet used to come back NULL with no error and
+## the effect drew nothing; this names the file instead. null when it is missing or will
+## not decode.
+static func load_texture(path: String) -> Texture2D:
+	if not FileAccess.file_exists(path):
+		push_error("TextureTga: no texture at %s" % path)
+		return null
+	var image := Image.new()
+	var err: Error = image.load_tga_from_buffer(FileAccess.get_file_as_bytes(path))
+	if err != OK:
+		push_error("TextureTga: %s does not decode: %s" % [path, error_string(err)])
+		return null
+	return ImageTexture.create_from_image(image)
+
+
 ## Expand `need` bytes of RLE true-colour texel data starting at `from`.
 ##
 ## TGA RLE is packet-framed: one header byte, then bit 7 decides the kind. Bit set = a RUN

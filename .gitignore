@@ -12,5 +12,3 @@ overrides/MAP
 /.build/
 /dist/
 __pycache__/
-# ROM-derived Effects content — never committed. See docs/effects-installation.md.
-/content/

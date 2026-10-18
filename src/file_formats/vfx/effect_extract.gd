@@ -15,11 +15,7 @@ const ReadCurves := preload("res://addons/exmateria_effects/file_model/readers/E
 const ReadScript := preload("res://addons/exmateria_effects/file_model/readers/EffectReadScript.gd")
 const TextureTga := preload("res://addons/exmateria_effects/file_model/TextureTga.gd")
 const EffectCallbacksScript := preload("res://src/file_formats/vfx/effect_callbacks.gd")
-
-## Where the addon reads its ROM-derived content. Must be under `res://`, not `EXPORT_PATH`:
-## the sheet loads through `ResourceLoader`, which silently skips a `.tga` Godot has not imported.
-const CONTENT_ROOT: String = "res://content/"
-const EFFECTS_DIR: String = CONTENT_ROOT + "effects/"
+const EffectsContent := preload("res://addons/exmateria_effects/install/EffectsContent.gd")
 
 ## Section -> file. Every one must parse.
 const SECTION_FILES: Dictionary = {
@@ -46,17 +42,30 @@ const SOUND_SECTION_FILES: Dictionary = {
 }
 
 
-## One effect's output files, keyed by relative path. An empty `battle_bin` puts the header
-## at the wrong offset for E259, E338 and E464.
-static func build(buf: PackedByteArray, battle_bin: PackedByteArray, vfx_id: int,
-		effect_name: String) -> Dictionary:
+## Where the addon reads this content: the import path, like every other exported file.
+## "" when no import path is set.
+static func content_root() -> String:
+	return str(GameData.external_data_paths.get("IMPORT_PATH", ""))
+
+
+## The `E###/` parent under `root`, or "" when `root` is.
+static func effects_dir(root: String) -> String:
+	if root.is_empty():
+		return ""
+	return root.path_join(EffectsContent.EFFECTS_SUBPATH)
+
+
+## One effect's output files, keyed by relative path. `header_offset` comes from
+## `BattleBinData.ability_vfx_header_offsets`; a negative one falls back to a scan that puts
+## the header at the wrong offset for E259, E338 and E464.
+static func build(buf: PackedByteArray, header_offset: int, effect_name: String) -> Dictionary:
 	var errors: Array[String] = []
 	var files: Dictionary = {}
 	if buf.size() < BinHeader.HEADER_SIZE:
 		errors.append("%s: %d bytes, too short to hold a header" % [effect_name, buf.size()])
 		return {"ok": false, "files": files, "errors": errors}
 
-	var base: int = BinHeader.header_offset(buf, battle_bin, vfx_id)
+	var base: int = header_offset if header_offset >= 0 else BinHeader.find_header_offset(buf)
 	var header: Dictionary = BinHeader.parse_header(buf, base)
 	var blocks: Dictionary = BinReader.parse_all(buf, header)
 
@@ -125,7 +134,7 @@ static func build_texture_tga(buf: PackedByteArray, header: Dictionary) -> Packe
 
 
 ## Write one effect's files into `dir_path`, creating it. Never delete stale files here:
-## `feds.json` and `texture.tga.import` are not built here but must survive a rerun.
+## `feds.json` is not built here but must survive a rerun.
 static func write(files: Dictionary, dir_path: String) -> Dictionary:
 	var errors: Array[String] = []
 	var err: Error = DirAccess.make_dir_recursive_absolute(dir_path)
