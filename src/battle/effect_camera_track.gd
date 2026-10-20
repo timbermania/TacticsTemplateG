@@ -7,6 +7,7 @@ extends Node
 const PsxChirality = ExMateriaPlatform.PsxChirality
 const PsxMagnitude = ExMateriaPlatform.PsxMagnitude
 const CameraCalibration = ExMateriaPlatform.CameraCalibration
+const DisplayPort = ExMateriaPlatform.DisplayPort
 
 ## PSX angle units, where 4096 is a full turn, so ~0.09 degrees. Below this a roll is float
 ## noise on an authored whole turn.
@@ -47,9 +48,12 @@ func is_driving() -> bool:
 	return _subsystem != null
 
 
-## Offer a freshly spawned cast the camera, right after the spawn: `camera_started` fires
-## inside `initialize()`. False when the cast has no camera track or the rig is taken.
-func adopt(cast: Node) -> bool:
+## Offer a freshly spawned cast the camera, right after the spawn and before its first
+## frame: `camera_started` fires inside `initialize()`, and keyframes resolve against the
+## pose seeded here. `seed_pose` false re-takes a cast already seeded — its backward seek
+## replays the camera from that same pose. False when the cast has no camera track or the
+## rig is taken.
+func adopt(cast: Node, seed_pose: bool = true) -> bool:
 	if not is_instance_valid(rig) or not is_instance_valid(cast):
 		return false
 	if not ("camera_controller" in cast) or cast.camera_controller == null:
@@ -64,7 +68,8 @@ func adopt(cast: Node) -> bool:
 	_subsystem = cast.camera_controller
 	takeovers += 1
 	frames_applied = 0
-	_seed_from_rig()
+	if seed_pose:
+		_seed_from_rig()
 	if cast.has_signal(&"camera_finished") \
 			and not cast.camera_finished.is_connected(_on_camera_finished):
 		cast.camera_finished.connect(_on_camera_finished, CONNECT_ONE_SHOT)
@@ -93,13 +98,21 @@ func apply_pose(psx_position: Vector3, psx_angles: Vector3, psx_zoom: float) -> 
 	if not is_instance_valid(rig) or not rig.is_effect_driven():
 		return
 	_warn_roll_once(psx_angles.z)
-	var focus: Vector3 = PsxChirality.psx_position_to_godot(psx_position)
+	# Through the subsystem: camera positions live in the ROM's map frame, reflected in depth
+	# about the map centre relative to the imported terrain.
+	var focus: Vector3 = _subsystem.psx_position_to_world(psx_position) if _subsystem != null \
+		else PsxChirality.psx_position_to_godot(psx_position)
 	var rot: Vector3 = PsxChirality.psx_angles_to_godot_rotation(
 		psx_angles.x, psx_angles.y, psx_angles.z)
 	var orbit := Vector3(rad_to_deg(rot.x), rad_to_deg(rot.y), rad_to_deg(rot.z))
 	# An additive zoom channel accumulates without bound.
 	var size: float = clampf(CameraCalibration.zoom_to_ortho_size(psx_zoom),
 		rig.zoom_in_max, rig.zoom_out_max)
+	# FFT frames its optical centre 40 native px below the frame's middle, an offset kept in
+	# the GTE translation rather than the keyframe; without it the scene sits that much too
+	# high. Camera-local up, so it holds at every orbit.
+	focus += Basis.from_euler(rot).y * DisplayPort.VERTICAL_DATUM_PX \
+		* DisplayPort.native_px_to_world(size)
 	last_psx_position = psx_position
 	last_psx_angles = psx_angles
 	last_psx_zoom = psx_zoom
@@ -139,7 +152,9 @@ func _on_camera_finished() -> void:
 func _seed_from_rig() -> void:
 	if _subsystem == null or not is_instance_valid(rig):
 		return
-	_subsystem.saved_position = PsxChirality.godot_position_to_psx(rig.global_position)
+	# `map_center` is already set: the cast seeds it from the host's arena bounds during
+	# `initialize()`, and the conversion reflects about it.
+	_subsystem.saved_position = _subsystem.world_position_to_psx(rig.global_position)
 	# `+ 360`: the subsystem snaps yaw with `floorf(yaw / 512.0)`, which sends a negative yaw
 	# to the spoke below rather than the nearest.
 	_subsystem.saved_angles = Vector3(
@@ -150,16 +165,6 @@ func _seed_from_rig() -> void:
 	_subsystem.current_position = _subsystem.saved_position
 	_subsystem.current_angles = _subsystem.saved_angles
 	_subsystem.current_zoom = _subsystem.saved_zoom
-
-
-## Some camera keyframes are positioned relative to the middle of the map, which the addon
-## otherwise assumes is the world origin. `bounds` is in tiles.
-func set_map_bounds(bounds: Rect2i) -> void:
-	if _subsystem == null:
-		return
-	# `map_tiles * 14` per axis — half the 28 units a tile spans — and Y = 0.
-	_subsystem.map_center = Vector3(
-		float(bounds.size.x) * 14.0, 0.0, float(bounds.size.y) * 14.0)
 
 
 func _warn_roll_once(psx_roll: float) -> void:

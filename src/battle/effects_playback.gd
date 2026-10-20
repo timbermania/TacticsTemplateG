@@ -200,9 +200,6 @@ func _offer_camera(cast: Node) -> void:
 	if not _camera_track.adopt(cast):
 		return
 	_camera_cast = cast as Node3D
-	if _host != null:
-		# Some keyframes are relative to the map centre, which only the host can work out.
-		_camera_track.set_map_bounds(_host.arena_bounds())
 
 
 ## Owns one cast's lifetime. The addon's reaper budgets wall-clock time while effects count

@@ -45,6 +45,8 @@ var _effect_ids: Array[int] = []
 var _effect_names: Dictionary = {}
 var _effect_id: int = -1
 var _cast: Node3D = null
+## Whether `_cast`'s camera has its base pose. Seeded once; a replay restarts from it.
+var _camera_seeded: bool = false
 var _length: int = MIN_LENGTH_FRAMES
 var _playing: bool = false
 var _loop_wait: float = 0.0
@@ -245,11 +247,13 @@ func _spawn_parked() -> void:
 		_say("E%03d failed to initialize — see the log" % _effect_id)
 		return
 	_cast = cast
+	_camera_seeded = false
 	_cast.set_paused(true)
-	_cast.seek(0)
-	_length = _initial_length()
+	# Before the first frame: keyframes resolve against the pose the adoption seeds.
 	if _camera_check.button_pressed:
 		_adopt_camera()
+	_cast.seek(0)
+	_length = _initial_length()
 	_apply_emitter_filter()
 	_sync_scrub()
 	_say("loaded E%03d — %d emitters" % [_effect_id, _cast.get_emitter_count()])
@@ -277,8 +281,14 @@ func _initial_length() -> int:
 func _adopt_camera() -> void:
 	if not is_instance_valid(_cast) or not is_instance_valid(_camera_track):
 		return
-	if _camera_track.adopt(_cast):
-		_camera_track.set_map_bounds(EffectsCastHost.new(self).arena_bounds())
+	var frame: int = _frame()
+	if not _camera_track.adopt(_cast, not _camera_seeded) or _camera_seeded:
+		return
+	_camera_seeded = true
+	# Seeded mid-cast: replay up to here so the pose is the one this frame would have.
+	if frame > 0:
+		_cast.seek(0)
+		_cast.seek(frame)
 
 
 func _frame() -> int:
@@ -290,8 +300,8 @@ func _seek(frame: int) -> void:
 		return
 	frame = clampi(frame, 0, _length)
 	if frame < _frame():
-		# A replay re-runs the camera from its seeded pose; a held track would keep the
-		# pose of the frame we left.
+		# The cast replays its camera from the seeded pose; re-taking the rig, rather than
+		# holding it, also covers a track that already ended.
 		if is_instance_valid(_camera_track):
 			_camera_track.release()
 		_cast.seek(frame)
