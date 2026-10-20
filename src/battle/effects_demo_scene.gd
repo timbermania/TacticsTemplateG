@@ -145,19 +145,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 func _play(slot: int) -> void:
 	var handler_id: int = HANDLERS[slot][0]
 	var label: String = HANDLERS[slot][1]
-	var trap := ExMateriaEffects.TrapEffect.new()
-	_target.add_child(trap)
-	if not trap.initialize(7, _element):
-		trap.queue_free()
-		_say("FAILED to initialize handler %d (%s) — is the TRAP content present?" % [handler_id, label])
+	var from := Vector3(0, 1.0, 3.0)
+	if not _playback.play_shared_vfx(handler_id, _element, from, _target, true, slot == 1):
+		_say("FAILED to play handler %d (%s) — is the TRAP content present?" % [handler_id, label])
 		return
-	var impact := Vector3(0, 1.0, 0)
-	var direction := Vector3(0, 0, 1)
-	if handler_id == 2:
-		# Hit clouds split melee/ranged by emitter set, exactly as the manager does.
-		var emitters: Array[int] = []
-		emitters.assign([0, 9] if slot == 1 else [0, 1])
-		trap.play_at(impact, direction, _target, emitters, true)
-	else:
-		trap.play_handler(handler_id, _element, impact, direction, _target)
 	_say("played handler %d — %s" % [handler_id, label])

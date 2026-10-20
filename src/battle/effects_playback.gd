@@ -69,7 +69,7 @@ func initialize(camera: Camera3D) -> bool:
 		unavailable_reason = "no battle: battle_manager is unset or not in the scene"
 		return false
 	if not is_instance_valid(camera) or not camera.is_inside_tree():
-		unavailable_reason = "no camera: setup_native needs an IN-TREE Camera3D"
+		unavailable_reason = "no camera: setup_auto needs an IN-TREE Camera3D"
 		return false
 	# Without a root every cast resolves to "" and fails as a missing file.
 	if not content_root.is_empty():
@@ -84,10 +84,9 @@ func initialize(camera: Camera3D) -> bool:
 
 	var producer := ExMateriaEffects.EngineFoldCompositor.new()
 	add_child(producer)
-	# Not `setup()`: that path needs a rendering feature this project does not build with.
-	if not producer.setup_native(camera):
+	if not producer.setup_auto(camera):
 		producer.queue_free()
-		unavailable_reason = "setup_native refused for this camera/renderer"
+		unavailable_reason = "setup_auto refused for this camera/renderer"
 		return false
 
 	_producer = producer
@@ -295,32 +294,46 @@ func play_action_vfx_at(caster: Node3D, world_position: Vector3, action: Action)
 
 ## Plays a TRAP handler: hit clouds, knight break, the charge and orb poses. Take `handler_id`
 ## from the ROM's tables; deriving it from an ability id misses handler 6 (Accumulate's orbs).
+## The addon lifts the handler into E### form, so it plays as an ordinary EffectInstance.
 func play_shared_vfx(handler_id: int, element_id: int, from_position: Vector3,
-		target_unit: Node3D, flash: bool, is_melee: bool = true) -> bool:
+		target_unit: Node3D, flash: bool, _is_melee: bool = true) -> bool:
 	if not is_available() or handler_id <= 0 or not is_instance_valid(target_unit):
 		return false
-	var trap := ExMateriaEffects.TrapEffect.new()
-	# Parented to the struck actor so the effect follows a unit that is still moving.
-	target_unit.add_child(trap)
-	if not trap.initialize(TRAP_TYPE, element_id):
-		trap.queue_free()
+	var variant: String = "h%02d" % handler_id
+	if not ExMateriaEffects.TrapLift.HANDLERS.has(variant):
+		return false
+	var data = ExMateriaEffects.TrapLift.runtime_data(variant, element_id)
+	if data == null:
 		return false
 	var impact: Vector3 = target_unit.global_position + Vector3(0, TRAP_IMPACT_RISE, 0)
+	var effect := ExMateriaEffects.EffectInstance.new()
+	battle_manager.add_child(effect)
+	if not effect.initialize_from_data(
+			ExMateriaEffects.TrapLift.DOCUMENT_PREFIX + variant, data, impact, TRAP_POOL_SIZE):
+		effect.queue_free()
+		return false
+	effect.global_position = impact
 	var direction: Vector3 = (impact - from_position).normalized()
-	var flash_target: Node3D = target_unit if flash else null
-	if handler_id == HANDLER_HIT_CLOUDS:
-		# Hit clouds split melee/ranged by emitter set; the handler id is the same.
-		var emitters: Array[int] = []
-		emitters.assign([0, 9] if is_melee else [0, 1])
-		trap.play_at(impact, direction, flash_target, emitters, flash)
-	else:
-		trap.play_handler(handler_id, element_id, impact, direction, flash_target)
+	effect.set_anchors(Vector3.ZERO, Vector3.ZERO, -direction, Vector3.ZERO)
+	# The white flash rides the target's palette track.
+	effect.set_unit_targets(null, target_unit if flash else null)
+	effect.auto_loop = false
+	_owned_casts.append(effect)
+	_reap_when_finished(effect)
 	return true
 
 
-## Which of the addon's TRAP sprite sets to use.
-const TRAP_TYPE: int = 7
-const HANDLER_HIT_CLOUDS: int = 2
+func _reap_when_finished(effect: Node3D) -> void:
+	while is_instance_valid(effect) and is_inside_tree():
+		await get_tree().process_frame
+		if is_instance_valid(effect) and effect.get_effect_frame() > 2 and effect.is_finished():
+			break
+	_owned_casts.erase(effect)
+	if is_instance_valid(effect):
+		effect.queue_free()
+
+
+const TRAP_POOL_SIZE: int = 256
 ## Lifts the impact off the tile floor so clouds read as hitting a body, not the ground.
 const TRAP_IMPACT_RISE: float = 0.3
 

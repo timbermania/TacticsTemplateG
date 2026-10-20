@@ -29,7 +29,7 @@ func run() -> void:
 	var exports: Dictionary = facade.get_script_constant_map()
 	for n in ["CastHost", "AbilityVisual", "EffectManager", "EngineFoldCompositor", "EffectsContent"]:
 		check(exports.has(n), "facade exports " + n)
-	check(exports.size() == 24, "facade export count is 24 (got %d)" % exports.size())
+	check(exports.size() == 28, "facade export count is 28 (got %d)" % exports.size())
 
 	# All of these get called during teardown, when the battle is already gone, so each
 	# must answer something empty rather than throw.
