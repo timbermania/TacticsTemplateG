@@ -1,18 +1,17 @@
 extends RefCounted
 ## SOUND-TIMELINE reader, TIER-1 (#268) — GDScript port of
-## `parse_effect.parse_sound_keyframes` and its two channel helpers.
+## `parse_effect.parse_sound_keyframes`.
 ##
 ## Three `phase1` + three `phase2` OUTER channels (30 bytes, 9 keyframes) based at
 ## `timeline_section_ptr`, plus three `for_each` channels (54 bytes, 17 keyframes) based at
 ## `timeline_section_ptr + 8`.
 ##
 ## All three channels are ALWAYS emitted per phase, even when empty, so the controller's
-## `three_phase` detection (phase1 non-empty) matches the parity harness — and so the writer,
-## which refuses a keyframe list of any length other than the native slot count, always gets
-## exactly what it expects.
+## `three_phase` detection (phase1 non-empty) always finds its slot, and the writer — which
+## refuses a keyframe list of any length but the native slot count — always gets what it expects.
 ##
-## `duration_frames` and `max_keyframe` are read SIGNED (`decode_s16`), mirroring the Python's
-## `read_s16`. The writer masks back to the same two bytes either way.
+## `duration_frames` and `max_keyframe` are read SIGNED (`decode_s16`); the writer masks back
+## to the same two bytes either way.
 
 const Layout = preload("res://addons/exmateria_effects/file_model/EffectBinLayout.gd")
 

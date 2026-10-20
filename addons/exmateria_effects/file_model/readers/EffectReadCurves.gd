@@ -5,15 +5,12 @@ extends RefCounted
 ## A u32 count at `anim_table_ptr`, then that many 160-byte curves of raw u8 samples. An
 ## emitter's `curves` dict indexes into this table (0 means NO curve and reads as -1; N means
 ## curve N-1 — see `EffectReadEmitters.decode_curve_index`), so this is what those indices
-## point AT. 4.77% of the corpus's bytes, the largest single thing GDScript could not read.
+## point AT.
 ##
-## THE WRITE HALF LANDED (#274) AND THIS IS NOW A REGISTERED SECTION. It used to say curves
-## were "the one section with NO WRITER IN ANY LANGUAGE" — 2,400 bytes of every effect that
-## could be read and never saved, which is issue #448 in as many words. `EffectWriteCurves.gd`
-## is the writer, and the compiler beside it packs the studio's exploded per-use-site curves
-## back into this shared 15-slot table.
+## `EffectWriteCurves.gd` is the writer (registered since #274), and the compiler beside it
+## packs the studio's exploded per-use-site curves back into this shared 15-slot table.
 ##
-## ⚠️ REFEREE B IS WEAK HERE AND THAT HAS NOT CHANGED. The block this reader returns IS the
+## REFEREE B IS WEAK HERE. The block this reader returns IS the
 ## section's own bytes read back as integers, so `BIN -> parse -> serialize -> BIN` is
 ## trivially equal — the same degenerate standing `texture` and `sound_def` carry. What the
 ## round trip scores is the count word and the 160-byte stride; what scores the pack is
@@ -25,10 +22,8 @@ extends RefCounted
 ## over the addon — `EffectCurve.gd`, `CurveExplode.gd`, `EffectEmitter.gd`, `EffectData.gd`
 ## and six callbacks — and every emitter's `curves` dict indexes into this table.
 ##
-## THE SAMPLES ARE RAW BYTES, DELIBERATELY. `parse_curves` stores all 160 u8 values with no
-## interpretation — no scaling, no signedness, no envelope semantics. `EffectCurve.gd` is what
-## gives them meaning downstream. A reader that "improved" on that would stop matching the
-## extract.
+## The samples are raw bytes, deliberately — no scaling, no signedness, no envelope
+## semantics; `EffectCurve.gd` gives them meaning downstream.
 ##
 ## ABSENT IS `null`; a section too small to hold the count reads as `[]`, the same split as
 ## `frames` and `animation`.

@@ -9,35 +9,28 @@ extends RefCounted
 ## index), `0x81` LOOP is 1 byte and ends the sequence, `0x82` SET_OFFSET is 5, `0x83`
 ## ADD_OFFSET is 3.
 ##
-## 🔴 THE STREAM HAS NO LENGTH — IT HAS FOUR DIFFERENT WAYS TO STOP, and every one of them is a
-## claim the reader makes about where a sequence ends:
+## The stream has no length field; it stops four ways:
 ##   1. LOOP, unconditionally;
-##   2. an all-zero FRAME (`opcode == 0 and duration == 0 and depth_mode == 0`) — and ONLY all
-##      three together, not `duration == 0` alone, which the Python's own comment misstates as
-##      "duration 0 often signals end";
-##   3. an unrecognised byte (0x80, or anything above 0x83);
+##   2. an all-zero FRAME (all three bytes);
+##   3. an unrecognised byte (0x80, or above 0x83);
 ##   4. the `offset + 1000` safety limit.
-## Get any of them wrong and the walk runs into the next sequence's bytes or stops short of
-## its own. `animations.json` is what says which — see the `# seeded-break:` line in
+## Get one wrong and the walk runs into the next sequence's bytes or stops short of its
+## own. `animations.json` says which — see the `# seeded-break:` line in
 ## `EffectBinReadWriteCorpusTest`.
 ##
-## ⚠️ THE LEAF IS `animations.json`, PLURAL, while the writer's section name is `animation`.
-## Three of the thirteen sections disagree with their leaf by name (`particle_timeline` ->
-## `timeline.json`, `sound_def` -> `feds.bin` are the others), which is why `SECTION_SOURCES`
-## is a map and not a `"%s.json"` format string.
+## The leaf is `animations.json`, PLURAL, while the section is `animation` — one of three
+## sections whose leaf disagrees with its name (`particle_timeline` -> `timeline.json`,
+## `sound_def` -> `feds.bin`), which is why `SECTION_SOURCES` is a map, not a `"%s.json"`
+## format string.
 ##
-## ABSENT IS `null`; A DEGENERATE SECTION IS `[]`. Same split as `frames`: out of bounds reads
-## as absent, while a section that is present but reports `section_size < 4`, a zero count or a
-## count above 256 reads as the empty list `animations.json` actually holds for it.
+## ABSENT is `null`; a DEGENERATE section is `[]`. Out of bounds reads as absent, while a
+## section that is present but reports `section_size < 4`, a zero count, or a count above
+## 256 reads as the empty list `animations.json` actually holds.
 ##
-## 🔴 TWO CLAIMS HERE ARE UNGUARDED, both seeded and RUN against the whole corpus:
-##   1. the unrecognised-opcode branch. Making it RESYNCHRONISE (`pos += 1`) instead of ending
-##      the sequence is green on all 400, so no corpus sequence contains a byte outside
-##      `0x00..0x7F`, `0x81`, `0x82`, `0x83`. That corroborates `EffectWriteAnimation`'s own
-##      claim ("the corpus audit found none of these") rather than merely repeating it.
-##   2. `MAX_SEQUENCE_BYTES` is a LOOSE bound — 1000 is never reached, though 100 reds 10+
-##      effects, so the line is live with slack. Same shape as `EffectReadFrames`'
-##      `max_frame_sets`.
+## Two claims here are unguarded except by the seeded corpus runs: the unrecognised-opcode
+## branch (ending the sequence, not resynchronising — `pos += 1` is green on all 400, so no
+## corpus sequence holds a byte outside the four opcodes), and `MAX_SEQUENCE_BYTES`, a loose
+## bound: 1000 is never reached, though 100 reds 10+ effects.
 ##
 ## No `class_name` (ADR-0004) — file_model members stay path-preloaded.
 
@@ -86,9 +79,8 @@ static func parse(buf: PackedByteArray, header: Dictionary):
 		var table_pos: int = animation_ptr + 4 + i * 2
 		if table_pos + 2 > section_end:
 			break
-		# 🔴 THE OFFSET IS RELATIVE TO THE TABLE, NOT THE SECTION: `animation_ptr + 4 + offset`.
-		# The `+ 4` is the count word, and a reader that drops it lands four bytes early in
-		# every sequence in the file.
+		# The offset is relative to the TABLE, not the section: `animation_ptr + 4 + offset`.
+		# The `+ 4` is the count word; drop it and every sequence lands four bytes early.
 		var seq_start: int = animation_ptr + 4 + buf.decode_u16(table_pos)
 		if seq_start >= buf.size():
 			break
@@ -115,7 +107,8 @@ static func parse_sequence(buf: PackedByteArray, offset: int, seq_idx: int) -> D
 				"depth_mode": depth_mode,
 			})
 			pos += FRAME_OPCODE_SIZE
-			# An all-zero FRAME terminates — all THREE bytes, not `duration` alone.
+			# An all-zero FRAME terminates — all THREE bytes, not `duration` alone (the Python's
+			# comment misstates it as "duration 0 often signals end").
 			if duration == 0 and opcode == 0 and depth_mode == 0:
 				break
 		elif opcode == LOOP:

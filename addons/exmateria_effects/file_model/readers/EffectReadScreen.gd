@@ -13,7 +13,7 @@ extends RefCounted
 ## 400 byte mismatches when you get it wrong. The camera section has the opposite convention:
 ## nothing is biased there, `for_each` included — see `EffectReadCamera`.
 ##
-## ⚠️ THE SECOND ASYMMETRY IS NOTATIONAL, NOT REAL, AND SAYING SO IS THE POINT.
+## ⚠️ THE SECOND ASYMMETRY IS NOTATIONAL, NOT REAL.
 ## `SCREEN_TRACK_OFFSETS` gives `for_each` an explicit `max_keyframe` offset (0x06A8) while
 ## phase1/phase2 use the `NO_MAX_KF` sentinel and read the watermark from the channel's tail
 ## (+298). Those are THE SAME ADDRESS: `for_each`'s data begins at 0x057E and

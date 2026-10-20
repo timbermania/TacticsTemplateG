@@ -1,11 +1,11 @@
 extends "res://addons/exmateria_effects/subsystem/ColorSubsystem.gd"
 ## Runtime SCREEN channel — the background gradient (sky/void). Single-channel ColorSubsystem,
-## DECLARATIVE: mirrors PSX `FUN_80090258 @0x80090258`, the SAME 11-mode engine as the CLUT applier in
-## 8-bit framebuffer space (ADR-0067 — one colour model). ONE continuous op stream (build_stream)
-## folds the map's TOP/BOTTOM baselines — no seam pop. Two archetypes, ctrl bit 7: Blend SET = the
-## 11-mode recolor of the SHARED param over each vertex's own baseline; Gradient CLEAR = an ABSOLUTE
-## set of the endpoints to the keyframe's RGB (`screen_gradient_color_setter @0x80090048`) — a REAL
-## write, not a no-op (refuted "FADE": SCREEN_KEYFRAME_BLEND_GRADIENT_E173_NIGHTSWORD.md). Ramp Time*8.
+## DECLARATIVE: mirrors PSX `FUN_80090258`, the same 11-mode engine as the CLUT applier in 8-bit
+## framebuffer space (ADR-0067 — one colour model). ONE continuous op stream (build_stream) folds
+## the map's TOP/BOTTOM baselines — no seam pop. Two archetypes, ctrl bit 7: Blend SET = the
+## 11-mode recolor of the SHARED param over each vertex's baseline; Gradient CLEAR = an ABSOLUTE
+## set of the endpoints to the keyframe's RGB (`screen_gradient_color_setter @0x80090048`) — a
+## REAL write, not a no-op. Ramp Time*8.
 ## Vault: [[Color Screen Opcode]]
 ## Vault: [[Display Space Blend Fold]]
 ## Vault: [[Screen Effect Gradient System]]
@@ -13,8 +13,7 @@ extends "res://addons/exmateria_effects/subsystem/ColorSubsystem.gd"
 
 const ScreenData = preload("res://addons/exmateria_effects/file_model/ScreenData.gd")
 
-## Backdrop overlay reached through its PORT: a member may name no autoload at all (ADR-0308 dec. 1);
-## the bare `ScreenEffectOverlay` reach was one of the three `known_failures.tsv` cascade rows.
+## Backdrop overlay via its PORT: a member may name no autoload at all (ADR-0308 dec. 1).
 const ScreenOverlayPort = preload("res://addons/exmateria_effects/install/ScreenOverlayPort.gd")
 
 const ColorStackClass = ExMateriaSchema.ColorStack
@@ -68,14 +67,16 @@ func _push_phase_ops(stack: ColorStackClass, phase: String, base_offset: int, en
 	if not ch or ch.keyframes.is_empty():
 		return
 	var start_frame := 0
-	# Keyframe window = 0..max_keyframe-2, IDENTICAL to the palette stepper: `advance_screen_color_track @0x801A45C8` and its for_each twin
-	# `for_each_phase_timeline_tick @0x801A3408` break on `index < max_keyframe-1` (live E173 §2.1/§5; the retired wider window refuted).
+	# Keyframe window = 0..max_keyframe-2, IDENTICAL to the palette stepper: both
+	# `advance_screen_color_track @0x801A45C8` and its for_each twin `for_each_phase_timeline_tick
+	# @0x801A3408` break on `index < max_keyframe-1`.
 	var last_idx: int = mini(ch.keyframes.size(), maxi(0, ch.max_keyframe - 1))
 	for i in range(last_idx):
 		var kf = ch.get_keyframe(i)
 		var dur := maxi(1, kf.duration_frames)
 		if kf.mode == ScreenData.ScreenMode.BLEND:  # Blend (ctrl bit 7 set): a real 11-mode apply
-			# The screen Blend applies the signed param DOUBLED (`start << 1`) — the 8-bit applier's convention (live E173 §2); the palette CLUT path does not.
+			# The screen Blend applies the signed param DOUBLED (`start << 1`) — the 8-bit
+			# applier's convention; the palette CLUT path does not.
 			stack.push_op(kf.blend_mode, kf.start_r_raw, kf.start_g_raw, kf.start_b_raw,
 				kf.time_value, base_offset + start_frame, ColorStackClass.MASK_WHOLE, dur, true)
 		else:  # Gradient (ctrl bit 7 clear): absolute-set this endpoint's stop
@@ -83,11 +84,11 @@ func _push_phase_ops(stack: ColorStackClass, phase: String, base_offset: int, en
 		start_frame += dur
 
 
-## One Gradient (ctrl bit-7-clear) keyframe: an ABSOLUTE set of this endpoint's stop to its explicit bytes — start_r/g/b
-## for TOP, end_r/g/b for BOTTOM — ramped linearly over dur (Time*8); mirrors `screen_gradient_color_setter @0x80090048`
-## re-targeting the shared gradient block. Modeled affine scale-0, bias=target: the fold ramps whatever the backdrop is
-## toward the target, discarding the per-vertex baseline, so top+bottom land on the SAME target. All 32,510 shipped
-## keyframes have start==end; the split shows only if the studio authors top≠bottom (#255 scope B).
+## One Gradient keyframe: an ABSOLUTE set of this endpoint's stop to its explicit bytes,
+## ramped linearly over dur (Time*8); mirrors `screen_gradient_color_setter @0x80090048`.
+## Modeled affine scale-0, bias=target: the fold ramps the backdrop toward the target,
+## so top+bottom land on the SAME target. All 32,510 shipped keyframes have start==end;
+## a top≠bottom split shows only if the studio authors one (#255 scope B).
 func _push_gradient_op(stack: ColorStackClass, kf, now: int, dur: int, endpoint: int = ENDPOINT_TOP) -> void:
 	var target: Vector3
 	if endpoint == ENDPOINT_BOTTOM:
@@ -105,9 +106,13 @@ func _evaluate(_channel: String, _phase: String) -> void:
 
 
 func _reset_outputs() -> void:
-	"""Reset the folded gradient endpoints to the map defaults."""
+	"""Reset the folded gradient endpoints to the map defaults, and take this owner's
+	layer back out of the backdrop: the layer lives in the scene, not the instance, so a
+	seek to 0 (Studio Stop, U17) that pumps no frame would otherwise leave the sky at the
+	last played frame. The next advance re-delivers it."""
 	top_color = _default_top
 	bottom_color = _default_bottom
+	ScreenOverlayPort.remove_layer(owner_id)
 
 
 func _deliver_output() -> void:

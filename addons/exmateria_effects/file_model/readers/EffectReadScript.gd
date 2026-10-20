@@ -7,29 +7,25 @@ extends RefCounted
 ## 9-15. Arguments are s16 and their COUNT comes from the opcode's size, not from the stream —
 ## there is no per-instruction length byte.
 ##
-## 🔴 ROOT-ONLY, AND THAT IS THE EXTRACT'S SHAPE, NOT A LIMITATION OF THIS PORT. The walk stops
+## 🔴 ROOT-ONLY — THE EXTRACT'S SHAPE, NOT A LIMITATION OF THIS PORT. The walk stops
 ## at the first `end` (opcode 4), so the for-each child bodies that live past it are not in
-## `script.json` at all — `EffectScriptPattern` says so in as many words ("script.json is
-## root-only ... the for-each child bytes are not on the Godot side"). A reader that walked to
+## `script.json` at all — `EffectScriptPattern`'s file doc says so. A reader that walked to
 ## the section end would decode MORE than the oracle and red on every effect that has a child
-## body. Mirroring the stop is the correct behaviour, and it means this reader does not cover
-## every byte between `script_data_ptr` and `effect_data_ptr`.
+## body; mirroring the stop is the correct behaviour, so this reader does not cover every
+## byte between `script_data_ptr` and `effect_data_ptr`.
 ##
 ## 🔴 A NAMED VIEW ON THE READ SIDE, AND A REGISTERED SECTION ON THE WRITE SIDE.
 ## `EffectWriteScript.gd` + `EffectBinWriter.serialize_script` write this section byte-exactly
 ## in GDScript since #1416 — the 3-phase <-> 1-phase swap, preserving the real prologue and
-## regenerating the canonical body, mirroring `tools/write_effect_script.py` (#273, ADR-0094).
-## Measured over the corpus, the GDScript swap output is byte-identical to the Python's on all
-## 288 swappable effects.
+## regenerating the canonical body, mirroring `tools/write_effect_script.py` (#273, ADR-0094);
+## measured over the corpus, the swap output is byte-identical to the Python's on all 288
+## swappable effects.
+## The writer is the half of this reader's mirror: it takes the target PATTERN off the block
+## and regenerates from a canonical table, while this walk is root-only. `script` stays out
+## of `EffectBinReader`'s registry for that reason: `parse_all`'s job is to hand `patch_all`
+## a block, and this view is the studio's oracle, not the writer's source of truth.
 ##
-## What this READER is not is the writer's input. The writer takes the target PATTERN off the
-## block and regenerates from a canonical table, because this walk is root-only and the
-## canonical 3-phase body continues past the root. Reading it was still the half that had to
-## come first — the gate parses the prologue the swap preserves. `script` stays out of
-## `EffectBinReader`'s registry for that reason: `parse_all`'s job is to hand `patch_all` a
-## block, and this view is the studio's oracle rather than the writer's source of truth.
-##
-## ⚠️ THE OPCODE TABLE IS A SECOND COPY AND IT IS GUARDED. Python has exactly ONE table:
+## The OPCODE TABLE IS A SECOND COPY AND IT IS GUARDED. Python has exactly ONE table:
 ## `write_effect_script.py` imports `OPCODES` from `parse_effect`, so its reader and writer
 ## cannot disagree. This file is a THIRD language's copy, and an unguarded copy is the failure
 ## mode ADR-0085's amendment named for feds (a param-count drift desyncs a decode mid-stream
@@ -37,7 +33,7 @@ extends RefCounted
 ## this table against `parse_effect.OPCODES` by parsing THIS file's source — edit the Python
 ## first, then here.
 ##
-## ⚠️ NOT `src/effects/studio/EffectScriptPattern.gd`'s `_META`. That is a deliberate
+## NOT `src/effects/studio/EffectScriptPattern.gd`'s `_META`: that is a deliberate
 ## THIRTEEN-entry subset for regenerating canonical roots, not a decoder, and it lives in the
 ## host rather than the addon. It is not a rival table — but it does supply the STRIDES the
 ## studio's root offsets are computed from, so since #1416 the drift guard pins it too, as a

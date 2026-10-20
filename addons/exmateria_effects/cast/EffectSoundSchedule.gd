@@ -1,9 +1,7 @@
 extends RefCounted
-## The sound walker's four artifacts, READ OFF EffectData — one parse, one object; the
-## loader's second parse + re-points were the undo (ADR-0085). Shape-compatible with
-## exmateria_sound's LoadedEffect. No class_name (ADR-0004). has_sound() = is there a
-## BANK; has_schedule() = is there anything to ANNOUNCE, and ADR-0318 dec. 2 made the
-## second one the walker's gate — the first was a question about an audio artifact.
+## The sound walker's four artifacts, READ OFF EffectData — one parse, one object
+## (ADR-0085). Shape-compatible with exmateria_sound's LoadedEffect. No class_name
+## (ADR-0004).
 ## vault: .vaults/comments/exmateria_effects/sound-schedule-dedup.md
 
 var sound_tracks: Dictionary = {}
@@ -30,17 +28,14 @@ static func from_effect_data(data):
 
 
 func has_sound() -> bool:
-	## Is there a BANK to play — bytes, not a schedule. Still the right question for
-	## anything about to make a noise; it is no longer the question that decides whether
-	## the walker runs.
+	## Is there a BANK to play — bytes, not a schedule.
 	return feds_bank != null and feds_bank.num_pairs > 0
 
 
 func has_schedule() -> bool:
 	## Is there anything to ANNOUNCE — the gate `EffectSoundController.load_effect` uses
-	## since ADR-0318 dec. 2, and the reason `has_sound()` above no longer decides
-	## whether the walker runs. Blind to `feds_bank` on purpose: an effect with keyframes
-	## and no `feds.bin` has a schedule, publishes its events, and is silent.
+	## (ADR-0318 dec. 2). Blind to `feds_bank` on purpose: an effect with keyframes and
+	## no `feds.bin` has a schedule, publishes its events, and is silent.
 	for key in ["phase1", "phase2", "for_each"]:
 		var track = sound_tracks.get(key, [])
 		if track is Array and not (track as Array).is_empty():

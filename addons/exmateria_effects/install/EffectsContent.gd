@@ -1,19 +1,18 @@
 extends RefCounted
 
 ## The addon's ONE injection point for host content it can never ship — ADR-0202 dec. 5's
-## "settable search root with a default". Eight install-register rows (Class B) were
-## res://assets/… literals (per-effect E### dir, callback_data.json, four TRAP tables,
-## TRAP1 tex/palette) — ROM-derived, gitignored (ADR-0142); the register scores the
-## literal, not the dependency. 🔴 Default EMPTY on purpose: a res://assets/ default
-## keeps the literal scored + silently resolves nonexistent paths in a bare project —
-## dec. 5's "legible failure instead of a silent empty load". INJECT, not the read
-## ADR-0203 dec. 2 forbids (dec. 1 blesses Class B); transcribed from BattlefieldContent.gd.
+## "settable search root with a default". The content (per-effect E### dirs,
+## callback_data.json, the four TRAP tables, the TRAP1 texture/palette) is ROM-derived
+## and gitignored (ADR-0142). INJECT, not the read ADR-0203 dec. 2 forbids (dec. 1
+## blesses Class B); transcribed from BattlefieldContent.gd.
+## 🔴 Default EMPTY on purpose: a res://assets/ default silently resolves nonexistent
+## paths in a bare project — dec. 5's "legible failure instead of a silent empty load".
 ## vault: .vaults/comments/exmateria_effects/effects-content-root.md
 
 ## The ProjectSettings key; a directory path — a trailing slash is supplied by resolve().
 const ROOT_SETTING: String = "exmateria_effects/content_root"
 
-## Subpaths below the root — the tree shape named here, not at eight call sites; not res:// literals.
+## Subpaths below the root — the tree shape, named once here (never res:// literals).
 const EFFECTS_SUBPATH: String = "effects/"
 const TRAP_SUBPATH: String = "effects/trap/"
 const TRAP_TEX_SUBPATH: String = "sprites/textures/TRAP1.tga"
@@ -54,7 +53,7 @@ static func resolve(subpath: String) -> String:
 	return base + subpath
 
 
-## effects/E###; the caller formats E%03d (2/3 call sites derive it from an ability id). "" when unset.
+## effects/E###; the caller formats E%03d. "" when unset.
 static func effect_dir(effect_name: String) -> String:
 	var base: String = resolve(EFFECTS_SUBPATH)
 	if base.is_empty():

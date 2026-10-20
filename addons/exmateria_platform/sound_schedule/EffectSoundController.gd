@@ -138,6 +138,9 @@ var spawn_delay: int = 0
 var phase2_delay: int = 0
 var target_count: int = 1
 var three_phase: bool = false
+## Each for_each child's start, in frames after phase 1, when the host plays its children on
+## its own clock (EffectInstance's lanes, N36); empty = the ROM's `n * spawn_delay`.
+var _child_offsets: PackedInt32Array = PackedInt32Array()
 
 var _for_each_contexts: Array = []   # Array[ForEachContext]
 var _next_spawn_target: int = 0
@@ -191,8 +194,9 @@ func load_effect(loaded) -> bool:
 
 
 func start(p_target_count: int = 1, pre_anchor_offset: int = 0,
-		vm_snapshot: Dictionary = {}) -> void:
+		vm_snapshot: Dictionary = {}, child_offsets: PackedInt32Array = PackedInt32Array()) -> void:
 	target_count = maxi(1, p_target_count)
+	_child_offsets = child_offsets.duplicate()
 	_pre_anchor_frame_offset = maxi(0, pre_anchor_offset)
 	resolver.reset_counters()
 	_frame = -_pre_anchor_frame_offset
@@ -348,12 +352,22 @@ func is_finished() -> bool:
 func _compute_phase2_start() -> int:
 	if not three_phase:
 		return 0
-	return phase1_duration + maxi(0, target_count - 1) * spawn_delay + phase2_delay
+	return phase1_duration + _child_offset(target_count - 1) + phase2_delay
+
+
+## When for_each child `n` starts, in frames after phase 1: the host's offset when it gave
+## one, else the ROM's stagger (0x801A4838: `child_spawn_delay`, timeline header +6, apart).
+func _child_offset(n: int) -> int:
+	if n <= 0:
+		return 0
+	if n < _child_offsets.size():
+		return _child_offsets[n]
+	return n * spawn_delay
 
 
 func _try_spawn_for_each() -> void:
 	while _next_spawn_target < target_count:
-		var spawn_at := phase1_duration + _next_spawn_target * spawn_delay
+		var spawn_at := phase1_duration + _child_offset(_next_spawn_target)
 		if _frame < spawn_at:
 			return
 		var ctx := ForEachContext.new()

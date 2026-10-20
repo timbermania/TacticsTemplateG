@@ -22,34 +22,38 @@ const EffectsDebug = preload("res://addons/exmateria_effects/install/EffectsDebu
 const EffectPhaseClass = preload("res://addons/exmateria_effects/cast/EffectPhase.gd")
 const PHYSICS_TIMESTEP: float = 1.0 / 30.0  # FFT game-loop rate
 const BASE_PACING: int = 2                   # FFT pacing baseline; factor = BASE/pacing
+## The engine's SECONDARY handlers — the spell charge lines (0x801b1c04) and the summon
+## orbs (0x801b4234) — are ticked once per VSYNC by `battle_effect_update_secondary_effects`
+## (0x801b47e0), not once per effect frame: 60 Hz, so two handler ticks per fixed frame here
+## (SPELL_CHARGE_LINES.md "Frames", SUMMON_CHARGE_ORBS.md "Frames", branch
+## research/spell-charge-lines [S·D]). Only those callbacks sub-step; E### frames stay 30 Hz.
+const SECONDARY_TICKS_PER_FRAME: int = 2
 
 # Phase boundaries (from the timeline header) — used to resolve the open
 # phase-window set each frame (phase model C, ADR-0012).
 var phase1_duration: int = 0
 var phase2_start: int = 0
 
-# The fixed clock this orchestrator owns.
 var effect_frame: int = 0
 
 # Ordered subsystems, pumped in registration order (particle → sound → color → camera).
 var _subsystems: Array = []
 
-# Time-modulation — the timeline owns it outright (ADR-0014, superseding ADR-0012
-# coupling 1): it holds the pacing curve and computes the factor from its OWN
-# frame + phase, no longer reading it back from the particle subsystem.
+# Time-modulation, owned outright (ADR-0014, superseding ADR-0012 coupling 1).
 var _time_scale_data: Dictionary = {}
 var _time_scale_factor: float = 1.0
 var _current_pacing_value: int = BASE_PACING
 var _phase1_was_finished_last_frame: bool = false
 # Phase-local cursors into the pacing curve, incremented once per open-phase
-# frame — the faithful index the old particle phase-controllers' `current_frame`
-# supplied. `for-each`-local is **B-shaped**: today the single-target for-each
-# frame; the per-target for-each-pass cursor under the backlogged ROM
-# multi-target model (project backlog).
+# frame. `for-each`-local is **B-shaped**: today the single-target for-each
+# frame; the per-target pass cursor under the backlogged ROM multi-target model.
 var _p1_local_frame: int = 0
 var _for_each_local_frame: int = 0
 
 var _accumulator: float = 0.0
+# False on the subsystem-less replay [method paced_vsyncs] runs: it traces no cast, and it runs
+# on the GPU warm thread, which must not read Tune (#2124).
+var _traces_pacing: bool = true
 var _first_tick: bool = true
 var _started: bool = false
 
@@ -110,10 +114,8 @@ func _advance_one_frame() -> void:
 	for subsystem in _subsystems:
 		if subsystem != null:
 			subsystem.advance(effect_frame, phase)
-	# Time-modulation (ADR-0014): advance the phase-local cursors for the
-	# open phases (mirroring the old phase-controllers), then recompute the
-	# factor for the next accumulation. Order matches the old path: cursors
-	# step inside the frame, the factor reads the stepped value.
+	# Time-modulation (ADR-0014): the cursors step INSIDE the frame and the
+	# factor reads the stepped value — the order is part of the contract.
 	if EffectPhaseClass.PHASE1 in phase:
 		_p1_local_frame += 1
 	if EffectPhaseClass.PHASE_FOR_EACH in phase:
@@ -143,6 +145,36 @@ func seek(target_frame: int) -> void:
 		reset()
 	while effect_frame < target_frame:
 		_advance_one_frame()
+
+
+## The 60 Hz vsyncs the paced clock takes to REACH each effect frame: `[0, v(1), …, v(frames)]`,
+## so `v(n)` is when frame `n` is pumped. A frame costs `_current_pacing_value` vsyncs (2 at base,
+## up to 9 under the time-scale curve, `g_frame_pacing_value` 0x80045998, looked up per frame at
+## 0x801a1200 — research/wiki_articles/effect_file_time_scale.txt). Replays THIS class's own
+## `_advance_one_frame` with no subsystems, so a host sizing a window on the effect's clock gets
+## the rule [method tick] runs, one-frame lag included, not a copy of it.
+##
+## 🔴 NOT `frames * 2`. That is the flat rate, and it is what the kernel's cinematic timer used
+## (`GPUEffectTimingLoader`) until N18: E033 Haste2's curve holds frames 14–89 at 3 vsyncs, so
+## its 130 frames take 332 vsyncs, not 260 — the timer expired on frame 93, the teardown freed
+## the effect, and its phase-2 SLOT_COPY camera return (frames 106–130) never played.
+static func paced_vsyncs(p1_duration: int, p2_start: int, time_scale_data: Dictionary,
+		frames: int) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	out.resize(maxi(frames, 0) + 1)
+	out[0] = 0
+	var flags: Dictionary = time_scale_data.get("flags", {})
+	if not flags.get("time_scale_pattern1", false) and not flags.get("time_scale_pattern2", false):
+		for n in range(maxi(frames, 0)):   # no curve in force: every frame at base
+			out[n + 1] = out[n] + BASE_PACING
+		return out
+	var t = load("res://addons/exmateria_effects/cast/EffectTimeline.gd").new()
+	t.setup(p1_duration, p2_start, time_scale_data)
+	t._traces_pacing = false
+	for n in range(maxi(frames, 0)):
+		out[n + 1] = out[n] + t._current_pacing_value
+		t._advance_one_frame()
+	return out
 
 
 func rescrub() -> void:
@@ -222,7 +254,7 @@ func _update_time_scale(phase: Array) -> void:
 		_time_scale_factor = 1.0
 	# 0 and 10-15: leave current pacing unchanged
 
-	if EffectsDebug.timeline() and _current_pacing_value != BASE_PACING:
+	if _traces_pacing and EffectsDebug.timeline() and _current_pacing_value != BASE_PACING:
 		print("[TimeScale] frame=%d pacing=%d factor=%.3f" % [effect_frame, _current_pacing_value, _time_scale_factor])
 
 

@@ -2,23 +2,14 @@ extends Node
 ## Global singleton for screen background color during effects
 ##
 ## This is the BACKGROUND layer - map, units, and particles render ON TOP of it.
-## Supports multi-effect composition via delta-based blending.
-##
-## Implementation: the host hands over its background's ShaderMaterial with
-## set_background_material(). The material needs the color_tl/tr/bl/br uniforms and the
-## ColorStack include; whether it draws on a 2D Control or a 3D mesh is the host's call.
 ## Vault: [[Color Screen Opcode]]
 ## Vault: [[Screen Effect Gradient System]]
 
-## ADR-0212 dec. 1 — `addons/exmateria_schema` used to declare six bare globals,
-## every one of them generic English (`Fold`, `DepthMode`, `ColorStack`,
-## `ColorRecipe`, `CellMarking`, `TerrainCell`). It now declares only
-## `ExMateriaSchema`, so these lines are what keep the use sites below spelled the
-## way they were (ADR-0211 dec. 4).
+## ADR-0212 dec. 1 — the schema declares only `ExMateriaSchema`; these aliases
+## keep the use sites below spelled bare `ColorRecipe`/`ColorStack` (ADR-0211 dec. 4).
 const ColorRecipe = ExMateriaSchema.ColorRecipe
 const ColorStack = ExMateriaSchema.ColorStack
 
-# Active effect layers for composition
 # Each effect contributes a delta (change from default) that gets summed
 var active_layers: Dictionary = {}  # owner_id -> {delta: Color, tint: Color}
 
@@ -67,8 +58,11 @@ func get_default_bottom() -> Color:
 var _material: ShaderMaterial = null
 
 
-## The material every colour below is written to. Until a host sets one, effects still
-## compose but draw nothing. Re-applies the current state, so it can be set mid-effect.
+## The material every colour below is written to — the host registers its background's
+## ShaderMaterial here rather than this autoload searching the camera for a node of an
+## agreed name. It needs the color_tl/tr/bl/br uniforms and the ColorStack include; what
+## draws it is the host's call. Until one is set, effects still compose but draw nothing.
+## Re-applies the current state, so it can be (re)set mid-effect.
 func set_background_material(material: ShaderMaterial) -> void:
 	_material = material
 	_recomposite()
@@ -109,10 +103,9 @@ func set_tint(tint: Color, owner_id: int) -> void:
 		_push_color_stack(Vector3(tint.r, tint.g, tint.b))
 
 
-## ADR-0067: push the additive TINT into the color-stack uniforms so screen_background
-## folds it via color_apply. The summed per-owner delta is ONE scale=1 affine layer
-## (bias = the tint) — byte-exact vs the old `base + tint_color` per ColorStack.fold's
-## additive-combat parity oracle.
+## ADR-0067: push the additive TINT into the color-stack uniforms so
+## screen_background folds it via color_apply. The summed per-owner delta is ONE
+## scale=1 affine layer (bias = the tint).
 func _push_color_stack(tint: Vector3) -> void:
 	if _material == null:
 		return
@@ -139,7 +132,6 @@ func clear_effect(owner_id: int) -> void:
 		owner_id: ID of the effect requesting clear
 	"""
 	if owner_id == 0 or owner_id == current_owner_id:
-		# Return to default gradient
 		set_corners(default_tl, default_tr, default_bl, default_br, 0)
 		# Clear tint
 		set_tint(Color.BLACK, 0)
@@ -198,18 +190,14 @@ func remove_layer(owner_id: int) -> void:
 func _recomposite() -> void:
 	"""Sum all active deltas and apply to default gradient"""
 	if active_layers.is_empty():
-		# No active effects - restore default gradient
 		set_corners(default_tl, default_tr, default_bl, default_br, 0)
 		set_tint(Color.BLACK, 0)
 		current_owner_id = 0
 		return
 
-	# Composite TOP deltas onto the top corners and BOTTOM deltas onto the bottom
-	# corners (pure, testable).
 	var corners := compose_corners(default_tl, default_tr, default_bl, default_br, active_layers.values())
 	set_corners(corners[0], corners[1], corners[2], corners[3], 0)
 
-	# Sum + clamp the additive tints (defensive .get — symmetric with compose_corners).
 	var total_tint := Vector3.ZERO
 	for layer in active_layers.values():
 		var tint: Color = layer.get("tint", Color.BLACK)

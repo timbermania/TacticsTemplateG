@@ -43,6 +43,7 @@ uniform bool srgb_to_linear = true;
 
 // === Varyings ===
 varying vec4 uv_rect;
+varying flat float v_semi_trans_on;
 varying float v_palette_row;  // ADR-0045: per-instance palette row (trap), from COLOR.a
 
 // === Vertex (billboard + corner interpolation) ===
@@ -56,6 +57,7 @@ void vertex() {
 	int depth_mode = int(MODEL_MATRIX[2][2] + 0.5);
 
 	uv_rect = INSTANCE_CUSTOM;
+	v_semi_trans_on = COLOR.a;
 	v_palette_row = COLOR.a * 15.0;
 
 	vec2 top = mix(corner_tl, corner_tr, UV.x);
@@ -71,9 +73,14 @@ void vertex() {
 		MODEL_MATRIX[3]
 	);
 
-	const float PSX_SCALE = 1.0 / 28.0;
-	VERTEX.x = corner.x * PSX_SCALE;
-	VERTEX.y = -corner.y * PSX_SCALE;
+	// #1507: corners arrive in WORLD UNITS, converted from native PSX pixels by
+	// EffectParticleRenderer._write_instance. A `1.0 / 28.0` multiply used to live here;
+	// that was PsxNum.UNITS_PER_TILE, the BOARD scale, and a frame record's corner
+	// offsets are SCREEN PIXELS, not world units. The right factor is ortho_size / 240,
+	// which depends on the live camera — so it cannot be a shader constant, and in
+	// GDScript it can be asserted. Only the sign flip is left: PSX +Y is down, Godot's up.
+	VERTEX.x = corner.x;
+	VERTEX.y = -corner.y;
 	VERTEX.z = 0.0;
 
 	// Unified OT depth: per-object path (world origin + VIEW), biased by depth_mode.
@@ -106,10 +113,16 @@ vec4 stp_sample(vec2 frag_uv) {
 		col = texture(palette_texture, palette_uv);
 	}
 
-	// STP=1 -> alpha=128 -> a~0.5; drop transparent, opaque, and black pixels.
-	if (col.a < 0.01 || col.a > 0.9 || (col.r < 0.01 && col.g < 0.01 && col.b < 0.01)) {
+	// Baked word0000 is black/alpha255; word8000 is VALID black/alpha128.
+	if (col.a < 0.01 || (col.a > 0.9 && col.r < 0.01 && col.g < 0.01 && col.b < 0.01)) {
 		discard;
 	}
 
+#ifdef EFFECT_REPLACE
+	// ABE off replaces both STP populations; ABE on replaces only STP0.
+	if (v_semi_trans_on > 0.5 && col.a < 0.9) { discard; }
+#else
+	if (col.a > 0.9) { discard; }
+#endif
 	return col;
 }

@@ -7,8 +7,8 @@ extends RefCounted
 ## [ADR-0280](../../../docs/adr/0280-gambits-stays-in-the-almanac-and-the-tests-that-said-otherwise-were-measuring-a-kernel-vocabulary-in-the-wrong-package.md)
 ## dec. 3. It is the first row whose producer is a TIER rather than a system: the
 ## `rules` tier decides a role (`JobDatabase.get_job_role`), `Battle` packs it
-## (`src/gpu/GambitEncoder.gd`) and `UI` populates a dropdown from it
-## (`addons/exmateria_ui/UIGambitEditor.gd`).
+## (`src/gpu/GambitEncoder.gd`) and `UI` offers it on the gambit surface
+## (`addons/exmateria_ui/detail/GambitOptions.gd`).
 ##
 ## 🔴 NOTHING HERE IS DERIVED, WHICH IS WHY IT COULD MOVE. This file's own
 ## docstring used to open *"derived from job type"*, and that describes

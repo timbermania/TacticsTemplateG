@@ -22,12 +22,11 @@ enum Mode {
 	UNIT = 6,            ## Project nudge: unit sprite just in front of its tile.
 	TILE_OVERLAY = 7,    ## Project nudge: between the tile surface and the unit.
 	MAP_SKIRT = 8,       ## Project nudge: border/skirt geometry just BEHIND textured map faces.
-	SHADOW = 9,          ## Project nudge: the unit's ground shadow, one hair BEHIND the sprite.
-	                     ## Faithful to PSX inserting the shadow at the unit's OWN OT slot
-	                     ## (ot_base + unit[0x128]*4): the shadow is projected from the SAME
-	                     ## representative point as the sprite (not its own ground origin), so
-	                     ## it co-sorts with the unit — front of the terrain it stands on,
-	                     ## behind the sprite where they overlap. See UNIT_SHADOW_RENDERING.md.
+	SHADOW = 9,          ## The unit's ground shadow: the UNIT's own key, one sub-bucket hair
+	                     ## behind the sprite (shadow_forward()). The ROM inserts the shadow
+	                     ## packet into the very OT slot the sprite pieces use (ot_base +
+	                     ## unit[0x128]*4, 0x80086AF0 -> addPrim 0x8007DAF4), so no terrain
+	                     ## face can sort between the two. See UNIT_SHADOW_RENDERING.md §2.
 }
 
 ## Godot world-units per PSX OT bucket. Anchored to research (8 buckets
@@ -64,12 +63,40 @@ const RANK_STRIDE := 1 << 10
 ## Read-only in practice (apply() + DepthDebugScene read it; nothing assigns it).
 static var UNIT_FORWARD := 0.23
 const TILE_OVERLAY_FORWARD := 0.05
-## Shadow nudge: same magnitude as TILE_OVERLAY but a DISTINCT constant so the
-## shadow can be tuned independently of the cursor/tile overlay. Strictly less
-## than UNIT_FORWARD so the sprite always wins where it overlaps its own shadow;
-## still far in front of the terrain (the shadow shares the sprite's base point,
-## which already clears the floor). Tuned headful in ScenarioPlayer, not derived.
-const SHADOW_FORWARD := 0.05
+## The shadow is NOT a nudge of its own: it sorts at the UNIT's key, UNIT_FORWARD, less this.
+##
+## ROM (N60): `unit_sprite_render_dispatch` (0x80086640) hands every sprite layer AND the shadow
+## the same slot, `ot_base + unit[0x128]*4` (sprite: poly_ft4_packet_builder; shadow: the call at
+## 0x80086AF0), and `battle_gfx_draw_unit_shadow` (0x8007D5D0) links it there with addPrim
+## (0x8007DAF4 -> 0x80023BB4, a HEAD insert). The shadow is submitted after the sprite, so it
+## lands ahead of the sprite in the bucket's list and paints first: same bucket, sprite on top.
+## A terrain face therefore hides both or neither.
+##
+## This hair is that in-bucket order, restated as depth because our sprite is opaque and writes
+## depth before the transparent shadow is tested: without it the shadow would subtract from the
+## sprite's own feet. 1/95 of a bucket — below the OT's resolution, so it never opens a window a
+## face can sort into.
+##
+## It only has to beat DEPTH PRECISION, because both keys are computed from the SAME point at the
+## SAME instant: the shadow reads the sprite's live key at frame_pre_draw (UnitShadow.bind_key_source,
+## N72). A pushed copy taken in Unit._process trailed every tween/mover by one step (0.02–0.5 world
+## units) and painted over a receding unit's feet; no hair can absorb that, so it is not this
+## constant's job. The precision bound: a depth step is <= 2^-24 in both formats Forward+ may pick
+## (D24: exactly; D32F: the ulp on [0.5, 1)), and an ortho reversed-Z camera spends (far - near)
+## world units across [0, 1], so one step is (far - near) * 2^-24 world units. Each key can be off by
+## one fp32 compute rounding plus one quantisation, so the hair must span SHADOW_HAIR_MIN_STEPS = 4
+## steps: far <= SHADOW_BEHIND_UNIT / (4 * 2^-24) ~= 8389 world units. The deepest shipped battle
+## camera is 4000 (GambitBattle's default far) -> 8.4 steps; PlayerCamera (530.49) -> 63 steps.
+## ShadowFoldOrderTest arm 7 checks the deepest (Camera3D default far) against shadow_hair_depth_steps(). It used to be a free constant (`SHADOW_FORWARD = 0.05`) tuned while
+## UNIT_FORWARD was 0.1; UNIT_FORWARD went to 0.23 and the shadow stayed, leaving a 0.18
+## world-unit (~one bucket) window in which a face hid the shadow and not the sprite — the
+## half-eaten shadow under Agrias at scn 4 PC 68.
+const SHADOW_BEHIND_UNIT := 0.002
+## The fewest depth-buffer steps SHADOW_BEHIND_UNIT may span at a camera (see above): two keys, each
+## off by <= one fp32 rounding + one quantisation.
+const SHADOW_HAIR_MIN_STEPS := 4.0
+## The coarsest depth step either Forward+ depth format has on [0, 1] (D24 UNORM; D32F's ulp on [0.5, 1)).
+const DEPTH_STEP_WORST := 1.0 / 16777216.0
 ## Negative = behind. Breaks depth ties between black skirt and textured map edges.
 const MAP_SKIRT_BACK := -0.02
 
@@ -100,7 +127,7 @@ static func apply(material: ShaderMaterial, mode: int) -> void:
 	material.set_shader_parameter("ot_units_per_bucket", UNITS_PER_OT_BUCKET)
 	material.set_shader_parameter("ot_unit_forward", UNIT_FORWARD)
 	material.set_shader_parameter("ot_tile_overlay_forward", TILE_OVERLAY_FORWARD)
-	material.set_shader_parameter("ot_shadow_forward", SHADOW_FORWARD)
+	material.set_shader_parameter("ot_shadow_behind_unit", SHADOW_BEHIND_UNIT)
 	material.set_shader_parameter("ot_map_skirt_back", MAP_SKIRT_BACK)
 	material.set_shader_parameter("ot_fixed_front", FIXED_FRONT_DEPTH)
 	material.set_shader_parameter("ot_fixed_16", FIXED_16_DEPTH)
@@ -117,6 +144,21 @@ static func apply(material: ShaderMaterial, mode: int) -> void:
 ## projectile models) share these. See ADR-0009 and the "Rendering depth" cluster.
 static func tri_centroid(a: Vector3, b: Vector3, c: Vector3) -> Vector3:
 	return (a + b + c) / 3.0
+
+
+## The SHADOW mode's world bias: the unit's own forward nudge less SHADOW_BEHIND_UNIT — one OT key
+## shared with the sprite (see SHADOW_BEHIND_UNIT). `unit_forward` is the sprite's LIVE value
+## (`render.ot_unit_forward` is tunable onto the unit material), so a caller that holds it passes
+## it; the default is the shipped UNIT_FORWARD. The shader mirrors this in ot_depth.gdshaderinc.
+static func shadow_forward(unit_forward: float = UNIT_FORWARD) -> float:
+	return unit_forward - SHADOW_BEHIND_UNIT
+
+
+## How many worst-case depth-buffer steps the shadow's hair spans under an ortho camera with this
+## near/far: SHADOW_BEHIND_UNIT * |proj[2][2]| / DEPTH_STEP_WORST, |proj[2][2]| = 1/(far - near).
+## Must be >= SHADOW_HAIR_MIN_STEPS for the sprite to win its own feet on that camera.
+static func shadow_hair_depth_steps(near: float, far: float) -> float:
+	return SHADOW_BEHIND_UNIT / ((far - near) * DEPTH_STEP_WORST)
 
 
 ## CPU mirror of ot_depth() in addons/exmateria_schema/compositing_key/ot_depth.gdshaderinc — the
@@ -162,7 +204,7 @@ static func ot_depth(point: Vector3, proj: Projection, view: Transform3D, mode: 
 	elif mode == 8:
 		world_bias = MAP_SKIRT_BACK                  # MAP_SKIRT (negative = behind)
 	elif mode == 9:
-		world_bias = SHADOW_FORWARD                  # SHADOW
+		world_bias = shadow_forward()                # SHADOW: the UNIT's key
 	# mode 0 STANDARD: world_bias stays 0.
 
 	return base + world_bias * proj.z.z
@@ -211,7 +253,7 @@ static func ot_order_z(point: Vector3, view: Transform3D, mode: int) -> float:
 	elif mode == 8:
 		world_bias = MAP_SKIRT_BACK                  # MAP_SKIRT (negative = behind)
 	elif mode == 9:
-		world_bias = SHADOW_FORWARD                  # SHADOW
+		world_bias = shadow_forward()                # SHADOW: the UNIT's key
 	# mode 0 STANDARD: world_bias stays 0.
 
 	return d + world_bias

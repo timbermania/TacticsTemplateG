@@ -11,7 +11,8 @@ extends RefCounted
 ## carries, soft-bound to the singleton by node path at call time (ADR-0175 dec. 2).
 ##
 ## Two verbs, both SUBSCRIBE, added because `UIRosterBar` and `UIVitalsRoster`
-## reached for exactly these two signals and nothing else (#1274, ADR-0308).
+## reached for exactly these two signals and nothing else (#1274, ADR-0308). Both
+## rosters were deleted with the legacy `CombatUI` (N32); `SquadBar` is the live caller.
 ##
 ## 🔴 **THIS PORT HALF IS SUBSCRIBE-ONLY, AND THAT IS A STATED ASYMMETRY RATHER
 ## THAN A COMPLETE SURFACE.** `EventBus` also publishes `emit_unit_hp_changed`,

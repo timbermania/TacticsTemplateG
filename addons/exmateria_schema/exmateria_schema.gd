@@ -139,7 +139,7 @@ const TerrainQuery = preload("res://addons/exmateria_schema/lattice/TerrainQuery
 
 # --- the cursor vocabulary ---------------------------------------------------
 
-## The CURSOR PORT's vocabulary — three `Vector2i` signals and a `Vector2i` cell, the
+## The CURSOR PORT's vocabulary — three `Vector3i` signals and a `Vector3i` cell, the
 ## members a host reads off a roam cursor. ADR-0332's third route, taken a second time
 ## (gl-ADR-0363), so the annotation can stay while the reach goes free.
 ## Host use: none yet; the **SIBLING NAMERS** are
@@ -147,7 +147,7 @@ const TerrainQuery = preload("res://addons/exmateria_schema/lattice/TerrainQuery
 ## `addons/exmateria_ui`'s formation map host and detail transition, which annotate with it.
 ## 🔴 THIS IS THE ONLY MEMBER OF THIS FAÇADE THAT IS NOT A `RefCounted`, and it is a
 ## `Node` because `CursorRig` is one and GDScript has single inheritance. "Nothing here is
-## instantiated" is still true of it: a bare `CursorQuery` answers `Vector2i.ZERO` for
+## instantiated" is still true of it: a bare `CursorQuery` answers `Vector3i.ZERO` for
 ## every cell and emits nothing, and no file in this package constructs one.
 const CursorQuery = preload("res://addons/exmateria_schema/cursor/CursorQuery.gd")
 
@@ -263,8 +263,8 @@ const UnitActivity = preload("res://addons/exmateria_schema/unit_vocabulary/Unit
 ## derivation. `addons/exmateria_almanac`'s `JobDatabase.get_job_role` is what
 ## decides a unit's role and it stayed in the `rules` tier.
 ## Host use: `src/gpu/GambitEncoder.gd` packs the filter, `src/gpu/RolloutPlaybook.gd`
-## and `src/gpu/GambitCellSynth.gd` read it, `addons/exmateria_ui/UIGambitEditor.gd` populates
-## its dropdown from `get_all_roles()` and `src/units/Unit.gd` exposes a unit's own.
+## and `src/gpu/GambitCellSynth.gd` read it, `addons/exmateria_ui/detail/GambitOptions.gd` offers
+## it on the gambit surface and `src/units/Unit.gd` exposes a unit's own.
 ## The **SIBLING NAMERS** are `addons/exmateria_almanac/jobs/JobDatabase.gd`,
 ## which produces it, and that addon's `gambits/Gambit.gd` and
 ## `gambits/TargetSelector.gd`, which render and apply it.
@@ -318,6 +318,56 @@ const EquipSlot = preload("res://addons/exmateria_schema/unit_vocabulary/EquipSl
 ## `identity/Character.gd` / `seeding/AllTemplatesSeeder.gd`, which pick one from a
 ## job plus an authored gender.
 const BaseStatType = preload("res://addons/exmateria_schema/unit_vocabulary/BaseStatType.gd")
+
+## **What a gambit's action IS** — `ATTACK`, `WAIT`, `MOVE`, `ABILITY`, `RETREAT` — with the
+## control-verb tables for the four that have a word (`ABILITY` carries an id, not a verb).
+## ADR-0118 dec. 1's thirteenth row, admitted by gl-ADR-0377 dec. 11 on `UnitRole`'s test: a
+## caller learns a VALUE SET, not a contract. Choosing a kind, migrating a legacy save name and
+## `_to_string` all stay in `addons/exmateria_almanac/gambits/Gambit.gd`.
+## Host use: `src/gpu/GambitEncoder.gd` packs it. The **SIBLING NAMERS** are that `Gambit.gd`,
+## which re-exports it, and `addons/exmateria_ui`'s `GambitProse.gd`, `detail/GambitOptions.gd`
+## and `detail/GambitSurface.gd`, which render and edit the verb column.
+const ActionKind = preload("res://addons/exmateria_schema/unit_vocabulary/ActionKind.gd")
+
+## **How a gambit picks who it acts on** — `PoolType`, `ResolutionStrategy`, `TeamFilter`. Three
+## value sets describing a selection; performing one stays in
+## `addons/exmateria_almanac/gambits/TargetSelector.gd`, which re-exports these. ADR-0118 dec. 1's
+## fourteenth row, admitted by gl-ADR-0377 dec. 13.
+## SIBLING NAMER (ADR-0212 dec. 7): `addons/exmateria_almanac/gambits/TargetSelector.gd`
+## re-exports all three, and `addons/exmateria_ui/GambitProse.gd` renders the target column
+## from them — nineteen of its lines, and the reason this row was admitted.
+## ⚠️ NO HOST FILE NAMES THIS SPELLING, AND THAT IS THE CONSTRUCT WORKING RATHER THAN DISUSE.
+## The GPU encoder packs the pool and team into its row through the almanac's re-export
+## (`TargetSelector.PoolType`), which is what ADR-0294 dec. 2's re-export is FOR: the value set
+## moves and the call sites do not. Said here so the next reader does not read the silence as
+## "nothing uses it".
+const TargetSelection = preload("res://addons/exmateria_schema/unit_vocabulary/TargetSelection.gd")
+
+## **What a gambit condition TESTS** — `Type`, `Comparator`, `RangeType`. Three value sets;
+## evaluating a condition stays in `addons/exmateria_almanac/gambits/GambitCondition.gd`, which
+## re-exports them. ADR-0118 dec. 1's fifteenth row, admitted by gl-ADR-0377 dec. 14.
+## SIBLING NAMER (ADR-0212 dec. 7): that `GambitCondition.gd` re-exports all three.
+## ⚠️ NO HOST FILE NAMES THIS SPELLING, AND THAT IS THE RE-EXPORT WORKING RATHER THAN DISUSE:
+## the GPU encoder packs the condition into its row and the cell synth reads it back, both
+## through `GambitCondition.Type` — ADR-0294 dec. 2's construct, where the value set moves and
+## the call sites do not. Said here so the silence is not read as "nothing uses it".
+const GambitConditionKind = preload("res://addons/exmateria_schema/unit_vocabulary/GambitConditionKind.gd")
+
+## **What one gambit row IS, as a value** — the five fields a consumer reads off a gambit.
+## `addons/exmateria_almanac/gambits/Gambit.gd` `extends` it and keeps every decision.
+## ADR-0332's third route (gl-ADR-0377 dec. 22), `cursor/CursorQuery.gd`'s shape.
+## SIBLING NAMER (ADR-0212 dec. 7): that `Gambit.gd`.
+const GambitQuery = preload("res://addons/exmateria_schema/gambit_query/GambitQuery.gd")
+
+## **What a gambit condition tests, as a value** — seven fields, all value-typed.
+## SIBLING NAMER (ADR-0212 dec. 7): `addons/exmateria_almanac/gambits/GambitCondition.gd`
+## `extends` it; `addons/exmateria_ui/detail/GambitSurface.gd` annotates it.
+const GambitConditionQuery = preload("res://addons/exmateria_schema/gambit_query/GambitConditionQuery.gd")
+
+## **What a gambit aims at, as a value** — five fields, four of them kernel enums already.
+## SIBLING NAMER (ADR-0212 dec. 7): `addons/exmateria_almanac/gambits/TargetSelector.gd`
+## `extends` it.
+const TargetSelectorQuery = preload("res://addons/exmateria_schema/gambit_query/TargetSelectorQuery.gd")
 
 ## **Which sign a unit was born under** — the twelve tropical signs, FFT's hidden
 ## thirteenth, the stored month→boundary table and the lookup that indexes it.

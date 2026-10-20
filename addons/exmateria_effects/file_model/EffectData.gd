@@ -18,50 +18,48 @@ const CurveExplode = preload("res://addons/exmateria_effects/file_model/CurveExp
 const TextureTga = preload("res://addons/exmateria_effects/file_model/TextureTga.gd")
 
 ## ADR-0318 dec. 7 — the FEDS bank arrives through the PLATFORM PORT, not a `preload`
-## of the `Audio` package's façade.
-##
-## The DEPENDENCY is unchanged and is not the thing that was wrong: `Effects` reads
-## `Audio`'s `feds.bin` under the blueprint's Format-owner rule (ADR-0288 dec. 8) and
-## that stands. What was wrong is the CARRIER. `preload` is compile-time, so a façade
-## preload made an OPTIONAL artifact a compile-time REQUIREMENT of this file — with
-## `exmateria_sound` absent, this file failed to parse and took
-## `callbacks/CallbackManager.gd` down with it (ADR-0318 §1.1, the parser's own
-## attribution). One of the four preloads that made "install Effects without the audio
-## package" a parse-error cascade rather than a configuration.
+## of the `Audio` package's façade: `preload` is compile-time, so a façade preload made
+## an OPTIONAL artifact a compile-time REQUIREMENT — with `exmateria_sound` absent this
+## file failed to parse and took `callbacks/CallbackManager.gd` down with it. The
+## dependency itself is unchanged (Format-owner rule, ADR-0288 dec. 8).
 ##
 ## `ExMateriaPlatform.SfxPort` resolves at RUNTIME and answers `null` when no engine is
-## registered, so the absent package is now the same state as an effect with no
-## `feds.bin` — a state every reader of `feds_bank` in the tree already handles, because
-## most effects ship no bank. `feds_bank` was already declared untyped (see its
-## declaration below), so no annotation downstream changes.
+## registered, so an absent package is the same state as an effect with no `feds.bin` —
+## one every reader of `feds_bank` already handles, since most effects ship no bank.
 ##
-## ⚠️ The FEDS **opcode table** does NOT come with it. Decision 7 moves a LOAD, not a
-## decode: `EffectReadSoundDef.gd` states the rule from the file-format side — the raw
-## blob is a patchable unit `Effects` can read, and the decode table exists twice under a
-## drift guard, so a third copy here would be one that guard does not know about.
+## The FEDS **opcode table** does NOT come with it: `EffectReadSoundDef.gd` states the
+## rule from the file-format side — the raw blob is a patchable unit `Effects` can
+## read, and the decode table exists twice under a drift guard, so a third copy here
+## would be one that guard does not know about.
 const SfxPort = ExMateriaPlatform.SfxPort
 
 var name: String = ""
 var emitters: Array[EffectEmitter] = []
 var curves: Array[EffectCurve] = []
                             # ONE PRIVATE CURVE PER USE SITE after the explode (ADR-0089
-                            # curve-ownership amendment): load hands every (emitter, slot)
-                            # its own copy at its own index, so painting one moves nothing
-                            # else. The array is UNBOUNDED — median ~22 entries, max 67 —
-                            # and the ROM's shared, indexed, <=15 table is what the deferred
+                            # curve-ownership amendment): the array is UNBOUNDED — the
+                            # ROM's shared, indexed, <=15 table is what the deferred
                             # compiler produces on PSX export, never what authoring holds.
+## The ROM's 15-slot curve table AS LOADED, before CurveExplode re-indexed it. The
+## authoring model addresses curves through the exploded table; the CALLBACKS address them
+## through the emitter's raw `curve_indices_raw` nibbles, and those are ROM slot ordinals —
+## after the explode, ordinal N no longer names curve N. The two tube callbacks read a
+## nibble the authoring model does not even model (byte 6 low = the base-radius curve; the
+## reader's CURVE_NIBBLES calls it "read by nothing", which the decompiles of
+## FUN_801c39f8 and FUN_801c43f0 refute), so there is no use site to explode it into.
+## Read-only: `_curve_t_nibble` resolves here.
+var curves_raw: Array[EffectCurve] = []
+
 var curve_residue: Array = []  # [{index: int, curve: EffectCurve}] — curve slots NOTHING
-                            # references, set aside by the explode (6.5 per effect on
-                            # average). Not use sites: unreachable, so nothing renders them,
-                            # but a byte-exact export carries them back to their original
-                            # slots rather than silently dropping them (28% are distinct
-                            # real shapes, not all-zero padding).
+                            # references, set aside by the explode; not use sites (nothing
+                            # renders them), but a byte-exact export carries them back to
+                            # their original slots rather than silently dropping them.
 var animations: Array = []
 var framesets: Array = []
 var texture: Texture2D = null
 var texture_meta: Dictionary = {}
                             # texture_meta.json — the texture section's 4-byte VRAM upload
-                            # header (#280 follow-up): pixel_data_size, stride_flag,
+                            # header (#280): pixel_data_size, stride_flag,
                             # row_bytes, height, vram_x. `vram_y` is null by design: the
                             # file does not encode one (the +0x400 word is a SIZE).
 var authored_texture_tga: PackedByteArray = PackedByteArray()
@@ -103,7 +101,6 @@ var frameset_group_offsets: Array[int] = [0]  # Cumulative offset per frameset g
 var gravity: Vector3 = Vector3(0.0, -0.036, 0.0)
 var inertia_threshold: float = 512.0
 
-# Cache loaded EffectData by directory path to avoid re-reading files from disk
 static var _cache: Dictionary = {}  # dir_path -> EffectData
 
 
@@ -218,19 +215,15 @@ static func load_from_directory(dir_path: String) -> _Self:
 	if sound_data and sound_data is Dictionary:
 		data.sound = sound_data
 
-	# Load the shared, effect-global TIER-2 SoundContainers (optional). Same single-source
-	# reasoning as `sound` above: the addon's resolver loads this for playback, but the
-	# Effect Studio edits it in place through the choke point and the score/ghost/views read
-	# THIS reference — so it lives on EffectData rather than being re-parsed per consumer.
+	# Load the shared, effect-global TIER-2 SoundContainers (optional) — see the
+	# `sound_containers` declaration for the single-source-of-truth reasoning.
 	var containers_path = dir_path.path_join("sound_containers.json")
 	var containers_data = _load_json(containers_path)
 	if containers_data and containers_data is Dictionary:
 		data.sound_containers = containers_data
 
-	# The FEDS bank (feds.bin) — TIER-3 byte truth (ADR-0085). Loaded here so the
-	# SoundDefChannel encoder, the studio env and playback all share ONE object. Through
-	# the port since ADR-0318 dec. 7, so `null` now covers TWO absences — no file, and no
-	# audio package installed — and the readers were already written for the first.
+	# The FEDS bank (feds.bin) — TIER-3 byte truth (ADR-0085), through the port
+	# (ADR-0318 dec. 7), so `null` covers two absences: no file, no audio package.
 	var feds_path = dir_path.path_join("feds.bin")
 	if FileAccess.file_exists(feds_path):
 		data.feds_bank = SfxPort.load_feds_bank(feds_path)
@@ -260,8 +253,7 @@ static func load_from_directory(dir_path: String) -> _Self:
 					"callback_id": int(op.get("arg1", 0))
 				})
 
-	# CODE-vs-DATA format (header.json is_code_format) — gates the #273 pattern swap
-	# read-only for CODE effects (their script is MIPS, not editable bytecode).
+	# CODE-vs-DATA format (header.json is_code_format) — set `script_code_format`.
 	var effect_header_path = dir_path.path_join("header.json")
 	var effect_header = _load_json(effect_header_path)
 	if effect_header and effect_header is Dictionary:

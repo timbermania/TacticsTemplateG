@@ -2,21 +2,13 @@ extends "res://addons/exmateria_effects/callbacks/EffectCallback.gd"
 ## CB17 - Spiral/helix mesh callback (PSX FUN_801c2c74).
 ## Renders a procedural spiral strip of textured quads with 4-fold rotational symmetry.
 ##
-## Analysis Checklist:
-## 1. Quad count: 80 quads (20 per quadrant, 4 quadrants). Section 2: 16/quadrant, Section 3: 4/quadrant.
-## 2. Topology: Spiral ribbon — 6 rings of 5 vertices, connected as a continuous strip.
-##    Position advances along a velocity vector between ring groups. 4-fold rotational symmetry.
-## 3. Orientation: 2D screen-space on PSX. Godot: flat in XZ plane at interpolated position.
-## 4. Blend mode: Additive (emitter+0x4C & 3 = 1 for E065 emitters). effect_callback_additive shader.
-## 5. Emitter offsets: see field access comments below.
-## 6. Fixed-point: radius << 0xc (4096-scale), velocity/accel << 4 (16-scale), colors >> 0xc.
-## 7. Color: brightness table at DAT_801c5974, 6 int32s/row, indexed by emitter+0x4E (callback_params).
-##    Optional color curve modulation when flags_lo bit 6 set.
-## 8. Brightness: extracted to callback_data.json, 6 values per row.
-## 9. Init: state 1 → read params, store UV bases, set state to 2.
-## 10. Animation: physics_step increments frame counter, update_render rebuilds geometry.
-## 11. Cleanup: two-phase (flag then deallocate).
-## 12. callback_data.json: brightness table rows.
+## 80 quads (20/quadrant; section 2: 16/quadrant, section 3: 4/quadrant) as a spiral ribbon of
+## 6 rings × 5 vertices, a continuous strip whose position advances along a velocity vector
+## between ring groups. Pure 2D screen-space on PSX. Additive blend (emitter+0x4C & 3 = 1 for
+## E065 emitters; effect_callback_additive shader). Fixed-point: radius << 0xc (4096-scale),
+## velocity/accel << 4 (16-scale), colors >> 0xc. Brightness table at DAT_801c5974, 6 int32s/row,
+## indexed by emitter+0x4E (callback_params), optional color-curve modulation when flags_lo bit 6
+## is set; extracted to callback_data.json. Emitter field offsets: the var trailing comments.
 ## Vault: [[Effect Callback Mesh]]
 ## Vault: [[PSX GPU Primitives]]
 ## Vault: [[Particle Emitter Format]]
@@ -96,43 +88,34 @@ func _on_init(emitter_index: int, spawn_counter: int, channel_index: int) -> voi
 	if emitter_config:
 		var raw: Dictionary = emitter_config.raw_data
 
-		# Radius (emitter+0x20/0x26 = spread_start_x/spread_end_x)
 		_radius_start = _ri(raw, "spread_start", 0)
 		_radius_end = _ri(raw, "spread_end", 0)
 
-		# Velocity for radius growth (emitter+0x5C/0x60 = radial_min_start/end)
 		_vel_raw_start = int(raw.get("radial_min_start", 0))
 		_vel_raw_end = int(raw.get("radial_min_end", 0))
 
-		# Acceleration for radius (emitter+0x64/0x70 = accel_min_start_x/accel_min_end_x)
 		_accel_raw_start = _ri(raw, "accel_min_start", 0)
 		_accel_raw_end = _ri(raw, "accel_min_end", 0)
 
-		# Rotation angle (emitter+0x44/0x48 = inertia_min_start/end, bag of bytes)
 		_rot_angle_start = int(emitter_config.inertia_min_start)
 		_rot_angle_end = int(emitter_config.inertia_min_end)
 
-		# Rotation acceleration (emitter+0x9C/0xA2 = target_start[0]/target_end[0])
 		_rot_accel_start = _ri(raw, "target_start", 0)
 		_rot_accel_end = _ri(raw, "target_end", 0)
 
-		# Timing (emitter+0xB4/0xB6 = spawn_interval_start/end)
 		_timing_start = emitter_config.spawn_interval_start
 		_timing_end = emitter_config.spawn_interval_end
 
-		# Velocity direction (emitter+0x2C..0x34 = angle_start/end)
 		_dir_angle_start = _ri(raw, "angle_start", 0)
 		_dir_angle_end = _ri(raw, "angle_end", 0)
 		_dir_mag_start = _ri(raw, "angle_start", 1)
 		_dir_mag_end = _ri(raw, "angle_end", 1)
 
-		# Acceleration direction (emitter+0x38..0x42 = vel_spread_start/end)
 		_adir_angle_start = _ri(raw, "vel_spread_start", 0)
 		_adir_angle_end = _ri(raw, "vel_spread_end", 0)
 		_adir_mag_start = _ri(raw, "vel_spread_start", 1)
 		_adir_mag_end = _ri(raw, "vel_spread_end", 1)
 
-		# UV parameters
 		_uv_base_x = int(raw.get("homing_min_start", 0))  # emitter+0xB8
 		_uv_base_y = int(raw.get("homing_max_start", 0))  # emitter+0xBA
 		var param_a8: int = int(emitter_config.callback_params.get("param_A8", 4096))
@@ -141,26 +124,22 @@ func _on_init(emitter_index: int, spawn_counter: int, channel_index: int) -> voi
 		_half_wrap_x = (param_a8 + 1) >> 1 if param_a8 > 0 else 0
 		_half_wrap_y = (param_aa + 1) >> 1 if param_aa > 0 else 0
 
-		# UV velocity (emitter+0x7C..0x8C = drag_min_start/end)
 		_uv_vel_x_start = _ri(raw, "drag_min_start", 0)
 		_uv_vel_x_end = _ri(raw, "drag_min_end", 0)
 		_uv_vel_y_start = _ri(raw, "drag_min_start", 1)
 		_uv_vel_y_end = _ri(raw, "drag_min_end", 1)
 
-		# Color params
 		_brightness_row_idx = int(emitter_config.callback_params.get("param_4E", 0))
 		_depth_raw = int(emitter_config.weight_min_start)  # emitter+0x54 (bag of bytes)
 
-	# Load brightness table from callback_data.json
 	if effect_data:
 		var cb_data = _load_cb_data()
 		if cb_data:
 			_brightness_table = cb_data.get("brightness_table", [])
 
-		# Enable texture. The PSX uses CLUT 0x7B00 (indexed palette) with scrolling
-		# UV window. For now, use the full texture — the shader's STP filter passes
-		# through semi-transparent non-black pixels, creating the textured pattern.
-		# TODO: implement proper CLUT palette mapping for correct scrolling UV
+		# Enable texture. PSX uses CLUT 0x7B00 (indexed palette) with a scrolling UV window;
+		# for now the full texture stands in (STP filter passes semi-transparent non-black
+		# pixels). TODO: proper CLUT palette mapping for correct scrolling UV.
 		if effect_data.texture and _material:
 			_material.set_shader_parameter("effect_texture", effect_data.texture)
 			_material.set_shader_parameter("use_texture", true)
@@ -176,9 +155,8 @@ func physics_step() -> void:
 	if not _active:
 		return
 
-	# Cap frame counter at curve length - 1 to prevent curve wrapping.
-	# Callbacks stay alive until externally cleaned up, but the visual
-	# should not replay when curves wrap at 160 samples.
+	# Cap frame counter at curve length - 1: callbacks outlive their curves, and the
+	# visual must not replay when curves wrap at 160 samples.
 	if _frame_counter < FRAME_MAX:
 		_frame_counter += 1
 
@@ -215,8 +193,9 @@ func update_render() -> void:
 
 	# Convert PSX screen pixels (256×240) to Godot view units.
 	# Need separate X/Y scales because PSX pixels aren't square on a 4:3 CRT.
-	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
-	var aspect: float = viewport_size.x / viewport_size.y
+	# The PSX 256-px screen spans the centred FRAME, never the viewport (gl-ADR-0382): a wider
+	# viewport shows more world at the sides, it does not stretch a screen-space quad.
+	var aspect: float = DisplayPort.FRAME_ASPECT
 	var psx_scale_x: float = camera.size * aspect / 256.0
 	var psx_scale_y: float = camera.size / 240.0
 

@@ -2,8 +2,7 @@ extends RefCounted
 ## SOUND-CONTAINERS reader (#289) — GDScript port of `parse_effect.parse_sound_containers`.
 ##
 ## The 4 per-effect TIER-2 resolver entries, 4 bytes each — `[mode, id_a, id_b, id_c]` at
-## `effect_flags_ptr + 8 + ci*4`. Each entry carries its own `index`, which the writer uses for
-## addressing, so the shape is position-independent.
+## `effect_flags_ptr + 8 + ci*4`. Each entry's `index` is its position in the block.
 
 const Layout = preload("res://addons/exmateria_effects/file_model/EffectBinLayout.gd")
 

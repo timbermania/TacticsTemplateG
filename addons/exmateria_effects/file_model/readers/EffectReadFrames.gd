@@ -4,46 +4,36 @@ extends RefCounted
 ## `writers/EffectWriteFrames.gd`.
 ## Vault: [[Effect File Format]]
 ##
-## WHAT A FRAME IS. 24 bytes describing one textured quad: two flag bytes, a packed texture-page
-## word, four UV bytes into the effect's own sheet, and four signed-s16 screen corners. Frames
-## are grouped into FRAMESETS (a 4-byte header then N frames) and framesets into GROUPS, so the
-## section is three levels of table before the first byte of payload.
+## WHAT A FRAME IS. A frame is a 24-byte textured quad; frames group into FRAMESETS (a 4-byte
+## header + N frames) and framesets into GROUPS — three levels of table before first payload.
 ##
-## 🔴 THE SECTION IS SELF-DESCRIBING AND THAT IS WHY IT NEEDS A NON-WRITER REFEREE. Every frame
+## THE SECTION IS SELF-DESCRIBING AND THAT IS WHY IT NEEDS A NON-WRITER REFEREE. Every frame
 ## is located by walking a group table, then a per-group u16 offset table, then a frameset
 ## header — all read out of the same bytes. A reader that mis-walks and a writer that re-derives
 ## its own offsets from the SAME mis-walk round-trip byte-perfectly, so `BIN -> parse ->
 ## serialize -> BIN` cannot see it. The oracle that can is `frames.json`: `parse_effect.py`
 ## walked these tables independently and its answer is committed, so referee A scores the WALK,
-## not just the fields. MEASURED, and the shape of B's blindness is sharper than "it cannot see
-## mis-walks": eight seeds here red referee A while B stays at exactly 0 byte mismatches,
-## because a reader that ends the walk EARLY hands `patch_all` a SHORT array, and a short array
-## is a no-op patch. The one seed B did catch (`MAX_FRAMES_PER_SET` 100 -> 4, 45 byte
-## mismatches) drops a frameset from the MIDDLE, which shifts every later index and makes the
-## writer stamp frameset N's fields into frameset N+1's bytes. So B sees DESYNC, never
-## TRUNCATION. The `# seeded-break:` line in `EffectBinReadWriteCorpusTest` carries all fourteen.
+## not just the fields. B is blind to it: a reader that ends the walk EARLY hands `patch_all` a
+## SHORT array, and a short array is a no-op patch — so B sees DESYNC, never TRUNCATION. The
+## `# seeded-break:` line in `EffectBinReadWriteCorpusTest` carries all the seeds.
 ##
 ## SECTION SIZE IS `animation_ptr - frames_ptr`, NOT `EOF - frames_ptr`. The Python is handed
-## `calculate_sections()`'s size and its `max_frame_sets` arithmetic and its offset-table walk
-## are both bounded by it. `EffectWriteFrames.frame_offsets` uses the looser file-size bound
-## instead; that is safe for a v1 in-place patch (a looser bound can only find MORE frames to
-## rewrite in place with their own values) but it is not the same question, so this reader
-## follows the Python.
+## `calculate_sections()`'s size, and its `max_frame_sets` arithmetic and its offset-table
+## walk are both bounded by it; this reader follows the Python.
 ##
-## ABSENT IS `null`; A DEGENERATE SECTION IS `[]`. `frames_ptr` out of bounds is the only way
-## this section is absent — unlike `time_scale` there is no 0 sentinel. But the Python returns
-## an EMPTY list for a section that is present and too small to walk (`section_size < 8`, a
-## group table that overruns, an implausible `max_frame_sets`), and `frames.json` then holds
-## `[]`, so those must read as `[]` here or referee A reds on the difference.
+## ABSENT IS `null`; A DEGENERATE SECTION IS `[]`. `frames_ptr` out of bounds is the only
+## absence — unlike `time_scale` there is no 0 sentinel. A section present but too small to
+## walk (`section_size < 8`, an overrunning group table, an implausible `max_frame_sets`)
+## reads as `[]` because `frames.json` holds `[]` for it; anything else reds referee A.
 ##
-## 🔴 THREE CLAIMS HERE ARE UNGUARDED, AND SAYING SO IS THE POINT. Each was seeded, RUN, and
-## left the whole test at 55 passed / 0 failed, so do not read the corpus arm as covering them:
+## THREE CLAIMS HERE ARE UNGUARDED. Each was seeded, run, and left the whole test green, so do
+## not read the corpus arm as covering them:
 ##   1. `max_frame_sets` is a LOOSE upper bound. `first_offset + 4` -> `+ 5` changes nothing,
 ##      because the offset-table walk terminates on the first entry below `first_offset` long
 ##      before the bound bites. Tightening it to `/ 8` DOES red 10+ effects, so the line is
 ##      live — it just carries slack no corpus effect reaches.
-##   2. `section_size()` vs `EOF - frames_ptr`. Substituting the writer's file-size bound is
-##      green across all 400, so the two readings are indistinguishable on this corpus. The
+##   2. `section_size()` vs `EOF - frames_ptr`. Substituting the file-size bound is green
+##      across all 400, so the two readings are indistinguishable on this corpus — the
 ##      Python's reading is followed because referee A's oracle IS the Python.
 ##   3. `index` is the offset-table SLOT, not the array position, and the two differ only when
 ##      a frameset is skipped mid-table. Seeding `framesets.size()` is green, which measures
@@ -121,8 +111,7 @@ static func parse_frame(buf: PackedByteArray, offset: int, frame_index: int) -> 
 
 
 ## The frames section's own size, per `EffectBinHeader.calculate_sections` — Frames runs from
-## its pointer to `animation_ptr`. Negative or missing reads as 0, which every caller below
-## treats as a degenerate section.
+## its pointer to `animation_ptr`. Negative or missing reads as 0: a degenerate section.
 static func section_size(header: Dictionary) -> int:
 	var start: int = int(header.get("frames_ptr", 0))
 	var end: int = int(header.get("animation_ptr", 0))
@@ -130,7 +119,7 @@ static func section_size(header: Dictionary) -> int:
 
 
 ## The flat frameset array — `frames.json`'s shape — or `null` when the section is out of
-## bounds. This is the registry block: the unit `EffectWriteFrames.patch_into` consumes.
+## bounds. This is the registry block: the unit `EffectWriteFrames.build_section` consumes.
 static func parse(buf: PackedByteArray, header: Dictionary):
 	var frames_ptr: int = int(header.get("frames_ptr", 0))
 	if frames_ptr <= 0 or frames_ptr >= buf.size():
@@ -141,11 +130,9 @@ static func parse(buf: PackedByteArray, header: Dictionary):
 ## The per-group frameset COUNTS — `frameset_groups.json`'s shape — or `null` when the section
 ## is out of bounds.
 ##
-## A DERIVED VIEW, DELIBERATELY NOT REGISTERED. The group table is the structure `parse()`
-## walks, and `EffectWriteFrames` refuses to touch it in v1 precisely because rewriting it
-## would desync every offset below it. Registering it would make `EffectBinWriter.patch_all`
-## refuse the section outright (no serializer), so it is exposed by name and scored by referee
-## A the same way `EffectReadTexture.meta()` is.
+## A DERIVED VIEW, DELIBERATELY NOT REGISTERED: registering it would make
+## `EffectBinWriter.patch_all` refuse the section outright (no serializer), so it is exposed
+## by name and scored by referee A the same way `EffectReadTexture.meta()` is.
 static func group_sizes(buf: PackedByteArray, header: Dictionary):
 	var frames_ptr: int = int(header.get("frames_ptr", 0))
 	if frames_ptr <= 0 or frames_ptr >= buf.size():
@@ -158,10 +145,8 @@ static func group_sizes(buf: PackedByteArray, header: Dictionary):
 static func _walk(buf: PackedByteArray, frames_ptr: int, section_bytes: int) -> Dictionary:
 	var empty := {"framesets": [], "group_sizes": []}
 	# The Python trusts `animation_ptr` and would raise on a header that points past EOF; here
-	# an out-of-range `decode_u16` returns 0 silently after printing, which would turn a
-	# malformed header into a plausible-looking empty walk. Clamping keeps every read inside
-	# the file. Measured no-op on the corpus: all 401 headers have
-	# `frames_ptr <= animation_ptr <= file_size`.
+	# an out-of-range `decode_u16` returns 0 silently, which would turn a malformed header into
+	# an empty walk. Clamping keeps every read inside the file.
 	var size: int = mini(section_bytes, buf.size() - frames_ptr)
 	if size < 8:
 		return empty
@@ -182,8 +167,8 @@ static func _walk(buf: PackedByteArray, frames_ptr: int, section_bytes: int) -> 
 	if max_frame_sets <= 0 or max_frame_sets > MAX_FRAME_SETS:
 		return empty
 
-	# Each group's offset table runs from its own entry to the NEXT group's entry; the last
-	# group's runs to where frameset data begins. Two bytes per entry.
+	# Each group's offset table runs from its entry to the next group's; the last group's runs
+	# to where frameset data begins.
 	var group_sizes_out: Array = []
 	for g in range(group_count):
 		var start: int = int(group_entry_offsets[g])

@@ -1,37 +1,24 @@
 extends RefCounted
 ## Base for the **color** family of subsystems — the shared scaffolding behind
 ## [ScreenSubsystem] and [PaletteSubsystem] (which are color-family subtypes,
-## not separate subsystems). Renamed from ColorTrackController as part of the
-## Track→Subsystem migration (#31).
+## not separate subsystems).
 ##
-## NOTE: this base intentionally omits `class_name` and is extended **by path**
-## (`extends "res://addons/exmateria_effects/subsystem/ColorSubsystem.gd"`). A newly-added `class_name`
-## base is invisible until Godot rebuilds its global class cache in the editor,
-## which breaks fresh/headless loads of the path-preloaded subtypes. Path-based
-## `extends` resolves the supertype with no cache dependency. Same reasoning as
-## ADR-0004's extend-by-path convention.
+## This base intentionally omits `class_name` and is extended **by path**
+## (`extends "res://addons/exmateria_effects/subsystem/ColorSubsystem.gd"`): a
+## newly-added `class_name` base is invisible until Godot rebuilds its global class
+## cache in the editor, which breaks fresh/headless loads of the path-preloaded
+## subtypes. Path-based `extends` resolves the supertype with no cache dependency
+## (ADR-0004's extend-by-path convention).
 ##
 ## Screen is the background color; palette is map / unit tinting. See CONTEXT.md
 ## "Effect orchestration".
 ##
-## A color subsystem is pumped once per frame by [EffectTimeline] via
-## [method advance]. This base owns everything the two subtypes share:
-##   - the once-per-frame guard,
-##   - the per-(channel, phase) keyframe **cursor** (`current_keyframe` +
-##     `frame_within_kf`) and its advance,
-##   - the per-(channel, phase) transition state and the from→to lerp helper
-##     ([method _run_transition]),
-##   - `owner_id` for overlay ownership, and
-##   - the [method reset] skeleton.
+## A color subsystem is pumped once per frame by [EffectTimeline] via [method advance].
+## This base owns everything the two subtypes share.
 ##
-## Subtypes own only their **channel set** and their PSX blend math, expressed
-## as [method _evaluate] (one keyframe step for one channel in one phase) and
-## [method _reset_outputs] (clear their color output state). A subtype with a
-## single channel (screen) is the degenerate one-channel case of the N-channel
-## model (palette: affected_units / caster / target).
-##
-## The orchestrator owns the clock AND the phase and passes both to
-## [method advance]; a color subsystem never recomputes the phase from the frame.
+## Subtypes own only their **channel set** and their PSX blend math, expressed as
+## [method _evaluate] (one keyframe step per channel per phase) and [method _reset_outputs];
+## a single-channel subtype (screen) is the one-channel case of the N-channel model.
 ## Vault: [[Color Track Interpolation]]
 
 const EffectPhaseClass = preload("res://addons/exmateria_effects/cast/EffectPhase.gd")
@@ -54,17 +41,15 @@ var transition_active: Dictionary = {}   # channel -> phase -> bool
 var _frame: int = 0
 var _has_processed_frame: bool = false
 
-# The dominant phase currently playing, and the frame it began — so a subtype can
-# evaluate a declarative timeline (the ADR-0067 ColorStack) at a PHASE-RELATIVE
-# `now` (_phase_now()), matching keyframe start frames that count from 0 within the
-# phase. Reset whenever the dominant phase changes.
+# The dominant phase currently playing, and the frame it began — a declarative
+# timeline (ADR-0067 ColorStack) evaluates at a PHASE-RELATIVE `now` (_phase_now());
+# keyframe start frames count from 0 within the phase. Reset when the dominant phase changes.
 var _active_phase: String = ""
 var _phase_start_frame: int = 0
 
-# Absolute frame at which each phase first became dominant. The color engine has no
-# phase concept on PSX (one stateful CLUT DDA); this lets a subtype rebuild the WHOLE
-# keyframe stream at its true offsets (ColorStack via build_stream) instead of a
-# per-phase slice that resets at each boundary and pops. Populated as phases start.
+# Absolute frame at which each phase first became dominant. PSX's color engine has no
+# phase concept (one stateful CLUT DDA), so a subtype can rebuild the WHOLE keyframe
+# stream at its true offsets (ColorStack via build_stream) instead of a popping per-phase slice.
 var _phase_first_frame: Dictionary = {}   # phase -> absolute start frame
 
 # Unique ID for this controller, used by the overlays to own their layer.
@@ -120,27 +105,23 @@ func advance(frame: int, phase) -> void:
 		# New phase (or the first) — its keyframe timeline starts counting here.
 		_active_phase = dominant_phase
 		_phase_start_frame = frame
-		# Record the phase's absolute start once (the single-pass timeline never
-		# re-enters an earlier phase), so build_stream can place its ops in the one
-		# continuous stream at their true offsets.
+		# Record the phase's absolute start once (the single-pass timeline never re-enters
+		# an earlier phase), so build_stream places its ops at their true offsets.
 		if not _phase_first_frame.has(dominant_phase):
 			_phase_first_frame[dominant_phase] = frame
 	for ch in channels:
 		_evaluate(ch, dominant_phase)
-	# Self-deliver this subsystem's held output to its overlay sink (ADR-0014). The
-	# subsystem owns its I/O; EffectInstance is not a courier. Pushed only on frames
-	# that did work (the once-per-frame guard above) — the overlay retains the
-	# layer between ticks, so frame cadence is equivalent to the old render-cadence
-	# push and drops the redundant per-render-frame recomposite.
+	# Self-deliver the held output to the overlay sink (ADR-0014); the subsystem owns its I/O.
+	# Pushed only on frames that did work (the guard above) — the overlay retains its layer
+	# between ticks, so no recomposite is needed on skipped frames.
 	_deliver_output()
 
 
 ## Force an in-place re-fold + re-deliver at the CURRENT frame WITHOUT advancing the clock
-## (#255 authoring re-fold). The once-per-frame guard holds each subsystem's folded output
-## between ticks, so a live-keyframe edit (colour is read-live) needs the held output
-## rebuilt from the now-mutated keyframes to reach the overlay — a repaint in place, NOT a
-## reset + re-pump (ADR-0070). Re-evaluates every channel at the already-active phase and
-## re-delivers. A no-op-equivalent when nothing changed (folds identical live data).
+## (#255 authoring re-fold). The once-per-frame guard holds the folded output between ticks,
+## so a live-keyframe edit (colour is read-live) needs the held output rebuilt from the
+## now-mutated keyframes to reach the overlay — a repaint in place, NOT a reset + re-pump
+## (ADR-0070).
 func redeliver() -> void:
 	for ch in channels:
 		_evaluate(ch, _active_phase)
@@ -171,8 +152,8 @@ func get_owner_id() -> int:
 ## Set the per-lane mute filter (Studio Solo/Mute) and re-fold the current frame
 ## immediately, so a toggle shows even while the preview is parked (no next tick):
 ## build_stream skips the muted keys, so the re-delivered stream drops those lanes' events
-## (all keys muted ⇒ empty ⇒ neutral). Keys are subtype-defined (screen: phase; palette:
-## "<phase>/<channel>"). _active_phase is left untouched so the re-fold stays in phase.
+## (all keys muted ⇒ empty ⇒ neutral). Key shapes on _muted_ops; _active_phase is left
+## untouched so the re-fold stays in phase.
 func set_muted(filter: Dictionary) -> void:
 	_muted_ops = filter
 	_has_processed_frame = false

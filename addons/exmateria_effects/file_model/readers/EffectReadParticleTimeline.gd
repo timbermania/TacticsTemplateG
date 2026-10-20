@@ -8,39 +8,37 @@ extends RefCounted
 ## 128 bytes of SoA arrays: 25 s16 times at +0x00, 25 u8 emitter ids at +0x31, 25 u16 action
 ## flags at +0x4A, and an s16 watermark at +0x7E.
 ##
-## 🔴 `time[]` AND `emitter_id[]` PHYSICALLY SHARE BYTE 0x31. `time[]` is 25 s16 spanning
+## `time[]` AND `emitter_id[]` PHYSICALLY SHARE BYTE 0x31. `time[]` is 25 s16 spanning
 ## 0x00..0x31 and `emitter_id[]` starts AT 0x31, so `time[24]`'s high byte is `emitter_id[0]`.
 ## The reader has it easy — it reads both views and both are "right" — but this is why
 ## `EffectWriteParticleTimeline` must write `time[]` before `emitter_id[]`, and why `time[24]`
 ## is a phantom slot no real data reaches (`max_keyframe` never gets to 24).
 ##
-## 🔴 THREE OF THE HEADER'S NINE FIELDS ARE NOT IN THIS SECTION AT ALL. `first_hit_frame`,
+## THREE OF THE HEADER'S NINE FIELDS ARE NOT IN THIS SECTION AT ALL. `first_hit_frame`,
 ## `for_each_delay` and `total_frames` are DERIVED by simulating the runtime `PhaseBlock` walk
 ## over the `for_each` channels — and `total_frames` additionally needs the CAMERA section's
-## phase2 keyframes. `parse_timeline` seeds them camera-less and `extract_effect` then
-## RECOMPUTES them with the camera in hand, so a straight port of `parse_timeline` alone does
-## not match `timeline.json` on any effect with a walkable phase2 camera. That is why this
-## reader calls `EffectReadCamera` itself: the committed leaf is the post-recompute one, and
-## the reader has to produce what the leaf holds, not what one Python function returns.
+## phase2 keyframes. `parse_timeline` seeds them camera-less and `extract_effect` recomputes
+## them with the camera in hand, so a straight port of `parse_timeline` alone does not match
+## `timeline.json` on any effect with a walkable phase2 camera; this reader calls
+## `EffectReadCamera` itself because the committed leaf is the post-recompute one.
 ##
-## ⚠️ THE KEYFRAME TIMES ARE CUMULATIVE, NOT ABSOLUTE. A channel sits in keyframe N for
-## `kf[N].time - kf[N-1].time` frames at 30 Hz. An earlier derivation used the absolute reading
-## (`base + kf.time`) and disagreed with the runtime by hundreds of frames per effect; the
-## runtime is authoritative because `EffectViewer` plays these back through `PhaseBlock`. The
-## walk below mirrors `PhaseBlock` verbatim, zero-duration-still-costs-a-frame included.
+## KEYFRAME TIMES ARE CUMULATIVE, NOT ABSOLUTE. A channel sits in keyframe N for
+## `kf[N].time - kf[N-1].time` frames at 30 Hz. The runtime is authoritative — `EffectViewer`
+## plays these back through `PhaseBlock` — and the walk below mirrors it verbatim,
+## zero-duration-still-costs-a-frame included.
 ##
 ## `EffectWriteParticleTimeline` writes only the channels' SoA arrays and their watermarks, so
 ## referee B is blind to all nine header fields — the six stored ones as well as the three
 ## derived — and `timeline.json` is their only oracle.
 ##
-## ⚠️ THE LEAF IS `timeline.json` while the section is `particle_timeline`; one of the three
+## The leaf is `timeline.json` while the section is `particle_timeline`; one of the three
 ## name mismatches `SECTION_SOURCES` exists to carry.
 ##
 ## ABSENT IS `null`. A section under 12 bytes returns an empty header and no channels, then
 ## still gets the three derived fields stamped on — exactly as `extract_effect` does, because
 ## its `.update()` is unconditional.
 ##
-## 🔴 `last_fire_frame` NEVER DOMINATES ON THIS CORPUS, AND `parse_effect.py` SAYS IT DOES.
+## `last_fire_frame` NEVER DOMINATES ON THIS CORPUS, AND `parse_effect.py` SAYS IT DOES.
 ## Its docstring names E032 Haste as a spell whose lone HIT_REACT sits past the camera return
 ## so that the AoE-sweep bound wins. Measured two ways — deleting the branch here is green
 ## across all 400, and recomputing `_derive_cinematic_timing` in Python with the branch
@@ -80,7 +78,7 @@ const CHANNEL_CONTEXTS: Array = ["for_each", "phase1", "phase2"]
 ## loads `emitter_id[i]` from `+0x31` with the same index, and both offsets are this file's own
 ## (`PARTICLE_OFF_EMITTER_ID`, `PARTICLE_OFF_ACTION_FLAGS`).
 ##
-## 📏 Over all 9,044 live keyframes: selector 0 = 8,774, 1 = 109, 2 = 73, 3 = 57, 4 = 31,
+## Over all 9,044 live keyframes: selector 0 = 8,774, 1 = 109, 2 = 73, 3 = 57, 4 = 31,
 ## and 5/6/7 = ZERO. #449's census read this as "bit 0 = 166, bit 1 = 130, bit 2 = 31", which
 ## is the same data decomposed wrongly — bit 0 is values {1,3} = 166, bit 1 is {2,3} = 130,
 ## bit 2 is {4} = 31. Detail and the install path (an effect-SCRIPT `load_callback` opcode,
@@ -95,13 +93,13 @@ const MAX_CALLBACK_SLOTS: int = 4
 ## effects respecting `max_keyframe`: 223 real HIT_REACT keyframes, every one in `for_each`
 ## context and NONE in phase1/phase2 — which is why the derivation scans `for_each` only.
 ##
-## ⚠️ NO ROM READ SITE HAS BEEN FOUND FOR THIS BIT, OR FOR 3, 5 OR 6. Two probes looked: every
-## `andi` in BATTLE.BIN with mask 0x08/0x10/0x20/0x40 resolved back to the instruction that
-## produced its source (none takes a `+0x4A` load), and both reading functions load `+0x4A`
-## exactly once and mask it only with 0x7. That is *no read site found*, NOT "engine-ignored" —
-## a value stashed in a saved register, or tested by shift-and-branch instead of `andi`, would
-## defeat both. `frameset.header_flags` earned the `na` verdict on stronger ground: there the
-## field's only reader was found and shown to step over it.
+## ROM: the decomp's `EFFECT_KEYFRAME_ACTION_FLAG_POST_ACTION_DISPLAY` — the damage-number
+## trigger. The keyframe's whole halfword is passed as an argument into the two dispatchers,
+## which test it from a saved register (why a `+0x4A`-load probe found no read): `andi v0,s1,0x10`
+## at 0x801A3224 in `battle_effect_run_keyframe_actions` (0x801A31A8, the per-target for_each
+## child) and `andi v0,s4,0x10` at 0x801A3D7C in `..._all_targets` (0x801A3D30), each calling
+## `battle_gfx_prepare_post_action_display_by_misc_id` (0x80068BD4 -> 0x800803E4). Table in
+## `research/working_documents/EFFECT_ACTION_FLAGS.md`.
 const HIT_REACT_FLAG: int = 0x10
 
 ## The selector value at keyframe `i`, or 0 for "fire nothing" — the `andi …,0x7` the ROM does.
@@ -129,7 +127,7 @@ static func parse(buf: PackedByteArray, header: Dictionary):
 	if timeline_ptr + HEADER_BYTES <= buf.size():
 		for key in HEADER_FIELDS:
 			head[key] = buf.decode_s16(timeline_ptr + int(HEADER_FIELDS[key]))
-		# Five LANES per context, not 25 — `PARTICLE_SLOTS` is the keyframes inside one lane.
+		# Five lanes per context, not 25 — `PARTICLE_SLOTS` is the keyframes inside one lane.
 		for context in CHANNEL_CONTEXTS:
 			for i in range(Layout.PARTICLE_FOR_EACH_OFFSETS.size()):
 				var offset: int = Layout.particle_channel_offset(timeline_ptr, context, i)
@@ -225,8 +223,8 @@ static func derive_cinematic_timing(head: Dictionary, channels: Array, camera) -
 	var for_each_delay: int = maxi(1, int(hit_cfs[1]) - int(hit_cfs[0])) \
 		if hit_cfs.size() >= 2 else 1
 
-	# The camera's phase2 leg is the return to strategy view; once its last walkable keyframe
-	# passes, the camera holds and the cinematic is visually done.
+	# The camera's phase2 leg is the return to strategy view; past its last walkable keyframe
+	# the camera holds and the cinematic is done.
 	var phase2_visible_end: int = -1
 	if camera is Dictionary and camera.get("phase2") is Dictionary:
 		var phase2: Dictionary = camera["phase2"]

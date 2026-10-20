@@ -85,9 +85,10 @@ const EffectData = ExMateriaEffects.EffectData
    compiles shaders when the project OPENS; a first enable in a bare project
    logs shader compile errors for names the plugin has not provided yet
    (ADR-0203 dec. 6).
-3. Enabling registers three autoloads — `EffectMultiMeshPool`,
-   `ScreenEffectOverlay`, `TintedSurfaces`. A project that declares them itself
-   keeps its own lines; the plugin only adds what is missing.
+3. Enabling registers four autoloads — `EffectMultiMeshPool`,
+   `ScreenEffectOverlay`, `TintedSurfaces` and `CompositorAutopilot` (the render
+   router, shipped since #1453 — see *Who decides the route*). A project that
+   declares them itself keeps its own lines; the plugin only adds what is missing.
 4. Preserve an existing sound/SPU installation and its startup/shutdown ownership;
    do not overwrite its source or native binaries to install Effects.
 5. **Declare `exmateria_effects/content_root`** — see *Content the host must
@@ -205,38 +206,82 @@ ADR-0142 rather than targeted at zero"*. That conflated two claims: a content ro
 removes every literal without moving one ROM-derived byte, so the dependency survives as
 this documented install step and the install register reaches 0.
 
-## Native producer setup (no host autopilot)
+## Producer setup
 
-`EngineFoldCompositor` extends **Node**, not `CompositorEffect`. Transparent
-pooled particles still need this producer in native mode. This standalone recipe
-is **only for non-fold-capable renderers**, including GL Compatibility. Add exactly
-one to the scene/world that owns playback, after installing the three autoloads:
+`EngineFoldCompositor` extends **Node**, not `CompositorEffect`. Transparent pooled
+particles are materialized by it on **both** routes — `EffectParticleRenderer` fills
+only the opaque MultiMesh — so without one, the transparent half of every effect is
+absent, the opaque pass keeps drawing, and nothing errors. Add exactly one to the
+scene or world that owns playback, after installing the autoloads:
 
 ```gdscript
 var producer := ExMateriaEffects.EngineFoldCompositor.new()
 add_child(producer)
-if not producer.setup_native(camera): # once, with an in-tree Camera3D in this world
+if not producer.setup_auto(camera): # once, with an in-tree Camera3D in this world
     producer.queue_free()
-    return # rejected; do not start playback without a producer
+    return # no producer; do not start playback
 ```
 
-On an accepted renderer this selects native shaders and creates no FoldSurface/
-compositor bracket. It supports GL Compatibility without a RenderingDevice.
-`setup_native` returns false and warns **before changing any producer state** when
-`Fold.owns()` is true: callbacks independently use that predicate and would join
-a held-out layer with no seed/resolve bracket. **Fork Forward+ callers must use
-`setup(camera)` with the default `native_blend=false` instead.** Missing camera or
-pool also returns false (with the existing setup warning).
+`setup_auto` picks the **route** for you and attaches on that side. You do not identify
+your renderer, you do not set a field first, and there is no second verb to choose. It
+works on GL Compatibility with no `RenderingDevice`, on stock/Mobile, and on the fork —
+including the fork with the comparison override on.
 
-The producer processes
-after pool writers (priority 1000); keep it alive while casts run and free it
-with the owning scene. Do not also attach the upstream CompositorAutopilot.
-The existing `native_blend=true; setup(camera)` comparison override remains
-available for pooled-carrier tests/debugging; it does **not** reroute callbacks
-and is not a complete standalone playback recipe on a fold-capable renderer.
-Native blending is not display-space fold parity. The complete install still
-declares `engine="fork"` for its fold resources and existing rig; native setup
-alone does **not** certify a particular stock engine version or export template.
+> **Route** is the vocabulary: `route = override or not Fold.owns()`. `Fold.owns()` is a
+> build fact and answers *can this build fold?*; the route answers *is this cast drawing
+> native?*. Say route, not "mode" and not "path".
+
+On the fold route it installs a `FoldSurface` seed/resolve bracket and its carriers join
+the fold layer; on the native route there is no bracket, no layer, and the
+`effect_native_*` twins carry their own sRGB linearize. Native blending is **not**
+display-space fold parity: Godot blends in linear space, the PSX in display space, so
+overlapping adds read dimmer and `blend_sub` clamps differently. The claim is "visible,
+and per-sprite colour-correct", nothing stronger.
+
+`native_blend` is a **read-only** getter reporting the route the producer attached on.
+The producer processes after pool writers (priority 1000); keep it alive while casts run
+and free it with the owning scene — freeing it frees its carriers.
+
+### Who decides the route
+
+`CompositorAutopilot` is the router: it probes the build, derives the route, keeps the
+producer pinned to the live camera across scene changes, and owns the comparison
+override. **It ships with this addon** as its fourth autoload — enabling the plugin
+registers it, and you write nothing.
+
+It was 142 lines of host code until #1453, and the cost of that was silent: the
+compositor is the sole materializer of transparent prims on **both** routes, so a
+consumer who installed the addon, declared `content_root` and enabled the plugin had
+to write the router themselves or lose the transparent half of every effect, with the
+opaque pass still drawing and nothing erroring.
+
+With **no router registered** the route is `not Fold.owns()` — the correct side for
+your build. You lose the override and the camera re-attach, nothing else.
+
+⚠️ An earlier version of this section told fork Forward+ callers they could not use the
+native verb at all, because `setup_native` refused a fold-capable renderer: *"callbacks
+independently use that predicate and would join a held-out layer with no seed/resolve
+bracket"*. **That is no longer true and the guard is gone.** Callbacks follow the
+producer's route, so there is no held-out layer to strand them in. The same section also
+said *"do not also attach the upstream CompositorAutopilot"* — also false now, and the
+opposite of the advice: the router is what keeps the producer attached across scene
+changes.
+
+### The comparison override
+
+`set_native_blend(v) -> bool` on the router forces the native side on a build that can
+fold, so the muddy linear-blend result can be held against the display-space one. It
+returns the **effective** route, not the request: off-fold, asking for the fold comes
+back `true`, so a UI label cannot lie about a fold that is not there.
+
+It is a **between-casts** control. Flipping it re-creates the producer, but a cast reads
+its route once and keeps it for its lifetime — by design, because the alternative is
+particles on the new side and callbacks on the old, which compares nothing. Re-create
+the cast.
+
+The complete install still declares `engine="fork"` for its fold resources and its
+existing rig; native setup alone does **not** certify a particular stock engine version
+or export template.
 
 ## Playback and receiving channels
 

@@ -3,9 +3,10 @@ extends RefCounted
 ## EffectBinWriter.gd (#1329). No class_name (ADR-0004) — path-preloaded.
 ## Vault: [[Effect File Format]]
 ## Contract: reader returns = JSON.parse_string() of the committed extract — no JSON
-## serialized, float/key ordering out of the problem. 🔴 ABSENT is null, never an empty dict
+## serialized, float/key ordering out of the problem. ABSENT is null, never an empty dict
 ## ("no section" vs "all zeroes"; 269 of 400 have no time_scale). Two referees pin every
-## reader, neither alone sufficient: extract-compare + round-trip (EffectBinReadWriteCorpusTest).
+## reader, neither alone sufficient: extract-compare + round-trip
+## (EffectBinReadWriteCorpusTest).
 ## vault: .vaults/comments/exmateria_effects/bin-reader-referees.md
 
 const ReadFlags = preload("res://addons/exmateria_effects/file_model/readers/EffectReadFlags.gd")
@@ -24,27 +25,21 @@ const ReadSoundDef = preload("res://addons/exmateria_effects/file_model/readers/
 const ReadCurves = preload("res://addons/exmateria_effects/file_model/readers/EffectReadCurves.gd")
 const ReadScript = preload("res://addons/exmateria_effects/file_model/readers/EffectReadScript.gd")
 
-## section -> parser. All 14 `patch_all` sections ported, plus ReadCurves/ReadScript as
-## VIEWS — GDScript reads 19 of 19 `load_from_directory` leaves.
-## 🔴 READING 19 IS NOT WRITING 19, and the two views differ in WHY they are views:
-##   `script`   — WRITTEN, in both languages, since #1416 (`EffectWriteScript.gd` +
-##                `EffectBinWriter.serialize_script`; `write_effect_script.py`, #273/ADR-0094).
-##                It stays out of THIS registry because the write side does not consume this
-##                block: a swap RESIZES, and the writer regenerates the whole canonical section
-##                — child body included — from a table, where this walk stops at the root's
-##                first `end`. `script.json` is the studio's oracle, not the writer's input.
-##   `curves`   — no writer in ANY language, measured rather than assumed: the tracker's
-##                write-reach probe flips all 2,400 curve bytes on E019 and every one comes
-##                back unwritten (#448 / #274). Heavily READ all the same — unwritable is not
-##                unused.
-## `timeline_header` closed the third gap (#271): it parses out of the SAME block as
-## `particle_timeline` — one `timeline.json`, two serializers over disjoint bytes of the
-## section — so it shares `ReadParticleTimeline.parse` rather than getting a reader of its own.
-## So: GDScript writes 15 sections and Python writes 15 — #1416 closed the last gap, and
-## `script` is the one of the fifteen that is not a member of THIS registry.
-## 🔴 A SECTION IS A PATCHABLE UNIT: texture = the plane alone (ADR-0199 holds the CLUT);
-## meta()/swatches()/decode + group_sizes() + particle_header() are views, not sections —
-## patch_all refuses no-serializer.
+## section -> parser. The 14 `patch_all` sections, plus two VIEWS:
+##   `script` — written in both languages since #1416 (`EffectWriteScript.gd` +
+##     `EffectBinWriter.serialize_script`; `write_effect_script.py`, #273/ADR-0094), but out
+##     of this registry because the writer never consumes a parsed block: a swap RESIZES, and
+##     the writer regenerates the whole canonical section — child body included — from a
+##     table, where this walk stops at the root's first `end`. `script.json` is the studio's
+##     oracle, not the writer's input.
+##   `curves` — no writer in any language: the write-reach probe flips all 2,400 curve bytes
+##     on E019 and every one comes back unwritten (#448 / #274). Unwritable is not unused —
+##     heavily read.
+## `timeline_header` shares `ReadParticleTimeline.parse`: one `timeline.json`, two
+## serializers over disjoint bytes of the section (#271).
+## A section is a patchable unit: `texture` = the plane alone (ADR-0199 holds the CLUT);
+## `meta()`/`swatches()`/`decode` + `group_sizes()` + `particle_header()` are views, not
+## sections — `patch_all` refuses no-serializer.
 static var _registry: Dictionary = {}
 
 

@@ -1,10 +1,11 @@
 extends RefCounted
-## The ENTIRE display-space fold "module" — THREE statics, no object (ADR-0074, ADR-0191,
+## The ENTIRE display-space fold "module" — FOUR statics, no object (ADR-0074, ADR-0191,
 ## CONTEXT.md "Fold"):
 ##
 ##   add(carrier, material, order_z, rank)  the decorator that makes a carrier foldable (no-op off-fork)
 ##   owns() -> bool                         is the fold available in THIS BUILD
 ##   shader(folded, fallback) -> Shader     the two-way pick that hangs off owns()
+##   remove(carrier)                        undo add, for a carrier that folds only for a while
 ##
 ## It was one static until 2026-08-27. What it is still NOT is material construction, attach or stamp:
 ## ADR-0074 made the material producer-owned and the ordering DepthMode's, and ADR-0191 dec. 4 re-refused
@@ -162,6 +163,18 @@ static func add(carrier: GeometryInstance3D, material: Material, order_z: float,
 	if not carrier.has_meta(_EXIT_HOOK_META):
 		carrier.set_meta(_EXIT_HOOK_META, true)
 		carrier.tree_exiting.connect(_unenroll.bind(carrier))
+
+
+## Take a carrier back OUT of the fold: drop its layer membership and the material_override `add`
+## put on it, so it draws in-scene off its own surface material again. For a producer whose carrier
+## only folds for a while — a unit sprite during the dead-unit fade — and goes back to opaque.
+## Self-gated off-fork for `add`'s reason: `render_layer` is a fork-only property and assigning it
+## on stock RAISES. Safe on a carrier that was never added.
+static func remove(carrier: GeometryInstance3D) -> void:
+	if carrier == null or not owns():
+		return
+	carrier.render_layer = null
+	carrier.material_override = null
 
 
 ## Un-enroll a carrier from the fold layer (tree_exiting hook). Clears render_layer while the node is

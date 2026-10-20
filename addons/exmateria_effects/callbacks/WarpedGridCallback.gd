@@ -1,16 +1,10 @@
 extends "res://addons/exmateria_effects/callbacks/EffectCallback.gd"
 ## CB11 - Warped grid mesh callback (PSX FUN_801c3c7c, offset 0x177C).
-## Screen-space 2D overlay: 9x9 vertex grid (8x8 = 64 quads) with two
-## independent sinusoidal deformations (Y-wave and X-wave). Creates an
-## undulating mesh that fills the screen with a brightness gradient
-## (bright at edges, dark in center) to frame the map.
-##
-## Y-wave: offsets each vertex's Y position via sin(h) * cos(v) * radius
-## X-wave: offsets each vertex's X position (transposed grid strides)
-## Both waves accumulate angle each frame from spread/vel_spread fields.
+## Screen-space 2D overlay: 9x9 vertex grid (8x8 = 64 quads) with two independent
+## sinusoidal deformations (Y-wave, X-wave) and a brightness gradient (bright at
+## edges, dark in center) framing the map.
 ##
 ## CRITICAL: X grid uses transposed strides relative to Y grid.
-## See memory note: callback-scratchpad-transposition.md
 ## Vault: [[Effect Callback Mesh]]
 ## Vault: [[Embedded MIPS Effect Code]]
 
@@ -18,13 +12,11 @@ const GRID_SIZE: int = 9    # 9x9 vertices
 const QUAD_COUNT: int = 8   # 8x8 quads
 const ROW_STEP: float = 48.0  # PSX pixels between grid rows
 
-# Wave angle accumulators (updated each physics frame)
 var _y_wave_h: int = 0   # piVar27[0x681]
 var _y_wave_v: int = 0   # piVar27[0x685]
 var _x_wave_h: int = 0   # piVar27[0x689]
 var _x_wave_v: int = 0   # piVar27[0x68d]
 
-# UV scrolling accumulators
 var _uv_counter_x: int = 0  # piVar27[0x691]
 var _uv_counter_y: int = 0  # piVar27[0x692]
 var _uv_base_x: int = 0     # from emitter+0x14 (position_start[0])
@@ -32,7 +24,6 @@ var _uv_base_y: int = 0     # from emitter+0x16 (position_start[1])
 var _half_wrap_x: int = 0   # from param_A8
 var _half_wrap_y: int = 0   # from param_AA
 
-# Brightness
 var _brightness_row_idx: int = 0
 var _brightness_table: Array = []
 
@@ -92,21 +83,16 @@ func physics_step() -> void:
 
 	var raw: Dictionary = emitter_config.raw_data
 
-	# --- Y-wave accumulator update (PSX func_0x801a8c8c, line 1049-1051) ---
-	# Uses spread fields: lerp(spread_start, spread_end, curve_t)
-	# Curve index from emitter+0x08 nibbles (position curve bits 4-7)
+	# --- Y-wave accumulator update (PSX func_0x801a8c8c) ---
 	var y_incr_t: float = _curve_t_nibble(0, 4)  # (emitter+0x08 >> 4) & 0xF
 	_y_wave_h += int(lerpf(float(_ri(raw, "spread_start", 0)), float(_ri(raw, "spread_end", 0)), y_incr_t))
 	_y_wave_v += int(lerpf(float(_ri(raw, "spread_start", 1)), float(_ri(raw, "spread_end", 1)), y_incr_t))
 
-	# --- X-wave accumulator update (PSX lines 1059-1062) ---
-	# Uses vel_spread fields: lerp(vel_spread_start, vel_spread_end, curve_t)
-	# Curve index from emitter+0x08 nibbles (bits 12-15 of second word)
 	var x_incr_t: float = _curve_t_nibble(1, 4)  # (emitter+0x0C >> 12) & 0xF? Actually (emitter+8 >> 0xc & 0xf)
 	_x_wave_h += int(lerpf(float(_ri(raw, "vel_spread_start", 0)), float(_ri(raw, "vel_spread_end", 0)), x_incr_t))
 	_x_wave_v += int(lerpf(float(_ri(raw, "vel_spread_start", 1)), float(_ri(raw, "vel_spread_end", 1)), x_incr_t))
 
-	# --- UV scroll (PSX lines 924-960) ---
+	# --- UV scroll ---
 	# Magnitude: lerp(emitter+0x5C, emitter+0x60) = inertia_min_end → weight_min_start
 	# Direction: lerp(emitter+0x2E, emitter+0x34) = angle_start[1] → angle_end[1]
 	var uv_mag_t: float = _curve_t_nibble(0, 0)  # (emitter+8 >> 0x1c) → top nibble
@@ -120,7 +106,6 @@ func physics_step() -> void:
 	_uv_counter_x += int(cos(dir_rad) * float(uv_mag) * 16.0)
 	_uv_counter_y += int(sin(dir_rad) * float(uv_mag) * 16.0)
 
-	# Wrap UV counters
 	_uv_counter_x = _wrap_counter(_uv_counter_x, _half_wrap_x)
 	_uv_counter_y = _wrap_counter(_uv_counter_y, _half_wrap_y)
 
@@ -139,12 +124,12 @@ func update_render() -> void:
 	var cam_right: Vector3 = camera.global_basis.x
 	var cam_up: Vector3 = camera.global_basis.y
 	var cam_fwd: Vector3 = -camera.global_basis.z
-	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
-	var aspect: float = viewport_size.x / viewport_size.y
+	# The PSX 256-px screen spans the centred FRAME, never the viewport (gl-ADR-0382): a wider
+	# viewport shows more world at the sides, it does not stretch a screen-space quad.
+	var aspect: float = DisplayPort.FRAME_ASPECT
 	var psx_scale_x: float = camera.size * aspect / 256.0
 	var psx_scale_y: float = camera.size / 240.0
 
-	# UV rect
 	if _material and effect_data.texture:
 		var ts: Vector2 = effect_data.texture.get_size()
 		if ts.x > 0 and ts.y > 0:
@@ -154,7 +139,6 @@ func update_render() -> void:
 				float(u0) / ts.x, float(v0) / ts.y,
 				float(_half_wrap_x) / ts.x, float(_half_wrap_y) / ts.y))
 
-	# Color curves (PSX lines 961-974)
 	var curve_color: Color = _sample_colors()
 	var r_val: float = curve_color.r
 	var g_val: float = curve_color.g
@@ -165,12 +149,6 @@ func update_render() -> void:
 
 	var raw: Dictionary = emitter_config.raw_data
 
-	# --- Y-wave grid (PSX lines 984-1012) ---
-	# Y vertex values: sin(h) * cos(v) * radius + base_y
-	# h_step = 0x20000 / lerp(accel_min_start[0], accel_min_end[0])
-	# v_step = 0x20000 / lerp(accel_min_start[1], accel_min_end[1])
-	# radius = lerp(accel_min_start[2], accel_min_end[2])
-	# v_accel (row offset to h) = lerp(accel_max_start[0], accel_max_end[0]) -- offset 0x6C/0x78
 	var grid_curve_t: float = _curve_t_nibble(0, 6)  # (emitter+0xC & 0xF)
 	var y_h_step_val: int = int(lerpf(float(_ri(raw, "accel_min_start", 0)), float(_ri(raw, "accel_min_end", 0)), grid_curve_t))
 	var y_h_step: int = 0x20000 / maxi(y_h_step_val, 1) if y_h_step_val != 0 else 0
@@ -198,8 +176,6 @@ func update_render() -> void:
 		y_v += y_v_step
 		base_y += ROW_STEP
 
-	# --- X-wave grid (PSX lines 1013-1041, TRANSPOSED strides) ---
-	# Same formula but from drag fields, and strides are swapped
 	var x_h_step_val: int = int(lerpf(float(_ri(raw, "drag_min_start", 0)), float(_ri(raw, "drag_min_end", 0)), grid_curve_t))
 	var x_h_step: int = 0x20000 / maxi(x_h_step_val, 1) if x_h_step_val != 0 else 0
 	var x_v_step_val: int = int(lerpf(float(_ri(raw, "drag_max_start", 0)), float(_ri(raw, "drag_max_end", 0)), grid_curve_t))
@@ -225,7 +201,6 @@ func update_render() -> void:
 		x_v += x_v_step
 		base_x += ROW_STEP
 
-	# Brightness table row
 	var bright_row: Array = []
 	if _brightness_row_idx >= 0 and _brightness_row_idx < _brightness_table.size():
 		bright_row = _brightness_table[_brightness_row_idx]
@@ -249,7 +224,6 @@ func update_render() -> void:
 			var sx11: float = grid_x[qcol + 1][qrow + 1]
 			var sy11: float = grid_y[qrow + 1][qcol + 1]
 
-			# Screen-space → camera plane
 			# PSX screen center = (256, 120) in primitive coords (DRAWENV.x=0, DISPENV.x=128)
 			var v00: Vector3 = base_pos + cam_right * (sx00 - 256.0) * psx_scale_x + cam_up * (-(sy00 - 120.0)) * psx_scale_y
 			var v01: Vector3 = base_pos + cam_right * (sx01 - 256.0) * psx_scale_x + cam_up * (-(sy01 - 120.0)) * psx_scale_y

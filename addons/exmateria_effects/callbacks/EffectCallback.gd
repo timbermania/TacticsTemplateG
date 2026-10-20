@@ -17,13 +17,13 @@ const EffectsContent = preload("res://addons/exmateria_effects/install/EffectsCo
 const EffectData = preload("res://addons/exmateria_effects/file_model/EffectData.gd")
 const EffectEmitter = preload("res://addons/exmateria_effects/file_model/EffectEmitter.gd")
 
-## ADR-0212 dec. 1 — `addons/exmateria_schema` used to declare six bare globals,
-## every one of them generic English (`Fold`, `DepthMode`, `ColorStack`,
-## `ColorRecipe`, `CellMarking`, `TerrainCell`). It now declares only
-## `ExMateriaSchema`, so these lines are what keep the use sites below spelled the
-## way they were (ADR-0211 dec. 4).
+## ADR-0212 dec. 1 — the schema declares only `ExMateriaSchema`; the aliases keep
+## the use sites below spelled `DepthMode`/`Fold` (ADR-0211 dec. 4).
 const DepthMode = ExMateriaSchema.DepthMode
 const Fold = ExMateriaSchema.Fold
+## The centred PSX frame (gl-ADR-0382): a screen-space callback lays its 256x240 quad in
+## the frame, never across the viewport.
+const DisplayPort = ExMateriaPlatform.DisplayPort
 
 signal child_spawn_requested(emitter_index: int, position: Vector3, frame: int)
 
@@ -38,25 +38,35 @@ const ANGLE_SCALE: float = TAU / 4096.0
 const UV_WRAP_SCALE: int = 0x1000
 const ANGLE_MASK: int = 0xFFF
 
-# Callback blend material. On the engine-fold path (fork >= 4.8 + Forward+, CompositorAutopilot owns
-# compositing) the mesh wears the `compositor_layer` variant so the engine folds it into the display
-# scratch instead of the transparent color layer — where Pass C would composite the folded result
-# OVER it under any folded prim's footprint (the E065 Shiva "spikes pierce the flash" bug). Stock/Mobile and
-# the test runner keep the plain additive shader (the fold variant's compositor_layer render_mode is
-# Forward+-only).
+# Callback blend material. On the FOLD route the mesh wears the `compositor_layer` variant so the
+# engine folds it into the display scratch instead of the transparent color layer — where Pass C would
+# composite the folded result OVER it under any folded prim's footprint (the E065 Shiva "spikes pierce
+# the flash" bug). On the NATIVE route it keeps the in-scene additive twin (the fold variant's
+# compositor_layer render_mode is Forward+-and-fork-only). Which route this cast is on is pushed down
+# by CallbackManager — see `_route` below; it is NOT `Fold.owns()`, which is the build fact.
 #
 # Both consts are `preload`ed since ADR-0191 dec. 2, which is a change from the String paths that
 # were here: the fold shader now resolves on EVERY build, not just the fork. That is safe, and it
 # was measured rather than assumed. Under stock 4.7 a minimal project preloading a `compositor_layer`
 # shader loads it silently — no error, non-null, `code` intact. The engine only compiles a shader
-# when a ShaderMaterial BINDS it, and off-fork `Fold.shader()` hands back the fallback, so the fold
-# twin is never bound. (Bind it deliberately off-fork and you do get `SHADER ERROR: Invalid render
-# mode: compositor_layer` — from `set_code`, at the bind, not at the load.) The old comment here
+# when a ShaderMaterial BINDS it, and off-fork the route is NATIVE, so `blend_shader` hands back the
+# in-scene twin and the fold twin is never bound. (Bind it deliberately off-fork and you do get
+# `SHADER ERROR: Invalid render mode: compositor_layer` — from `set_code`, at the bind, not at the
+# load.) That safety now rests on the ROUTE rather than on `Fold.shader()`, and it is the SAME
+# guarantee: with no router installed the route's absent answer is `not Fold.owns()`, so a build that
+# cannot fold is never handed the twin it cannot compile. The old comment here
 # claimed this file was "load()ed lazily and only on the fork"; that rationale is retired, not
 # quietly dropped.
 const CB_SHADER_NORMAL := preload("res://addons/exmateria_effects/callbacks/effect_callback_additive.gdshader")
 const CB_SHADER_FOLD := preload("res://addons/exmateria_effects/callbacks/effect_callback_fold.gdshader")
 
+# Optional per-effect stream; only CB37 consumes it. Existing callbacks are unchanged.
+var rng: RandomNumberGenerator = null
+## The cast's ParticleSubsystem, set by CallbackManager. Most callbacks draw their own
+## mesh and never read it; one that drives sprite particles (TrapOrbitalCallback)
+## acquires them here, because a callback's only other voice — child_spawn_requested —
+## launches a one-shot emission it cannot move afterwards.
+var particle_host = null
 var callback_id: int = -1
 var slot_index: int = -1
 var effect_data: EffectData
@@ -75,7 +85,36 @@ var _active: bool = false
 var _array_mesh: ArrayMesh
 var _mesh_instance: MeshInstance3D
 var _material: ShaderMaterial
-var _folded: bool = false   # true when the mesh wears the compositor_layer variant (engine-fold path)
+## THE ROUTE this cast draws on, pushed down ONCE by CallbackManager (ADR-0349 dec. 2). It was
+## `_folded = Fold.owns()`, set at mesh build — the build fact standing in for the route, which is
+## the defect ADR-0349 is named after: `owns()` answers *can this build fold?* and cannot answer
+## *is this cast drawing native?*, so the comparison override moved the particles and left the
+## callbacks behind on a frame that then composited two different colour spaces.
+##
+## UNSET IS A REAL STATE AND NOT A THIRD ROUTE. It means nobody pushed one — a construction-order
+## defect, not a rendering choice — and `_create_cb_mesh` says so out loud rather than picking a
+## side in silence. It resolves to NATIVE there, deliberately: native draws IN-SCENE and is always
+## visible, while binding the `compositor_layer` twin on a build that cannot fold is a shader error
+## and on a build that can is a prim in a layer with no bracket. Fail visible, fail loud.
+enum Route { UNSET = -1, FOLD = 0, NATIVE = 1 }
+var _route: Route = Route.UNSET
+
+
+## Push this cast's route down (ADR-0349 dec. 2). Called by CallbackManager once, immediately after
+## construction and BEFORE `initialize`, so it is set long before the first `invoke` reaches
+## `_create_cb_mesh`.
+##
+## It is a push, not a pull, and that is the decision rather than a style: `EffectCallback` has ZERO
+## singleton reaches and keeps none. A per-callback read of the router would put a node-path reach
+## inside this class and couple a callback to the producer's IDENTITY rather than to the route — and
+## a value that changes approximately never would be re-read by every callback, every frame.
+##
+## One read per cast also means a cast stays INTERNALLY CONSISTENT for its lifetime. The override is
+## a BETWEEN-CASTS control (ADR-0349 dec. 6): flipping it mid-cast leaves this callback where it
+## started, by design, because the alternative — particles on the new side and callbacks on the old —
+## compares nothing.
+func set_route_native(native: bool) -> void:
+	_route = Route.NATIVE if native else Route.FOLD
 
 
 func initialize(data: EffectData, slot: int) -> void:
@@ -87,14 +126,12 @@ func initialize(data: EffectData, slot: int) -> void:
 
 func invoke(emitter_index: int, spawn_counter: int, channel_index: int) -> void:
 	"""Called by CallbackManager when timeline triggers this callback slot."""
-	# Store the emitter config for parameter reads
 	emitter_config = effect_data.get_emitter(emitter_index)
 	if emitter_config == null:
 		return
 
 	# PSX process_keyframe_actions writes state=1 only on KEYFRAME HITS
-	# (spawn_counter=0). Per-frame for_each calls (spawn_counter>0)
-	# just invoke the callback which checks state=2 and runs animate code.
+	# (spawn_counter=0); per-frame for_each calls (spawn_counter>0) just invoke.
 	match state:
 		State.INACTIVE:
 			state = State.INIT
@@ -110,12 +147,11 @@ func invoke(emitter_index: int, spawn_counter: int, channel_index: int) -> void:
 				_on_animate(emitter_index, spawn_counter, channel_index)
 		State.CLEANUP:
 			if spawn_counter == 0:
-				# New keyframe hit from different channel/emitter → re-init
-				# PSX: timeline sets state=1 on keyframe hits regardless of current state
+				# New keyframe hit → re-init (PSX sets state=1 on keyframe hits
+				# regardless of current state)
 				state = State.INIT
 				_on_init(emitter_index, spawn_counter, channel_index)
 			else:
-				# Ongoing invocations during cleanup → run cleanup code
 				cleanup()
 
 
@@ -275,6 +311,16 @@ func _sample_colors() -> Color:
 	return Color(r, g, b, 1.0)
 
 
+func _curve_t_for_slot(slot: String, byte_idx: int, bit_shift: int) -> float:
+	if emitter_config != null and effect_data != null:
+		var idx: int = int(emitter_config.curves.get(slot, -1))
+		if idx >= 0:
+			var c = effect_data.get_curve(idx)
+			if c:
+				return c.sample_by_frame(_frame_counter)
+	return _curve_t_nibble(byte_idx, bit_shift)
+
+
 func _curve_t_nibble(byte_idx: int, bit_shift: int) -> float:
 	"""Sample a curve using nibble-packed index from emitter curve_indices_raw.
 	byte_idx selects which 4-byte word (0 or 1), bit_shift selects nibble (0-7)."""
@@ -291,7 +337,17 @@ func _curve_t_nibble(byte_idx: int, bit_shift: int) -> float:
 	var curve_idx: int = nibble - 1
 	if curve_idx < 0:
 		return 0.0
-	var curve = effect_data.get_curve(curve_idx)
+	# A nibble is a ROM slot ORDINAL. CurveExplode re-indexes `effect_data.curves` per use
+	# site, so get_curve(ordinal) would return a stranger's curve — resolve against the
+	# pre-explode table instead.
+	# The `else` only fires for an EffectData built outside load_from_directory (a hand-
+	# assembled test double — production always explodes first): the ordinals then resolve
+	# against the exploded table. Kept as a fallback so such a double still samples
+	# something; a second production load route turns this into an error.
+	var table: Array = effect_data.curves_raw if not effect_data.curves_raw.is_empty() else effect_data.curves
+	if curve_idx >= table.size():
+		return 0.0
+	var curve = table[curve_idx]
 	if curve == null:
 		return 0.0
 	return curve.sample_by_frame(_frame_counter)
@@ -306,26 +362,33 @@ func _create_cb_mesh(use_brightness: bool = false) -> void:
 	_mesh_instance = MeshInstance3D.new()
 	_mesh_instance.mesh = _array_mesh
 	_mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	# Route through the compositor when the engine-fold owns compositing (fork + Forward+); otherwise
-	# keep the plain additive shader for stock/Mobile. Same uniforms either way, so the per-frame
-	# set_shader_parameter calls below and in subclasses are shader-agnostic.
-	_folded = Fold.owns()
-	var shader := blend_shader()
+	# Route through the compositor when THIS CAST folds; otherwise keep the in-scene additive twin.
+	# Same uniforms either way (they live in effect_callback_body.gdshaderinc since #1450), so the
+	# per-frame set_shader_parameter calls below and in subclasses are route-agnostic.
+	if _route == Route.UNSET:
+		push_error("[callback] CB%d slot=%d built a mesh with no route pushed — CallbackManager.initialize must call set_route_native() first (ADR-0349 dec. 2). Drawing NATIVE." % [callback_id, slot_index])
+		_route = Route.NATIVE
+	var shader := blend_shader(_route)
 	_material = ShaderMaterial.new()
 	_material.shader = shader
 	_material.set_shader_parameter("use_texture", false)
 	if not use_brightness:
 		_material.set_shader_parameter("use_psx_brightness", false)
 	add_child(_mesh_instance)
-	if _folded and EffectsDebug.particle():
+	if _route == Route.FOLD and EffectsDebug.particle():
 		print("[callback-fold] CB%d slot=%d routed through compositor (compositor_layer)" % [callback_id, slot_index])
 
 
-static func blend_shader() -> Shader:
-	"""This producer's blend shader: the compositor_layer variant when the build folds, else the plain
-	additive fallback. The PICK is Fold.shader's (ADR-0191 dec. 2) and is tested on both branches in
-	FoldTest; what this pins is which two shaders this producer hands it, and in which order."""
-	return Fold.shader(CB_SHADER_FOLD, CB_SHADER_NORMAL)
+## This producer's blend shader for a given route: the `compositor_layer` twin when the cast folds,
+## the in-scene additive twin otherwise.
+##
+## It used to be `Fold.shader(CB_SHADER_FOLD, CB_SHADER_NORMAL)`, and `Fold.shader` is `owns()` —
+## the kernel picking on the BUILD fact. That is still the right pick for a producer with no route
+## to consult (ADR-0191 dec. 2 is untouched, and eleven other producers still call it); it is the
+## wrong one HERE, because this addon has a route and the override is the whole gap between the two
+## questions. UNSET resolves to the in-scene twin for `_create_cb_mesh`'s stated reason.
+static func blend_shader(route: Route) -> Shader:
+	return CB_SHADER_FOLD if route == Route.FOLD else CB_SHADER_NORMAL
 
 
 func stamp_fold_order() -> void:
@@ -336,7 +399,7 @@ func stamp_fold_order() -> void:
 	representative scalar for the whole instance, so we use its world-space AABB center. A lone callback
 	quad has no within-stream rank, so rank 0 places it exactly on its OT bucket. No-op unless folded;
 	called each frame by CallbackManager after update_render()."""
-	if not _folded or _mesh_instance == null or not is_instance_valid(_mesh_instance):
+	if _route != Route.FOLD or _mesh_instance == null or not is_instance_valid(_mesh_instance):
 		return
 	if not _mesh_instance.is_inside_tree():
 		return

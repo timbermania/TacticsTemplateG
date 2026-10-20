@@ -1,11 +1,9 @@
 extends RefCounted
 ## Parsed screen-subsystem keyframe data — background color animation.
-## Renamed from ScreenTrackData as part of the Track→Subsystem migration (#31).
 ##
-## Parses the on-disk JSON (`screen.json`, renamed from `screen_tracks.json` in
-## #31) organized by timeline phase (for_each, phase1, phase2). Screen has
-## a single implicit channel — the whole screen — so there is one Channel per
-## phase context.
+## Parses the on-disk JSON (`screen.json`) organized by timeline phase (for_each,
+## phase1, phase2). Screen has a single implicit channel — the whole screen — so
+## there is one Channel per phase context.
 
 const _Self = preload("res://addons/exmateria_effects/file_model/ScreenData.gd")
 
@@ -64,14 +62,12 @@ class Keyframe:
 		kf.index = int(data.get("index", 0))
 		kf.time_value = int(data.get("time_value", 0))
 		kf.duration_frames = int(data.get("duration_frames", 1))
-		# Store raw unsigned bytes for signed interpretation in TINT mode
 		kf.start_r_raw = int(data.get("start_r", 0))
 		kf.start_g_raw = int(data.get("start_g", 0))
 		kf.start_b_raw = int(data.get("start_b", 0))
 		kf.end_r_raw = int(data.get("end_r", 128))
 		kf.end_g_raw = int(data.get("end_g", 128))
 		kf.end_b_raw = int(data.get("end_b", 128))
-		# RGB 0-255 to Color 0-1
 		kf.start_color = Color(
 			kf.start_r_raw / 255.0,
 			kf.start_g_raw / 255.0,
@@ -110,9 +106,8 @@ class Keyframe:
 
 
 class Channel:
-	## The screen's single implicit channel — keyframes for one phase. Screen
-	## has only one channel (the whole screen), so this inner class is also
-	## effectively the phase block's content for screen.
+	## The screen's single implicit channel — keyframes for one phase; effectively
+	## the phase block's content for screen.
 	var context: String = EffectPhaseClass.PHASE_FOR_EACH
 	var keyframes: Array = []  # Array of Keyframe
 	var max_keyframe: int = 0

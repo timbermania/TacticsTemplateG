@@ -1,15 +1,9 @@
 extends "res://addons/exmateria_effects/callbacks/EffectCallback.gd"
-## CB10 - Radial concentric ring callback (PSX FUN_801c2500).
-## Screen-space 2D overlay: 6 concentric rings with 5 quarter-ring vertices,
-## mirrored 4 ways (90-degree rotational symmetry) = 80 quads total.
-## Rings expand outward with rotation. Center point moves with velocity.
-##
-## Analysis:
-## 1. Quad count: 80 (5 bands × 4 quads × 4 quadrants). Alloc 0x20fc.
-## 2. Topology: Concentric radial rings with 4-fold symmetry.
-## 3. Orientation: 2D screen overlay (no GTE). Camera-pinned.
-## 4. Blend mode: (emitter+0x4C & 3), typically additive.
-## 5. UV base from emitter offset 0xB8/0xBA (homing_min_start/max_start).
+## CB10 - Radial concentric ring callback (PSX FUN_801c2500): screen-space 2D overlay,
+## camera-pinned, no GTE. 6 concentric rings × 5 quarter-ring vertices, mirrored 4-way
+## (90-degree rotational symmetry) = 80 quads; rings expand with rotation, center drifts
+## with velocity. Blend (emitter+0x4C & 3), typically additive. UV base from emitter
+## offsets 0xB8/0xBA (homing_min/max_start). Alloc 0x20fc.
 ## Vault: [[Effect Callback Mesh]]
 ## Vault: [[Embedded MIPS Effect Code]]
 
@@ -17,6 +11,14 @@ const RING_COUNT: int = 6       # Number of concentric rings
 const VERTS_PER_QUARTER: int = 5 # Vertices per quarter-ring (4 computed + 1 mirrored)
 const QUADS_PER_BAND: int = 4   # Quads between adjacent vertices in a quarter
 const QUADRANTS: int = 4        # 4-way rotational symmetry
+
+## The ROM's own clamp on the OT bucket it reads from emitter+0x54:
+##   slti v0,v0,4   ... ori v0,zero,4     raise anything below 4
+##   slti v0,v0,384 ... ori v0,zero,383   cap at 383
+## 383 is not a coincidence — `OTDepthPrimOrder.BUCKET_COUNT` is 384 and its
+## MAX_ORDER_SPAN is 383, derived independently from ADR-0009 (OTZ >> 2).
+const OT_BUCKET_MIN: int = 4
+const OT_BUCKET_MAX: int = 383
 
 # Center position (PSX screen pixels, updated by velocity)
 var _center_x: int = 0
@@ -33,7 +35,6 @@ var _center_accel_y: int = 0
 # Ring vertices: [ring][vert] = (x, y) offsets from center
 var _ring_verts: Array = []  # [ring_idx] = Array of Vector2i
 
-# UV scrolling
 var _uv_counter_x: int = 0
 var _uv_counter_y: int = 0
 var _uv_base_x: int = 0
@@ -47,15 +48,13 @@ var _uv_vel_x_end: int = 0
 var _uv_vel_y_start: int = 0
 var _uv_vel_y_end: int = 0
 
-# Ring generation params
 var _radius_start: int = 0      # spread_start[0], <<12
-var _radius_growth_start: int = 0  # inertia_min_start, <<4
+var _radius_growth_start: int = 0  # radial_min_start (emitter+0x5C), <<4
 var _radius_accel_start: int = 0   # accel_min_start[0], <<4
 var _angle_start: int = 0       # rot_vel_start, <<4
 var _angle_vel_start: int = 0   # radial_reserved_1
 var _angle_jerk_start: int = 0  # spawn_interval_start
 
-# End values for lerping
 var _radius_end: int = 0
 var _radius_growth_end: int = 0
 var _radius_accel_end: int = 0
@@ -73,9 +72,14 @@ var _caccel_mag_start: int = 0
 var _caccel_dir_end: int = 0
 var _caccel_mag_end: int = 0
 
-# Color / brightness
 var _brightness_row_idx: int = 0
 var _brightness_table: Array = []
+
+## PSX ordering-table bucket, emitter+0x54, clamped to [4, 383] — the ROM's own clamp.
+## This is a DEPTH, not a hint: the routine loads it, bounds it, and uses it to index
+## the OT (`sll a0,a0,2` then `addu a0,ot,a0` before the prim insert) at eight call
+## sites. See _on_init for the read and update_render for where it becomes distance.
+var _ot_bucket: int = OT_BUCKET_MIN
 
 func _ready() -> void:
 	_create_cb_mesh()
@@ -121,9 +125,28 @@ func _on_init(emitter_index: int, spawn_counter: int, channel_index: int) -> voi
 		_radius_start = _ri(raw, "spread_start", 0)
 		_radius_end = _ri(raw, "spread_end", 0)
 
-		# Radius growth (emitter+0x5C/0x60 = inertia_min_end / weight_min_start)
-		_radius_growth_start = int(emitter_config.inertia_min_end)
-		_radius_growth_end = int(emitter_config.weight_min_start)
+		# Radius growth: emitter+0x5C/0x60, the per-frame velocity the routine
+		# integrates into the radius.
+		#
+		# 🔴 THE OFFSETS IN THIS COMMENT WERE ALWAYS RIGHT; THE ACCESSORS WERE NOT.
+		# `inertia_min_end` is emitter+0x48 and `weight_min_start` is emitter+0x54 —
+		# neither is 0x5C/0x60 (see `tools/write_effect_emitters.py`, which is the
+		# authoritative offset table). 0x5C/0x60 are `radial_min_start`/`radial_min_end`,
+		# which is also what SpiralMeshCallback — the same ROM routine, different
+		# transcription — reads for this, down to the `<< 4`.
+		#
+		# Traced in E004 cb3 rather than inferred from the names: +0x5C/0x60 are lerped
+		# (w206-w209), shifted `<< 4` (w210) and stored to the callback's s6+0xDC, which
+		# the per-frame block at w359-w364 adds into s6+0xD8; and s6+0xD8 is the RADIUS,
+		# multiplied by the trig-table lookup at w330-w337 to produce each vertex. The
+		# pair at +0x44/0x48 that `inertia_min_end` half-reached integrates into s6+0xE4,
+		# which is the ANGLE, not the radius.
+		_radius_growth_start = _ri(raw, "radial_min_start")
+		_radius_growth_end = _ri(raw, "radial_min_end")
+
+		# OT bucket, emitter+0x54. Read here because `weight_min_start` IS +0x54, and it
+		# cannot be the radius growth as well — the ROM spends it on the ordering table.
+		_ot_bucket = clampi(int(emitter_config.weight_min_start), OT_BUCKET_MIN, OT_BUCKET_MAX)
 
 		# Radius acceleration (emitter+0x64/0x70 = accel_min_start[0] / accel_min_end[0])
 		_radius_accel_start = _ri(raw, "accel_min_start", 0)
@@ -159,7 +182,6 @@ func _on_init(emitter_index: int, spawn_counter: int, channel_index: int) -> voi
 		_uv_vel_y_start = _ri(raw, "drag_min_start", 1)
 		_uv_vel_y_end = _ri(raw, "drag_min_end", 1)
 
-		# Brightness row
 		_brightness_row_idx = int(emitter_config.callback_params.get("param_4E", 0))
 
 	if effect_data:
@@ -179,7 +201,6 @@ func physics_step() -> void:
 	if _frame_counter < FRAME_MAX:
 		_frame_counter += 1
 
-	# UV scrolling
 	var drag_t: float = _sample_curve("drag")
 	var uv_vel_x: int = int(lerpf(float(_uv_vel_x_start), float(_uv_vel_x_end), drag_t)) * 0x10
 	var uv_vel_y: int = int(lerpf(float(_uv_vel_y_start), float(_uv_vel_y_end), drag_t)) * 0x10
@@ -203,12 +224,12 @@ func update_render() -> void:
 	var cam_up: Vector3 = camera.global_basis.y
 	var cam_fwd: Vector3 = -camera.global_basis.z
 
-	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
-	var aspect: float = viewport_size.x / viewport_size.y
+	# The PSX 256-px screen spans the centred FRAME, never the viewport (gl-ADR-0382): a wider
+	# viewport shows more world at the sides, it does not stretch a screen-space quad.
+	var aspect: float = DisplayPort.FRAME_ASPECT
 	var psx_scale_x: float = camera.size * aspect / 256.0
 	var psx_scale_y: float = camera.size / 240.0
 
-	# Update UV rect on material
 	if _material and effect_data.texture:
 		var tex_size: Vector2 = effect_data.texture.get_size()
 		if tex_size.x > 0 and tex_size.y > 0:
@@ -218,7 +239,6 @@ func update_render() -> void:
 				float(u0) / tex_size.x, float(v0) / tex_size.y,
 				float(_half_wrap_x) / tex_size.x, float(_half_wrap_y) / tex_size.y))
 
-	# Color curves
 	var curve_color: Color = _sample_colors()
 	var r_val: float = curve_color.r
 	var g_val: float = curve_color.g
@@ -228,13 +248,11 @@ func update_render() -> void:
 	if max_color < 0.001 and _frame_counter > 1:
 		return
 
-	# Sample curve t values for ring params
 	var spread_t: float = _sample_curve("velocity_dir_spread")
 	var accel_t: float = _sample_curve("acceleration")
 	var inertia_t: float = _sample_curve("inertia")
 	var position_t: float = _sample_curve("position")
 
-	# Compute ring vertices
 	# PSX: radius << 12, growth << 4, accel << 4
 	var radius: int = int(lerpf(float(_radius_start), float(_radius_end), spread_t)) << 12
 	var growth: int = int(lerpf(float(_radius_growth_start), float(_radius_growth_end), inertia_t)) << 4
@@ -243,7 +261,6 @@ func update_render() -> void:
 	var angle_vel: int = int(lerpf(float(_angle_vel_start), float(_angle_vel_end), accel_t))
 	var angle_jerk: int = int(lerpf(float(_angle_jerk_start), float(_angle_jerk_end), accel_t))
 
-	# Generate 6 rings × 5 quarter-ring vertices
 	_ring_verts.clear()
 	for ring in RING_COUNT:
 		var ring_radius: float = float(radius >> 12)
@@ -279,25 +296,16 @@ func update_render() -> void:
 	var vel_dir: int = int(lerpf(float(_cvel_dir_start), float(_cvel_dir_end), vel_dir_t)) << 4
 	var vel_mag: int = int(lerpf(float(_cvel_mag_start), float(_cvel_mag_end), vel_dir_t))
 	_center_vel_x = int(cos(float(vel_dir) * ANGLE_SCALE) * float(vel_mag) * 16.0) + _center_vel_x
-	# Wait, looking at the C code more carefully:
-	# _DAT_1f8000a4 = rcos(dir) * mag * 0x10 >> 0xc
-	# _DAT_1f8000a8 = rsin(dir) * mag * 0x10 >> 0xc
-	# These are computed ONCE, not accumulated. Then center += vel >> 12 each frame.
-	# And vel += accel each frame.
-	# But this is in update_render which runs each frame... I need to restructure.
-	# Actually the PSX does this in the render function too. Let me re-read.
 
 	# PSX code computes vel/accel once per frame in the render loop:
 	# _DAT_1f8000a4 = rcos(_DAT_1f80005c) * mag * 0x10 >> 0xc
 	# Then: center_x += _DAT_1f8000a4 >> 0xc; _DAT_1f8000a4 += _DAT_1f8000b4
 	# So vel is in fixed-point, added to center after >>12.
 
-	# Compute center velocity
 	var cvel_dir_rad: float = float(vel_dir) * ANGLE_SCALE
 	_center_vel_x = int(cos(cvel_dir_rad) * float(vel_mag) * 16.0)
 	_center_vel_y = int(sin(cvel_dir_rad) * float(vel_mag) * 16.0)
 
-	# Compute center acceleration
 	var accel_dir_t: float = _sample_curve("drag")
 	var accel_dir: int = int(lerpf(float(_caccel_dir_start), float(_caccel_dir_end), accel_dir_t)) << 4
 	var accel_mag: int = int(lerpf(float(_caccel_mag_start), float(_caccel_mag_end), accel_dir_t))
@@ -305,23 +313,31 @@ func update_render() -> void:
 	_center_accel_x = int(cos(caccel_dir_rad) * float(accel_mag) * 16.0)
 	_center_accel_y = int(sin(caccel_dir_rad) * float(accel_mag) * 16.0)
 
-	# Brightness table row
 	var brightness_row: Array = []
 	if _brightness_row_idx >= 0 and _brightness_row_idx < _brightness_table.size():
 		brightness_row = _brightness_table[_brightness_row_idx]
 
-	# Build mesh — push far behind map for correct depth ordering (orthographic, distance doesn't affect scale)
-	var base_pos: Vector3 = camera.global_position + cam_fwd * 200.0
+	# Build mesh. The camera is ORTHOGONAL, so distance along cam_fwd changes nothing but
+	# depth — which makes this line the callback's entire depth story, and it has to come
+	# from the emitter rather than a constant.
+	#
+	# 🔴 THIS WAS `cam_fwd * 200.0`, COMMENTED "push far behind map". At
+	# DepthMode.UNITS_PER_OT_BUCKET = 0.19 that is bucket ~1053 in a 384-bucket table —
+	# 669 buckets past the end, i.e. unconditionally behind everything, for every emitter
+	# of every effect this class serves. E004 "Cure 4" is where it became visible: its
+	# cb3 emitter (idx2) authors +0x54 = 0, which the ROM raises to bucket 4 = 0.76 world
+	# units, the very front. It was drawn at 200 — 263x too far — so a spell that belongs
+	# over the map rendered behind it.
+	var base_pos: Vector3 = camera.global_position \
+			+ cam_fwd * (float(_ot_bucket) * DepthMode.UNITS_PER_OT_BUCKET)
 	var positions := PackedVector3Array()
 	var colors := PackedColorArray()
 	var uvs := PackedVector2Array()
 	var custom0 := PackedFloat32Array()
 
-	# Current center starts from interpolated position
 	var cx: float = float(center_x_raw)
 	var cy: float = float(center_y_raw)
 
-	# Phase 1: All 5 bands between 6 rings
 	# PSX dual-write pattern: inner vertices get brightness[band], outer get brightness[band+1]
 	for band in 5:
 		var r0: Array = _ring_verts[band]
@@ -337,14 +353,12 @@ func update_render() -> void:
 		var col_inner := Color(r_val * bright_inner, g_val * bright_inner, b_val * bright_inner, 1.0)
 		var col_outer := Color(r_val * bright_outer, g_val * bright_outer, b_val * bright_outer, 1.0)
 
-		# 4 quads per band (connecting adjacent vertices in the quarter)
 		for vi in QUADS_PER_BAND:
 			var v0: Vector2 = r0[vi]
 			var v1: Vector2 = r0[vi + 1]
 			var v2: Vector2 = r1[vi]
 			var v3: Vector2 = r1[vi + 1]
 
-			# Emit 4 quadrant copies
 			for q in QUADRANTS:
 				var qv0: Vector2 = _rotate_quadrant(v0, q)
 				var qv1: Vector2 = _rotate_quadrant(v1, q)

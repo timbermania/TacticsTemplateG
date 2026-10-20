@@ -49,7 +49,10 @@ uniform float ot_units_per_bucket = 0.19;
 // front of the thing under me", far smaller than PULL_FORWARD_8.
 uniform float ot_unit_forward = 0.13;         // UNIT: sprite just in front of its tile (DepthMode.UNIT_FORWARD authoritative)
 uniform float ot_tile_overlay_forward = 0.05; // TILE_OVERLAY: between tile surface and unit
-uniform float ot_shadow_forward = 0.05;       // SHADOW: unit's ground shadow, one hair behind the sprite
+// SHADOW: NOT a nudge of its own — the UNIT's key (ot_unit_forward) less this sub-bucket hair.
+// The ROM links the shadow into the sprite's own OT slot (unit[0x128]), so no face sorts between
+// them; the hair only keeps the transparent shadow off the opaque sprite's feet. DepthMode.shadow_forward().
+uniform float ot_shadow_behind_unit = 0.002;
 uniform float ot_map_skirt_back = -0.02;      // MAP_SKIRT: border geometry just behind textured map
 // Fixed-mode absolute reversed-Z slots (near/front ~ 1.0, far/behind ~ 0.0).
 uniform float ot_fixed_front = 0.9999; // FIXED_FRONT
@@ -83,7 +86,7 @@ float ot_depth(vec3 point, mat4 proj, mat4 to_view, int mode) {
 	else if (mode == 6) world_bias = ot_unit_forward;        // UNIT
 	else if (mode == 7) world_bias = ot_tile_overlay_forward; // TILE_OVERLAY
 	else if (mode == 8) world_bias = ot_map_skirt_back;      // MAP_SKIRT (negative = behind)
-	else if (mode == 9) world_bias = ot_shadow_forward;      // SHADOW (co-sorts with the unit's point)
+	else if (mode == 9) world_bias = ot_unit_forward - ot_shadow_behind_unit; // SHADOW: the UNIT's key
 	// mode 0 STANDARD: world_bias stays 0.
 
 	float ndc_depth = base + world_bias * proj[2][2];

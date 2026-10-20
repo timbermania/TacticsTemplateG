@@ -1,11 +1,9 @@
 extends "res://addons/exmateria_effects/subsystem/ColorSubsystem.gd"
 ## Runtime processor for palette-subsystem keyframes (map + unit tinting) - the
-## ADR-0067 combat-colour route. Three [ColorSubsystem] channels: affected_units ->
-## the TintedSurfaces SURFACE_MAP token; caster / target -> the units' own tokens.
-## Each channel's keyframes reduce to a [ColorStack] (build_stack / build_stream),
+## ADR-0067 combat-colour route. Each channel's keyframes reduce to a [ColorStack]
 ## self-delivered (ADR-0014 dec. 2) over the real ALBEDO/CLUT base - the faithful
 ## PALETTE applier (color_tint_blend_apply @0x8008f710, 5-bit CLUT, quantize=true,
-## absolute base). The stack is re-derived every frame, so any `now` is directly
+## absolute base); the stack is re-derived every frame, so any `now` is directly
 ## evaluable. Stepper-replacement + illumination-deletion record:
 ## .vaults/comments/exmateria_effects/palette-subsystem-history.md
 ## Vault: [[Combat Color Appliers]]
@@ -21,37 +19,30 @@ const ColorStackClass = ExMateriaSchema.ColorStack
 ## vault: .vaults/comments/exmateria_effects/port-contracts.md
 const TintedSurfacesPort = preload("res://addons/exmateria_effects/install/TintedSurfacesPort.gd")
 
-# 🟢 THE ILLUMINATION MACHINERY IS GONE (#1192): the 8-bit additive map flood was
-# deleted on probe evidence (0x across eight battle/effect scenes). WHAT STAYS is
-# exmateria_battlefield's (MapIlluminationDDA.gd, the map_illum_add uniform, still
-# covered by MapIlluminationDDATest) - that package's call, not this one's
-# (ADR-0287 dec. 5: an extraction must not carry dead code into an addon).
+# 8-bit additive map illumination deleted here (#1192); WHAT STAYS is
+# exmateria_battlefield's MapIlluminationDDA.gd (ADR-0287 dec. 5: an extraction
+# must not carry dead code into an addon).
 # Full record: .vaults/comments/exmateria_effects/palette-subsystem-history.md
 
-# ADR-0208 dec. 2 + dec. 5 (NAMED, NOT PRELOADED) - the alias this described
-# (MapIlluminationDDA) was deleted at #1192; the warning stands:
-# ⚠️ DO NOT SPELL THE OLD res://addons/... PATH HERE, not even in prose -
+# DO NOT SPELL THE OLD res://addons/... PATH HERE, not even in prose -
 # check_lattice_scene.py does not strip comments (ADR-0208 dec. 7), so a comment
 # quoting the literal re-creates the very row that path paid.
 
 # Parsed palette-keyframe data (PaletteData)
 var palette_data = null
 
-# Channel names.
 const AFFECTED_UNITS = "affected_units"
 const CASTER = "caster"
 const TARGET = "target"
 const ALL_CHANNELS = [AFFECTED_UNITS, CASTER, TARGET]
 
-# Caster / target unit references for unit tinting - self-delivered in advance()
-# (ADR-0014 dec. 2). Set by EffectInstance via set_units().
+# Caster / target unit refs for unit tinting; set by EffectInstance via set_units().
 var _caster_unit: WeakRef = null
 var _target_unit: WeakRef = null
 
 
-## Build the per-channel [ColorStack] for ONE phase from the parsed keyframes - the
-## ADR-0067 combat-colour route; the PALETTE applier profile: 5-bit CLUT so
-## `quantize=true`, base = the surface's committed colour (absolute, not delta-on-0).
+## Build the per-channel [ColorStack] for ONE phase from the parsed keyframes.
+## PALETTE applier profile: 5-bit CLUT (quantize=true); base is absolute, not delta-on-0.
 func build_stack(channel: String, phase: String = EffectPhaseClass.PHASE_FOR_EACH) -> ColorStackClass:
 	var stack: ColorStackClass = ColorStackClass.new()
 	stack.set_quantize(true)  # palette applier is 5-bit CLUT (Consumer profile)
@@ -59,17 +50,14 @@ func build_stack(channel: String, phase: String = EffectPhaseClass.PHASE_FOR_EAC
 	return stack
 
 
-## Build ONE continuous stack for `channel` spanning EVERY started phase at its
-## ABSOLUTE start frame: the PSX color engine is one stateful CLUT DDA with no
-## phase concept, so this keeps phase1's settled tint under for_each's fade-in - no
-## pop at the boundary (Raise/E005 color-parity fix). A phase absent from
-## `phase_starts` contributes nothing; a future phase's ops are inert anyway.
+## Build ONE continuous stack for `channel` spanning every started phase at its
+## ABSOLUTE start frame: the PSX engine is one stateful CLUT DDA with no phase
+## concept - phase1's settled tint persists under for_each, no boundary pop (Raise/E005).
 func build_stream(channel: String, phase_starts: Dictionary) -> ColorStackClass:
 	var stack: ColorStackClass = ColorStackClass.new()
 	stack.set_quantize(true)  # palette applier is 5-bit CLUT (Consumer profile)
 	# Studio Solo/Mute: a muted lane (palette:<phase>:<channel>) excludes its ops from
-	# the fold - recompiled per frame, so this + a rescrub drops just that lane. The
-	# runtime never mutes, so short-circuit the per-phase key build in the common path.
+	# the fold; recompiled per frame, so this + a rescrub drops just that lane.
 	var has_mutes: bool = not _muted_ops.is_empty()
 	for phase in EffectPhaseClass.ALL:
 		if not phase_starts.has(phase):
@@ -81,10 +69,7 @@ func build_stream(channel: String, phase_starts: Dictionary) -> ColorStackClass:
 
 
 ## Walk one phase's channel keyframes in timeline order, invoking `emit(kf, at)` for
-## each ENABLED keyframe at its absolute frame. The single definition of the
-## keyframe-timeline rule: the max_keyframe-1 processing window, the
-## disabled-advances-timing-only skip, and the duration accumulation - a sink just
-## says what to push, so a timing fix lands once.
+## each ENABLED keyframe at its absolute frame.
 func _each_keyframe(channel: String, phase: String, base_offset: int, emit: Callable) -> void:
 	var ch = palette_data.get_channel(phase, channel)
 	if not ch or ch.keyframes.is_empty():
@@ -101,8 +86,6 @@ func _each_keyframe(channel: String, phase: String, base_offset: int, emit: Call
 		start_frame += maxi(1, kf.duration_frames)
 
 
-## Push one phase's channel keyframes onto the 5-bit CLUT `stack`, each at its
-## absolute frame. Shared by build_stack (single phase, offset 0) and build_stream.
 func _push_phase_ops(stack: ColorStackClass, channel: String, phase: String, base_offset: int) -> void:
 	_each_keyframe(channel, phase, base_offset, func(kf, at: int) -> void:
 		stack.push_op(kf.blend_mode, kf.rgb.x, kf.rgb.y, kf.rgb.z, kf.time_value, at))
@@ -124,9 +107,11 @@ func _evaluate(_channel: String, _phase: String) -> void:
 
 
 func _reset_outputs() -> void:
-	"""No held per-frame output state — the stack is rebuilt from the keyframes on
-	every _deliver_output, so there is nothing to clear here."""
-	pass
+	"""Take this owner's map and unit tints back out of the scene. The stack itself is
+	rebuilt on every _deliver_output, but the LAYERS live in the tint registry, not the
+	instance, so a seek to 0 (Studio Stop, U17) that pumps no frame would otherwise leave
+	the map and the units tinted at the last played frame. The next advance re-delivers."""
+	TintedSurfacesPort.remove_all_layers_for_owner(owner_id)
 
 
 func set_units(caster, target) -> void:
@@ -142,16 +127,13 @@ func _deliver_output() -> void:
 	ColorStack -> its overlay, folded through color_apply over the real base. Map
 	tint -> TintedSurfaces.SURFACE_MAP; caster/target tints -> the units' own tokens,
 	which are runtime-only - no live caster/target in the editor preview."""
-	# Every palette channel folds the WHOLE keyframe stream (all started phases at
-	# their absolute offsets) at the absolute effect frame - the PSX-faithful one-
-	# stateful-CLUT model, so no channel pops back to base at a phase boundary
-	# (Raise/E005).
+	# All started phases fold at their absolute offsets, so no channel pops back to
+	# base at a phase boundary (Raise/E005).
 	TintedSurfacesPort.update_stack(TintedSurfacesPort.SURFACE_MAP, owner_id, build_stream(AFFECTED_UNITS, _phase_first_frame), _frame)
 	# Map ILLUMINATION (8-bit additive, FUN_80090dec) is INTENTIONALLY NOT delivered:
-	# statically it only tints the PSX's UNTEXTURED flat-colour terrain class, which
-	# Godot doesn't render - the framebuffer A/B over Holy's map is pixel-identical
-	# with the additive on vs off. The battlefield half stays in exmateria_battlefield
-	# (header); rebuilt scoped to such a class if one is ever added, never globally.
+	# it only tints the PSX's UNTEXTURED flat-colour terrain, which Godot doesn't
+	# render (framebuffer A/B on Holy's map: pixel-identical on vs off). Rebuild
+	# scoped to such a class if one is ever added, never globally.
 	# Unit tints are runtime-only - no live caster/target in the editor preview.
 	if Engine.is_editor_hint():
 		return

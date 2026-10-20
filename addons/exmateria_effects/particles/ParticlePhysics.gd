@@ -2,23 +2,20 @@ extends RefCounted
 
 ## ADR-0212 dec. 1 — `addons/exmateria_platform` publishes one global,
 ## `ExMateriaPlatform`; aliasing a member back keeps every use site below
-## spelled the way it was (ADR-0211 dec. 4). The PSX trio arrived at
-## extraction #7 (#1220) and lost its three bare `class_name`s on the way.
+## spelled the way it was (ADR-0211 dec. 4).
 const Particle = preload("res://addons/exmateria_effects/particles/Particle.gd")
 
 const PsxMagnitude = ExMateriaPlatform.PsxMagnitude
 
 # psx-faithful-sim: the integrator's *4096 / weight/4096 IS the ROM per-frame arithmetic (integrate_particle_motion), ADR-0091 §4
-## PSX-authentic particle physics - NO CONVERSION CONSTANTS
-##
-## All input values are pre-converted to Godot units by the parser.
-## Physics formulas match FFT exactly, just with pre-scaled values.
+## PSX-authentic particle physics - NO CONVERSION CONSTANTS: the parser
+## pre-converts all inputs to Godot units, so the formulas run raw.
 ## Vault: [[Effect File Format]]
 ## Vault: [[Homing System]]
 ## Vault: [[Particle Curve Indices]]
 ## Vault: [[Sprite Offset vs Vertex Position]]
 
-# Global physics from particle header (pre-converted to Godot units)
+# Global physics from the particle header (set by ParticleSubsystem)
 var gravity: Vector3 = Vector3(0.0, -0.036, 0.0)
 var inertia_threshold: float = 512.0  # Raw value (not normalized)
 
@@ -27,8 +24,7 @@ var effect_data = null  # Set by ParticleSubsystem for curve lookups
 
 # Per-instance RNG (ADR-0070). Threaded down from the owning EffectInstance so
 # in-instance replay is deterministic — a scrub back-and-forth reproduces the
-# exact same cloud. null = fall back to the global randf (unseeded gameplay
-# default, and the safe path for direct-construction callers/tests).
+# exact same cloud. null = global randf fallback (see `rand()`).
 var rng: RandomNumberGenerator = null
 
 
@@ -70,21 +66,16 @@ func update_particle_fixed(particle: Particle) -> void:
 
 	var new_velocity: Vector3
 	if inertia > 0.0:
-		# FFT: new_vel = (inertia_factor * old_vel + accel * 4096) / inertia
-		# The 4096 is a fixed scaling constant, NOT inertia
 		new_velocity = (inertia_factor * old_velocity + particle.acceleration * 4096.0) / inertia
 	else:
 		new_velocity = particle.acceleration * 4096.0
 
-	# Apply gravity (weight is raw 0-4096, gravity is pre-converted)
-	# FFT: gravity * weight >> 12 = gravity * weight / 4096
+	# gravity * weight >> 12 — weight is raw 0-4096, gravity pre-converted
 	new_velocity += gravity * particle.weight / 4096.0
 
 	# === POSITION UPDATE (uses OLD velocity) ===
-	# Velocity is already in Godot units/frame, so just add directly
 	particle.position += old_velocity
 
-	# Store new velocity
 	particle.velocity = new_velocity
 
 	# === ACCELERATION UPDATE ===
@@ -92,7 +83,6 @@ func update_particle_fixed(particle: Particle) -> void:
 	# behaviour — positive attracts, NEGATIVE repels (flee/dispersal, e.g. E142 emitter 15).
 	# A `<= 0` gate would silently collapse repulsion into "no homing".
 	if is_zero_approx(particle.homing_strength):
-		# Simple physics: drag accumulates into acceleration
 		particle.acceleration += particle.drag
 	else:
 		_apply_homing_acceleration(particle)
@@ -110,17 +100,14 @@ func _apply_homing_acceleration(particle: Particle) -> void:
 	Value 0 means: pure homing
 	Value +127 means: mostly drag, minimal homing
 	"""
-	# Get curve value (-128 to +127)
 	var curve_value: float = -128.0  # Default: full homing when no curve
 
 	if particle.homing_curve_index > 0 and effect_data:
 		# FFT uses 1-based curve indices, curve[index-1]
 		var curve = effect_data.get_curve(particle.homing_curve_index - 1)
 		if curve:
-			# Curve returns 0.0-1.0, convert to 0-255 then subtract 128
 			curve_value = curve.sample_by_frame(particle.age) * 255.0 - 128.0
 
-	# Calculate homing direction
 	var to_target: Vector3 = particle.homing_target - particle.position
 	var dist: float = to_target.length()
 
@@ -130,10 +117,8 @@ func _apply_homing_acceleration(particle: Particle) -> void:
 
 	var direction: Vector3 = to_target / dist
 
-	# Homing force (pre-converted to Godot units)
 	var homing_force: Vector3 = direction * particle.homing_strength
 
-	# FFT blend: accel += ((drag - homing) * curve_value) / 127 + homing
 	var blend_factor: float = curve_value / 127.0
 	var blended: Vector3 = (particle.drag - homing_force) * blend_factor + homing_force
 

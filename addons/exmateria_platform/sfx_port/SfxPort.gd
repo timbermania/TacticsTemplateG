@@ -100,7 +100,7 @@ static func _resolve() -> Node:
 	var root: Window = (loop as SceneTree).root
 	if root == null:
 		return null
-	var n := root.get_node_or_null(^"ExMateriaEffectSfx")
+	var n := root.get_node_or_null(^"BakedSfx")
 	if n == null or not n.has_method(&"begin_effect"):
 		return null
 	_port = n
@@ -136,9 +136,41 @@ static func _forget_port() -> void:
 ## editor never calls, and the editor preview is already forbidden to synthesize audio.
 ## `tests/TunePortTest.gd` drives both arms, off `EffectData.load_from_directory`
 ## rather than off this verb — the loaded effect is the seam every reader uses.
+## Resolve the PARSER, which is not the same node as the player.
+##
+## 🔴 **THIS SPLIT EXISTS BECAUSE THE HEADER'S OWN TABLE SAYS `load_feds_bank` IS THE ODD
+## ROW.** The four cast verbs are DEVICE calls and go to whatever is playing sound —
+## `BakedSfx`, which serves them from the baked corpus. `load_feds_bank` is a FILE PARSER:
+## the engine deliberately does not gate it on `ready_ok`, effects load before audio boots,
+## and nothing about reading `feds.bin` involves an audio device at all.
+##
+## ⚠️ **COLLAPSING THE TWO IS A MEASURED REGRESSION, NOT A HYPOTHETICAL.** When `_resolve`
+## was re-pointed at `BakedSfx` wholesale, the parser verb went with it; `BakedSfx` has no
+## `load_feds_bank`, so this returned `null`, `EffectData.feds_bank` became `null`, and a
+## dozen Effect Studio files doing `bank.num_pairs` threw. 13 tests, 111 `SCRIPT ERROR`
+## lines — and 12 of them still printed `[PASS]`, because the verdict channel cannot see an
+## engine error. The bank was always real and available; only the lookup was wrong.
+##
+## ⚠️ **AND THIS RESOLVE DIES WITH THE ADDON.** It names `ExMateriaEffectSfx` because that
+## autoload still exists and still parses. When the native core is cut, this node is gone —
+## and by then `EffectData` should have stopped asking for a bank at all, because its only
+## remaining readers are the FEDS editing model the Studio excision deletes. Do NOT keep
+## this alive past the cut by giving it a stub: a bank nobody can produce must answer
+## `null`, and the callers must stop calling.
+static func _resolve_parser() -> Node:
+	var loop := Engine.get_main_loop()
+	if loop == null or not (loop is SceneTree):
+		return null
+	var root: Window = (loop as SceneTree).root
+	if root == null:
+		return null
+	var n := root.get_node_or_null(^"ExMateriaEffectSfx")
+	return n if n != null and n.has_method(&"load_feds_bank") else null
+
+
 static func load_feds_bank(feds_path: String):
-	var p := _resolve()
-	if p == null or not p.has_method(&"load_feds_bank"):
+	var p := _resolve_parser()
+	if p == null:
 		return null
 	return p.load_feds_bank(feds_path)
 
@@ -154,17 +186,32 @@ static func begin_effect() -> int:
 	return p.begin_effect()
 
 
-## Dispatch one FEDS pair for `token`. Returns whether it was dispatched.
+## Dispatch one pair for `token`, BY EFFECT ID. Returns whether it was dispatched.
 ##
-## `feds_bank` is the sound package's `FedsBank` and is deliberately UNTYPED — see the
-## second red note in the header. `single_track` (0/1) is the authoring-only per-track
-## energy isolation (ADR-0085 §3); `-1` is both.
-static func play_pair(token: int, feds_bank, pair_idx: int, sound_id: int,
-		single_track: int = -1) -> bool:
+## 🔴 **IT USED TO TAKE A PARSED `FedsBank`.** That made every caller parse an FFT opcode
+## bank out of `feds.bin` in order to make a sound — correct while the sound was SEQUENCED
+## from those opcodes, and backwards now that it is a pre-rendered WAV. The bank carried
+## two things, the effect's NAME and its opcodes, and only the name is still wanted.
+## `EffectInstance` knows its own `data_path`, so the id is free and the play path parses
+## nothing at all.
+static func play_pair(token: int, effect_id: String, pair_idx: int,
+		sound_id: int = -1) -> bool:
 	var p := _resolve()
 	if p == null:
 		return false
-	return p.play_pair(token, feds_bank, pair_idx, sound_id, single_track)
+	return p.play_pair(token, effect_id, pair_idx, sound_id)
+
+
+## Is this pair playable? The baked manifest answers.
+##
+## This replaces the bounds test callers used to make against a parsed header's
+## `num_pairs`, and it asks a better question: what is PLAYABLE is what the corpus
+## covers, not what a bank declares it contains.
+static func has_pair(effect_id: String, pair_idx: int) -> bool:
+	var p := _resolve()
+	if p == null or not p.has_method(&"has_pair"):
+		return false
+	return p.has_pair(effect_id, pair_idx)
 
 
 ## End the cast: key-off its held voices so they release rather than cut.

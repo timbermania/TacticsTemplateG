@@ -1,16 +1,8 @@
 extends RefCounted
-## Parsed palette-subsystem keyframe data (channels 0-2: affected_units, caster,
-## target). Renamed from PaletteTrackData as part of the Track→Subsystem
-## migration (#31).
-##
-## Parses the on-disk JSON (`palette.json`, renamed from `palette_tracks.json`
-## in #31) organized by timeline phase (for_each, phase1, phase2) and
-## channel (affected_units, caster, target).
-##
-## Key differences from ScreenData:
-## - RGB values (0-255) not start/end pairs
-## - 11 blend modes (0-10) vs screen's FADE/TINT
-## - Enable flag is bit 7 of ctrl (not mode selector)
+## Parsed palette-subsystem keyframe data: the on-disk `palette.json`, organized by
+## timeline phase (for_each, phase1, phase2) and channel (affected_units, caster,
+## target). Differs from ScreenData in RGB values (0-255, not start/end pairs) and
+## 11 blend modes (0-10).
 
 const EffectPhaseClass = preload("res://addons/exmateria_effects/cast/EffectPhase.gd")
 
@@ -62,7 +54,7 @@ class Channel:
 		return keyframes[index]
 
 
-# Channel names (the three palette channels: affected_units, caster, target)
+# Channel names
 const AFFECTED_UNITS = "affected_units"
 const CASTER = "caster"
 const TARGET = "target"

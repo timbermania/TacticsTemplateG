@@ -3,10 +3,8 @@ extends RefCounted
 ## Vault: [[Effect Execution Model]]
 
 const PHASE1 = "phase1"
-## The "for-each" phase — runs once per target. Previously kept as the
-## Ghidra-annotated name "animate_tick" for ROM-linkage; the ROM has no
-## inherent names (Ghidra labels are our annotations) so the value is now
-## just `"for_each"`, matching the const.
+## The "for-each" phase — runs once per target. Ghidra labels the ROM block
+## "animate_tick"; the ROM has no inherent names, so that label is the linkage.
 const PHASE_FOR_EACH = "for_each"
 const PHASE2 = "phase2"
 

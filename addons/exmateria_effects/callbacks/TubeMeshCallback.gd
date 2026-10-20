@@ -1,14 +1,10 @@
 extends "res://addons/exmateria_effects/callbacks/EffectCallback.gd"
-## CB92 - Bicone mesh callback (PSX FUN_801c44a0).
-## Renders an expanding diamond/bicone shape at the target position.
-## 5 cross-sections from equator to tips, mirrored above and below center.
-## 8 sides per cross-section (octagonal, spinning like a top around Y axis).
-##
-## PSX geometry: widest ring at center (Y=0), tapering to points at ±Y.
-## Both radius and height grow proportionally with effective_radius.
-## Radius profile [1.0, 0.968, 0.866, 0.661, 0.0] tapers equator→tip.
-## Height per section = (section * eff_radius/4) * accel_y / 256.
-## 64 GPU quads = 8 sides × 4 section-gaps × 2 halves (upper/lower).
+## CB92 - Bicone mesh callback (PSX FUN_801c44a0): expanding diamond/bicone at the target
+## position. 5 cross-sections equator→tips, mirrored above and below center; 8 sides each
+## (octagonal, spinning around Y). Widest ring at Y=0, tapering to the ±Y tips; radius and
+## height grow with effective_radius. Radius profile [1.0, 0.968, 0.866, 0.661, 0.0] tapers
+## equator→tip; height per section = (section * eff_radius/4) * accel_y / 256. 64 GPU quads
+## = 8 sides × 4 section-gaps × 2 halves.
 ## Vault: [[Effect Callback Mesh]]
 
 const SECTIONS: int = 5
@@ -17,16 +13,13 @@ const SIDES: int = 8
 # Fallback radius profile if callback data not loaded
 const DEFAULT_RADIUS_PROFILE: Array[float] = [1.0, 0.968, 0.866, 0.661, 0.0]
 
-# Parsed callback data (loaded from JSON)
 var _brightness_table: Array = []   # 8 values: per-gap bell curve (PSX 0-4096)
 var _radius_profile: Array[float] = [1.0, 0.968, 0.866, 0.661, 0.0]  # Normalized
 
-# Bicone state
 var _rotation_angle_raw: int = 0  # PSX 0-4095 angle units
 var _radius_accum: float = 0.0    # PSX piVar35[0x682]
 var _radius_velocity: float = 0.0 # PSX piVar35[0x683]
 
-# Raw emitter values (read once at init)
 var _raw_accel_x: float = 0.0   # Radius growth per frame
 var _raw_accel_y: float = 0.0   # Y height factor
 var _raw_drag_x: float = 0.0    # Radius velocity accumulation
@@ -80,7 +73,6 @@ func _on_init(emitter_index: int, spawn_counter: int, channel_index: int) -> voi
 		# Base radius from param_A8
 		_base_radius_raw = float(emitter_config.callback_params.get("param_A8", 2))
 
-	# Load parsed callback data (brightness table, radius profile)
 	if effect_data:
 		var cb_data = _load_cb_data()
 		if cb_data:
@@ -91,7 +83,6 @@ func _on_init(emitter_index: int, spawn_counter: int, channel_index: int) -> voi
 				for v in raw_profile:
 					_radius_profile.append(float(v) / BRIGHTNESS_SCALE)
 
-		# Set texture + UV rect on material
 		if effect_data.texture and _material:
 			_material.set_shader_parameter("effect_texture", effect_data.texture)
 			_material.set_shader_parameter("use_texture", true)
@@ -127,7 +118,6 @@ func physics_step() -> void:
 	# PSX rotation: angle += radial_vel, wrapped to 0-4095
 	_rotation_angle_raw = (_rotation_angle_raw + _raw_radial_vel) % 4096
 
-	# Auto-deactivation: check if lifetime exceeded
 	if emitter_config:
 		var max_life: int = emitter_config.lifetime_max_start
 		if max_life > 0 and _frame_counter >= max_life:
@@ -152,7 +142,6 @@ func update_render() -> void:
 	if effective_radius_raw < 0.5:
 		return
 
-	# Sample color curves for this frame
 	var r_val: float = 1.0
 	var g_val: float = 1.0
 	var b_val: float = 1.0
@@ -175,7 +164,6 @@ func update_render() -> void:
 			if b_curve:
 				b_val = b_curve.sample_by_frame(_frame_counter)
 
-	# Auto-deactivate when color curves reach zero
 	if r_val < 0.001 and g_val < 0.001 and b_val < 0.001:
 		_active = false
 		state = State.INACTIVE
@@ -184,14 +172,12 @@ func update_render() -> void:
 	# Center position: anchor_target + emitter Y offset
 	var center: Vector3 = anchor_target + Vector3(0, emitter_config.position_start.y, 0)
 
-	# 8 direction vectors in XZ plane at 45° intervals from rotation angle
 	var angle_rad: float = float(_rotation_angle_raw) * ANGLE_SCALE
 	var dirs: Array[Vector3] = []
 	for i in range(SIDES):
 		var a: float = angle_rad + TAU * float(i) / float(SIDES)
 		dirs.append(Vector3(cos(a), 0.0, sin(a)))
 
-	# Pre-compute cross-section data for 5 sections
 	# Section 0 = equator (widest), Section 4 = tips (zero width)
 	var section_xz_radius: Array[float] = []  # XZ radius per section
 	var section_y_disp: Array[float] = []      # Y displacement per section
@@ -199,9 +185,7 @@ func update_render() -> void:
 	var y_accum: float = 0.0
 	var y_factor: float = _raw_accel_y
 	for s in range(SECTIONS):
-		# XZ radius: profile * effective_radius, converted to Godot units
 		section_xz_radius.append(_radius_profile[s] * effective_radius_raw * PSX_SCALE)
-		# Y displacement: y_accum * y_factor / 256, converted to Godot units
 		section_y_disp.append(y_accum * y_factor / 256.0 * PSX_SCALE)
 		# Advance accumulators (PSX: y_accum += effective_radius >> 2)
 		y_accum += effective_radius_raw / 4.0
@@ -212,7 +196,6 @@ func update_render() -> void:
 	var uvs := PackedVector2Array()
 	var custom0 := PackedFloat32Array()
 
-	# Draw quads between adjacent sections, for both upper (+Y) and lower (-Y) halves
 	var use_brightness_table: bool = _brightness_table.size() >= 8
 
 	for s in range(SECTIONS - 1):
@@ -237,7 +220,6 @@ func update_render() -> void:
 			var d0: Vector3 = dirs[side]
 			var d1: Vector3 = dirs[(side + 1) % SIDES]
 
-			# Upper half (+Y)
 			var v00u: Vector3 = center + d0 * r0 + Vector3(0, y0, 0)
 			var v01u: Vector3 = center + d1 * r0 + Vector3(0, y0, 0)
 			var v10u: Vector3 = center + d0 * r1 + Vector3(0, y1, 0)
@@ -246,7 +228,6 @@ func update_render() -> void:
 			_quad(positions, colors, uvs, custom0,
 				v00u, v01u, v10u, v11u, col_upper, col_upper)
 
-			# Lower half (-Y)
 			var v00d: Vector3 = center + d0 * r0 + Vector3(0, -y0, 0)
 			var v01d: Vector3 = center + d1 * r0 + Vector3(0, -y0, 0)
 			var v10d: Vector3 = center + d0 * r1 + Vector3(0, -y1, 0)

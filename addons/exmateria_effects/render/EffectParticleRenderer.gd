@@ -1,17 +1,10 @@
 extends Node3D
-## Particle renderer feeding the EffectMultiMeshPool slot + the display-space compositor (ADR-0040)
+## Particle renderer feeding the ordered replacement/blend stream (ADR-0365).
 ##
-## Borrows one slot from the global EffectMultiMeshPool autoload. #227: a slot is a single
-## RM_OPAQUE MultiMesh (canvas + depth) — the opaque pass is written to its per-instance buffers via
-## set_instance_transform / set_instance_custom_data / set_instance_color, and the opaque shader
-## unpacks from MODEL_MATRIX basis + INSTANCE_CUSTOM + COLOR (see effect_particle_stp.gdshaderinc).
-## Transparent-frame prims (corners, depth_mode, uv_rect, color_modulate, semi_trans_on) are NOT
-## drawn as MultiMeshes — they are staged into the slot's unified 24-float SSBO (submission order +
-## per-prim mode/ot_order_z/age), which the combat display-space compositor OT-depth-orders and folds.
-##
-## Draw calls per frame: 1 opaque MultiMesh per effect + the compositor's folded transparent passes,
-## instead of the per-MeshInstance3D path's ~N_particles × 2 × N_effects (ADR-0040). #227 also retired
-## the editor pool-less local fallback: the renderer always uses the (project-global) pool autoload.
+## Borrows one pool slot and stages replacement + ABR texel populations together. The
+## opaque pool MultiMesh stays empty: an early colour OR depth pass would suppress
+## later painter-order operations. Source modulation is normalized locally; other
+## pool producers retain their own colour contract.
 ## Vault: [[Display Space Blend Fold]]
 ## Vault: [[Effect MultiMesh Pool]]
 ## Vault: [[Effect Texture Upload]]
@@ -26,53 +19,67 @@ const EffectData = preload("res://addons/exmateria_effects/file_model/EffectData
 const Particle = preload("res://addons/exmateria_effects/particles/Particle.gd")
 const UnifiedPrimStager = preload("res://addons/exmateria_effects/render/UnifiedPrimStager.gd")
 
+# ADR-0211 dec. 4 — alias the published platform façade; one line keeps every use site's
+# spelling and makes a grep for the reach find this file.
+const DisplayPort = ExMateriaPlatform.DisplayPort
+const PsxMagnitude = ExMateriaPlatform.PsxMagnitude
+
+## The divisor this renderer applied to sprite corners until #1507:
+## `PsxNum.UNITS_PER_TILE`, the BOARD scale. A frame record's corner offsets are SCREEN
+## PIXELS, not world units, so dividing them by 28 was a category error — and it also
+## froze one camera zoom into the geometry, since 1/28 equals `ortho_size/240` only at
+## `ortho_size = 240/28 = 8.571`. Kept ONLY as the no-orthographic-camera fallback in
+## `sprite_corner_scale`, where reproducing the pre-#1507 geometry exactly beats guessing.
+##
+## Spelled through the seam, not as `1.0 / 28.0` (ADR-0091): the 28 here IS
+## `PsxMagnitude.UNITS_PER_TILE`, which is what the paragraph above already calls it.
+## `UNITS_PER_TILE` is the int 28, so the value is bit-identical to the literal it
+## replaces — this is a re-spelling of the divisor, not a change to the fallback.
+const LEGACY_BOARD_SCALE: float = 1.0 / float(PsxMagnitude.UNITS_PER_TILE)
+
 const NUM_CHANNELS: int = 5
 
-# The one in-scene draw (canvas + depth), the pool's sole surviving MultiMesh (#227). Transparent
-# prims ride the unified staging keyed by blend mode (0..3), not a per-mode MultiMesh slot anymore.
-const _RM_OPAQUE: int = 0
+# Count index zero is replacement; indices 1..4 count the four ABR populations.
+const _RM_REPLACE: int = 0
 
 # Slot index borrowed from EffectMultiMeshPool
 var _pool_slot: int = -1
+
+# World units per native PSX pixel for the frame being written (#1507). Set once per
+# update_particles from the live camera; the fallback value is the pre-#1507 constant so a
+# renderer written to with no camera produces exactly the geometry it used to.
+var _frame_px_scale: float = LEGACY_BOARD_SCALE
 var _pool: Node = null
 
 # Per-render-mode used-instance count for the current frame
 var _used_counts: Array[int] = [0, 0, 0, 0, 0]
 
-# #218/#219: per-frame CPU staging of the transparent-prim 20-float/instance packing, filled
-# alongside the mode-MultiMesh writes. Slice A (#218) collected four per-mode stagings and
-# concatenated them in FOLD_ORDER. Slice B (#219) instead collects THREE parallel arrays in
-# SUBMISSION order — records (the 20 floats), modes (blend mode 0..3), depths (reversed-Z OT
-# depth) — and OTDepthPrimOrder.order()s them into a depth-ordered unified buffer (far -> near)
-# at publish. Runs become maximal adjacent same-mode spans over the depth-ordered stream. The
-# in-scene mode MultiMeshes are NO LONGER written at runtime (slice D) — they survive only as
-# per-slot texture-stashes; the unified buffer is the transparent carrier for the particle producers
-# (TrapEffect included since #225). See EffectMultiMeshPool.upload_unified.
-# Slice C (#220): the unified record grew to 24 floats — [0..19] the MultiMesh-compatible
+# Unified transparent-prim record: 24 floats per instance — [0..19] the MultiMesh-compatible
 # ADR-0040 packing (byte-identical to a MultiMesh RD buffer), [20] per-prim level_scale
-# (1.0 for modes 0/1/2, 0.25 for mode3/ADD25), [21..23] vec4-alignment padding. The
-# compositor reads level from [20] (v_level varying) so a merged add run serves both
-# mode1 and mode3. Legacy per-mode probe buffers stay 20-float MultiMesh; every runtime producer
-# (the general renderer + TrapEffect since #225) publishes the 24-float unified record.
+# (1.0 for modes 0/1/2, 0.25 for mode3/ADD25), [21..23] vec4-alignment padding. The compositor
+# reads level from [20] (v_level varying), so a merged add run serves both mode1 and mode3.
 const _FLOATS_PER_INSTANCE: int = 24
-# #6.2: the submission-order transparent-prim staging (24-float record layout + parallel
-# mode/ot_order_z-depth/age keys + the order()->upload_unified publish ceremony) is single-sourced
-# in UnifiedPrimStager, shared with TrapEffect and the Category-A producers. Mode resolution stays
-# here (the per-frame semi_trans_mode int) — append() takes an already-resolved mode. The per-frame
-# world->view for the fold-order key is handed to begin(); only the VIEW is needed (ot_order_z is
-# view-space Z, frustum-independent). Occlusion depth (reversed-Z NDC) is computed GPU-side in the
-# compositor, the ONLY place the renderer's reversed-Z projection exists — the CPU cannot supply it.
+# #6.2: the submission-order transparent-prim staging (record layout + mode/depth/age keys +
+# the order()->upload_unified publish) is single-sourced in UnifiedPrimStager, shared with
+# the Category-A producers (and TrapEffect until ADR-0369 retired it). Mode resolution stays here — append() takes an
+# already-resolved mode; begin() takes the per-frame world->view (only the VIEW is needed:
+# ot_order_z is view-space Z, frustum-independent). Occlusion depth (reversed-Z NDC) is computed
+# GPU-side in the compositor, the only place the renderer's reversed-Z projection exists —
+# the CPU cannot supply it.
 var _stager: UnifiedPrimStager = UnifiedPrimStager.new()
-
-# Cached per-render-mode capacity (mirror of MultiMesh.instance_count)
-var _capacities: Array[int] = [0, 0, 0, 0, 0]
 
 # Shared resources
 var effect_data: EffectData
+var _has_replacement_texels := true
 var texture_size: Vector2 = Vector2(128, 256)
 
 # World origin set by EffectInstance each frame (for global_transform positioning)
 var _effect_world_origin: Vector3 = Vector3.ZERO
+
+# Pre-camera-advance Q12 submission scale, forwarded by EffectInstance. Direct
+# renderer users keep identity; Camera3D framing still only converts pixels to
+# world units (#1507). This does not touch particle centres or callback meshes.
+var sprite_zoom_q12: float = 4096.0
 
 # Debug-only emitter mute set, written by EffectViewer via
 # EffectInstance.set_debug_emitter_filter. Set-style Dictionary (key=emitter_index)
@@ -82,6 +89,7 @@ var disabled_emitters: Dictionary = {}
 
 # Cached per-emitter align_to_velocity flags
 var _emitter_align_to_velocity: Array[bool] = []
+var _emitter_uses_sprite_zoom: Array[bool] = []
 
 # Cached per-emitter color curve references (null if color_curve_enabled is false)
 var _emitter_color_curve_r: Array = []  # Array of EffectCurve or null
@@ -96,16 +104,14 @@ func initialize(data: EffectData, _particle_count: int = 512) -> void:
 	if effect_data and effect_data.texture:
 		texture_size = Vector2(effect_data.texture.get_width(), effect_data.texture.get_height())
 
-	# #227: the renderer always uses the global EffectMultiMeshPool autoload (a project global). The
-	# old editor/pool-less _setup_local_slot fallback — the only non-compositor in-scene render path —
-	# is retired; a future pool-less scene gains the autoload rather than resurrecting that path.
+	# #227: the renderer always uses the global EffectMultiMeshPool autoload (a project global);
+	# a future pool-less scene gains the autoload, not a local fallback path.
 	_pool = Engine.get_main_loop().root.get_node_or_null("EffectMultiMeshPool")
 	if not _pool:
 		push_error("EffectParticleRenderer: EffectMultiMeshPool autoload not found")
 		return
 	_pool_slot = _pool.borrow_slot()
 	_apply_texture_to_slot()
-	_capacities[_RM_OPAQUE] = _pool.get_multimesh(_pool_slot).instance_count
 
 	_setup_emitter_caches()
 
@@ -114,15 +120,25 @@ func initialize(data: EffectData, _particle_count: int = 512) -> void:
 
 
 func _apply_texture_to_slot() -> void:
-	"""#227: stash the effect sheet on the slot's plain _effect_tex field (what the compositor folds),
-	and set effect_texture + texture_size on the RM_OPAQUE material only — RM_OPAQUE still draws
-	in-scene (canvas + depth), so its shader samples the sheet. The RM_MODE0..3 materials no longer
-	carry the sheet (nothing has read it there since the reader repointed to _effect_tex in commit 3)."""
+	"""Publish the sheet and refresh its conservative STP0 census."""
 	if effect_data and effect_data.texture:
 		_pool.set_effect_texture(_pool_slot, effect_data.texture)
-		var mat: ShaderMaterial = _pool.get_material(_pool_slot)
-		mat.set_shader_parameter("effect_texture", effect_data.texture)
-		mat.set_shader_parameter("texture_size", texture_size)
+		_has_replacement_texels = _texture_has_replacement_texels(effect_data.texture)
+
+
+static func _texture_has_replacement_texels(texture: Texture2D) -> bool:
+	# Atlas-wide conservative census, once per texture refresh, not per frame.
+	# ABE-on replacement carriers are provably empty without nonzero STP0 texels.
+	# Unknown/compressed images retain the carrier rather than dropping coverage.
+	var image := texture.get_image()
+	if image == null or image.is_compressed():
+		return true
+	image.convert(Image.FORMAT_RGBA8)
+	var bytes := image.get_data()
+	for i in range(0, bytes.size(), 4):
+		if bytes[i + 3] > 229 and (bytes[i] > 2 or bytes[i + 1] > 2 or bytes[i + 2] > 2):
+			return true
+	return false
 
 
 func refresh_texture() -> void:
@@ -150,6 +166,7 @@ func refresh_emitter_caches() -> void:
 func _setup_emitter_caches() -> void:
 	"""Cache per-emitter flags + color curves once at init."""
 	_emitter_align_to_velocity.clear()
+	_emitter_uses_sprite_zoom.clear()
 	_emitter_color_curve_r.clear()
 	_emitter_color_curve_g.clear()
 	_emitter_color_curve_b.clear()
@@ -158,6 +175,11 @@ func _setup_emitter_caches() -> void:
 			var e = effect_data.get_emitter(i)
 			if e:
 				_emitter_align_to_velocity.append(e.flags.get("align_to_velocity", false))
+				# 0x801A5C3C maps the emitter's raw mode nibble 0/1/2/3 to
+				# animation.flags &6 = 0/2/4/6. 0x801AA1F8 passes the scale
+				# vector only for 0/2. Animation opcode depth_mode is unrelated.
+				var sprite_mode: int = (int(e.raw_data.get("animation_target_flag", 0)) >> 4) & 0xF
+				_emitter_uses_sprite_zoom.append(sprite_mode < 2)
 				if e.flags.get("color_curve_enabled", false):
 					var cc: Dictionary = e.color_curves
 					_emitter_color_curve_r.append(effect_data.get_curve(int(cc.get("r", -1))))
@@ -169,43 +191,35 @@ func _setup_emitter_caches() -> void:
 					_emitter_color_curve_b.append(null)
 			else:
 				_emitter_align_to_velocity.append(false)
+				_emitter_uses_sprite_zoom.append(false)
 				_emitter_color_curve_r.append(null)
 				_emitter_color_curve_g.append(null)
 				_emitter_color_curve_b.append(null)
 
 
-# --- MultiMesh access (pool-backed; only RM_OPAQUE draws in-scene, #227) ---
+# --- Legacy pool mesh stays empty for this producer (ADR-0365). ---
 
 func _get_multimesh() -> MultiMesh:
 	return _pool.get_multimesh(_pool_slot)
 
 
-func _ensure_capacity(needed: int) -> void:
-	if _capacities[_RM_OPAQUE] >= needed:
-		return
-	_pool.ensure_instance_capacity(_pool_slot, needed)
-	_capacities[_RM_OPAQUE] = _pool.get_multimesh(_pool_slot).instance_count
-
-
 func update_particles(particles: Array[Particle]) -> void:
-	"""Zero-alloc render path: walk particles, route each frame to the right
-	render_mode's MultiMesh, pack per-instance state into transform / custom
-	data / color.
-
-	Per ADR-0040 (extends ADR-0015):
-	  L1 (inter-particle macro depth) — fragment shader ot_depth, unchanged.
-	  L2 (intra-particle frame stack) — instance-buffer write order (this loop's
-		  `for fi in range(frames.size())` is the determining order).
-	  L3 (opaque vs semi-trans pass split) — per-MultiMesh render_mode.
+	"""Pack frame populations in reverse record order (PSX OT head insertion).
+	Depth/age ordering and compatible-run batching happen at publication.
 	"""
-	# Reset per-rm used counts
 	for rm in range(5):
 		_used_counts[rm] = 0
-	# #219/Slice-D: reset the submission-order transparent-prim staging (at runtime this is now the
-	# ONLY place transparent prims are written — the mode-MM double-write is retired). The per-frame
-	# world->view for the CPU fold-order key is captured here too (guard null camera -> identity, so
-	# depths degenerate to base-z and ordering still tie-breaks by submission).
+	# Reset the submission-order transparent-prim staging — the only place transparent prims are
+	# written. The per-frame world->view for the CPU fold-order key is captured here too (guard
+	# null camera -> identity: depths degenerate to base-z, ties break by submission order).
 	var frame_camera: Camera3D = get_viewport().get_camera_3d()
+	# #1507: sprite corners are SCREEN PIXELS, so their world length depends on the live
+	# camera extent. Derived once per frame here, not cached, so a zoom takes effect on
+	# the next frame with no invalidation to forget.
+	_frame_px_scale = sprite_corner_scale(
+		frame_camera.size if frame_camera else 0.0,
+		frame_camera != null and frame_camera.projection == Camera3D.PROJECTION_ORTHOGONAL
+	)
 	var frame_view: Transform3D = frame_camera.get_camera_transform().affine_inverse() if frame_camera else Transform3D()
 	_stager.begin(frame_view)
 
@@ -239,15 +253,27 @@ func update_particles(particles: Array[Particle]) -> void:
 
 		# Per-particle color modulate (sampled once per particle, not per frame)
 		var color_modulate: Color = _compute_color_modulate(p)
+		# Curves are byte/255 envelopes (also read by Studio); the GPU wants byte/128.
+		# No curve already means the neutral RGB128 source, i.e. multiplier one.
+		if p.emitter_index < _emitter_color_curve_r.size() and _emitter_color_curve_r[p.emitter_index] != null:
+			color_modulate *= 255.0 / 128.0
+		if p.color_scale != 1.0:
+			if p.color_scale <= 0.0:
+				continue
+			color_modulate *= p.color_scale
 
-		for fi in range(frames.size()):
+		# PSX links each frame primitive at the OT head: last file record draws
+		# first. Silf frameset50 is ADD,SUB in the file but SUB->ADD in live RAM
+		# (0x801D75B4 -> 0x801D758C). Ascending order subtracts away the figure's
+		# warm colours. Reverse only this stack; particle depth/age sort is unchanged.
+		for fi in range(frames.size() - 1, -1, -1):
 			if not frames[fi] is Dictionary:
 				continue
 			var frame_data: Dictionary = frames[fi]
 			var semi_trans_on: bool = frame_data.get("semi_trans_on", true)
 
-			# Opaque pass (always written into RM_OPAQUE)
-			_write_instance(_RM_OPAQUE, p, frame_data, depth_mode, color_modulate, semi_trans_on, frame_camera, align)
+			if not semi_trans_on or _has_replacement_texels:
+				_write_instance(_RM_REPLACE, p, frame_data, depth_mode, color_modulate, semi_trans_on, frame_camera, align)
 
 			# Semi-trans pass (conditional, routed by blend mode). The `rm` arg is 1 + blend_mode
 			# (1..4): _write_instance stages it to the unified transparent buffer (no MultiMesh, #227).
@@ -267,21 +293,45 @@ func update_particles(particles: Array[Particle]) -> void:
 
 
 func _compute_color_modulate(p: Particle) -> Color:
-	"""Sample per-emitter color curves for this particle's age; default white."""
+	"""Sample colour for the completed simulation tick; default white.
+
+	ParticleSubsystem advances age before publication, whereas PSX 0x801A5EA4
+	renders with the old age and 0x801A2EB4 increments it afterward. Thus a
+	stepped particle at age1 displays sample0 (Silf fs50: RGB128,128,128),
+	not sample1 (109,134,134). Age0 is an unstepped spawn: also sample0.
+	Do not use anim_frame: held/looping animations still advance colour age.
+	Repeated render/paused/seek publication must not mutate simulation age.
+	"""
+	var colour_sample_age: int = maxi(p.age - 1, 0)
 	var ei: int = p.emitter_index
 	if ei < _emitter_color_curve_r.size() and _emitter_color_curve_r[ei] != null:
 		# The shared resolve (EffectCurve.sample_rgb) — the SAME source the studio
 		# Colour ribbon reads, so preview and render can't diverge. Alpha stays 0.0
 		# here; _write_instance sets it per-frame from the semi_trans_on flag.
 		return EffectCurve.sample_rgb(_emitter_color_curve_r[ei], _emitter_color_curve_g[ei],
-			_emitter_color_curve_b[ei], p.age)
+			_emitter_color_curve_b[ei], colour_sample_age)
 	return Color(1.0, 1.0, 1.0, 0.0)
+
+
+## World units per one native PSX pixel of sprite corner offset, for this frame's camera.
+##
+## Pure and static so the law can be asserted without a viewport — the direction test in
+## `tests/PsxMagnitudeTest.gd` seeds a wrong divisor here and in `DisplayPort`.
+##
+## ⚠️ THE FALLBACK IS THE OLD BEHAVIOUR, DELIBERATELY. With no orthographic camera there
+## is no vertical world extent to convert against, and inventing one would be a silent
+## wrong size. Returning `LEGACY_BOARD_SCALE` reproduces the pre-#1507 geometry exactly,
+## so the degraded case is the previously-shipped case rather than a new artifact.
+static func sprite_corner_scale(ortho_size: float, is_orthogonal: bool) -> float:
+	if not is_orthogonal or ortho_size <= 0.0:
+		return LEGACY_BOARD_SCALE
+	return DisplayPort.native_px_to_world(ortho_size)
 
 
 func _write_instance(rm: int, p: Particle, frame_data: Dictionary, depth_mode: int,
 		color_modulate: Color, semi_trans_on: bool, frame_camera: Camera3D,
 		align_to_velocity: bool) -> void:
-	"""Pack one particle frame into the (rm) MultiMesh's next free instance slot.
+	"""Pack one particle frame population into the ordered stream.
 
 	Packing (ADR-0040):
 	  transform.basis  — 9 floats: 4 corners + depth_mode
@@ -289,14 +339,12 @@ func _write_instance(rm: int, p: Particle, frame_data: Dictionary, depth_mode: i
 	  custom_data      — vec4: uv_rect (x, y, w, h) normalized
 	  instance_color   — vec4: color_modulate.rgb + semi_trans_on (0/1) in alpha
 	"""
-	# Extract UV data
 	var uv = frame_data.get("uv", {})
 	var uv_x: float = float(uv.get("x", 0))
 	var uv_y: float = float(uv.get("y", 0))
 	var uv_w: float = float(uv.get("width", 8))
 	var uv_h: float = float(uv.get("height", 8))
 
-	# Get vertex corners + apply animation offset
 	var vertices = frame_data.get("vertices", {})
 	var tl = vertices.get("top_left", [-8, -8])
 	var tr = vertices.get("top_right", [8, -8])
@@ -313,7 +361,6 @@ func _write_instance(rm: int, p: Particle, frame_data: Dictionary, depth_mode: i
 	var br_x: float = float(br[0]) + anim_offset.x
 	var br_y: float = float(br[1]) + anim_offset.y
 
-	# Apply velocity-based rotation if enabled
 	if align_to_velocity:
 		var velocity: Vector3 = p.velocity
 		if velocity.length_squared() > 0.0 and frame_camera:
@@ -335,6 +382,21 @@ func _write_instance(rm: int, p: Particle, frame_data: Dictionary, depth_mode: i
 			bl_x = new_bl_x; bl_y = new_bl_y
 			br_x = new_br_x; br_y = new_br_y
 
+	# #1507: convert the corner offsets from NATIVE PSX PIXELS to world units here, so the
+	# basis ships world units and the shader consumes them unscaled. This used to be a
+	# `const PSX_SCALE = 1.0/28.0` multiply in effect_particle_stp.gdshaderinc; it moved
+	# because the factor is camera-dependent and because GDScript is where it can be
+	# asserted. Uniform scale commutes with the align_to_velocity rotation above, so
+	# applying it after that rotation is equivalent to applying it before.
+	var s: float = _frame_px_scale
+	if p.emitter_index >= 0 and p.emitter_index < _emitter_uses_sprite_zoom.size() \
+			and _emitter_uses_sprite_zoom[p.emitter_index]:
+		s *= sprite_zoom_q12 / 4096.0
+	tl_x *= s; tl_y *= s
+	tr_x *= s; tr_y *= s
+	bl_x *= s; bl_y *= s
+	br_x *= s; br_y *= s
+
 	# Pack corners + depth_mode into the transform basis (ADR-0040)
 	var basis := Basis(
 		Vector3(tl_x, tl_y, tr_x),
@@ -345,8 +407,6 @@ func _write_instance(rm: int, p: Particle, frame_data: Dictionary, depth_mode: i
 	# World position into the transform origin (#227: always pool-relative to the effect origin).
 	var origin: Vector3 = _effect_world_origin + p.position
 
-	var transform := Transform3D(basis, origin)
-
 	# UV rect (normalized) — map to texel centers to avoid seam artifacts on mirrored frames
 	var custom_data := Color(
 		(uv_x + 0.5) / texture_size.x,
@@ -355,7 +415,7 @@ func _write_instance(rm: int, p: Particle, frame_data: Dictionary, depth_mode: i
 		(uv_h - signf(uv_h)) / texture_size.y
 	)
 
-	# Color: modulate.rgb + semi_trans_on (used by opaque shader only) in alpha
+	# Color: normalized source modulation + ABE flag (replacement selection) in alpha
 	var instance_color := Color(
 		color_modulate.r,
 		color_modulate.g,
@@ -363,36 +423,16 @@ func _write_instance(rm: int, p: Particle, frame_data: Dictionary, depth_mode: i
 		1.0 if semi_trans_on else 0.0
 	)
 
-	# Slice D (#221): the transparent mode MultiMeshes are NOT written — this renderer's transparent
-	# prims fold through the display-space compositor, so writing them was a pure double-write (the
-	# ADR-0040 CPU cost). We write a MultiMesh only for RM_OPAQUE (canvas+depth, always in-scene). Transparent prims
-	# live ONLY in the unified staging below. (#227: the editor local-fallback preview path is retired.)
-	if rm == _RM_OPAQUE:
-		var slot: int = _used_counts[rm]
-		_used_counts[rm] = slot + 1
-		if slot >= _capacities[rm]:
-			_ensure_capacity(slot + 1)
-		var multimesh: MultiMesh = _get_multimesh()
-		multimesh.set_instance_transform(slot, transform)
-		multimesh.set_instance_custom_data(slot, custom_data)
-		multimesh.set_instance_color(slot, instance_color)
-
-	# #218/#219: stage the transparent-mode instance into the submission-order unified buffer via the
-	# shared UnifiedPrimStager (byte-identical to the MultiMesh RD buffer: transform 3x4 ROW-MAJOR,
-	# color rgba, custom rgba, level_scale, pad). RM_OPAQUE (rm 0) stays MultiMesh-only. mode index =
-	# rm - 1. The per-prim OT ORDER key is the VIEW-SPACE Z of the SAME world_origin (the stager
-	# derives ot_order_z from the view handed to begin()), so the CPU fold order matches the billboard
-	# the compositor rasterizes. (The shader still writes its OWN reversed-Z ot_depth as gl_FragDepth
-	# for occlusion.)
-	if rm != _RM_OPAQUE:
-		_stager.append(basis, origin, instance_color, custom_data, rm - 1, depth_mode, float(p.age))
+	# Replacement and blended populations share the same primitive key. They are
+	# disjoint in the shader, so adjacency preserves ABE/STP semantics at any age.
+	_used_counts[rm] += 1
+	var operation: int = UnifiedPrimStager.REPLACE if rm == _RM_REPLACE else rm - 1
+	_stager.append(basis, origin, instance_color, custom_data, operation, depth_mode, float(p.age))
 
 
 func _publish_used_counts() -> void:
-	"""#227: only RM_OPAQUE has a pool MultiMesh (canvas + depth) to fill; transparent prims ride the
-	unified buffer, so only its visible count is published. Then (#218) publish the unified
-	transparent-prim buffer to the pool for the combat compositor."""
-	_get_multimesh().visible_instance_count = _used_counts[_RM_OPAQUE]
+	"""Never submit an early scene colour/depth pass; publish the ordered stream."""
+	_get_multimesh().visible_instance_count = 0
 	_publish_unified()
 
 
@@ -402,7 +442,7 @@ func _publish_unified() -> void:
 	(EffectMultiMeshPool.upload_unified). Slice B replaces slice A's by-mode FOLD_ORDER concat with
 	OTDepthPrimOrder.order — runs now interleave by depth. #6.2: the order()->upload_unified ceremony
 	(and the "pass the ages or equal-depth ties mis-order" contract) now lives in UnifiedPrimStager."""
-	_stager.publish(_pool, _pool_slot)
+	_stager.publish(_pool, _pool_slot, false, RID(), 16, true)
 
 
 func release_pool_meshes() -> void:

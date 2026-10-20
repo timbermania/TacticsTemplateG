@@ -3,19 +3,19 @@ extends RefCounted
 
 ## PORT SIGNATURE - the six verbs a member may name instead of the
 ## `TintedSurfaces` autoload identifier. A member may reach NO autoload
-## identifier at all (ADR-0308 dec. 1); the host registers THIS addon's
-## script, so the node-path bind below is free on arm 2b's stated grounds -
-## the script travels with the addon, the registration does not
-## (ADR-0308 dec. 6; the trade ADR-0175 dec. 2 made for `Tune`).
+## identifier at all (ADR-0308 dec. 1); the host registers this addon's
+## script, so the node-path bind below is free - the script travels with the
+## addon, the registration does not (ADR-0308 dec. 6; the trade ADR-0175
+## dec. 2 made for `Tune`).
 ## Absent answers: every write is a no-op, every read says "nothing is
 ## registered" - the true answer, not a fallback.
 ## tests/TunePortTest.gd drives both the bound and the absent path.
 ## vault: .vaults/comments/exmateria_effects/port-contracts.md
 
 
-## The shipped script. 🔴 SURFACE_MAP CANNOT GO THROUGH THE NODE: a GDScript
-## const is not a property, so node.SURFACE_MAP on the resolved autoload fails
-## at runtime - the reach lands on the SCRIPT. One 0: overlay/TintedSurfaces.gd:70.
+## The shipped script. SURFACE_MAP CANNOT GO THROUGH THE NODE: a GDScript const
+## is not a property, so node.SURFACE_MAP on the resolved autoload fails at
+## runtime - the reach lands on the SCRIPT.
 const TintedSurfacesScript = preload("res://addons/exmateria_effects/overlay/TintedSurfaces.gd")
 
 ## The reserved MAP-surface token, re-exported off the shipped script above.
@@ -89,7 +89,7 @@ static func remove_all_layers_for_owner(owner_id: int) -> bool:
 
 
 ## Whether `surface_id` has a registered material. `false` with no registry is
-## the TRUE answer, not a fallback; both call sites guard a write with it.
+## the TRUE answer, not a fallback.
 static func is_surface_registered(surface_id: int) -> bool:
 	var p := _resolve()
 	if p == null:

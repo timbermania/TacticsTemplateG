@@ -20,8 +20,8 @@ extends RefCounted
 ## file's header. Short version: the two records look alike and are not the same record, and
 ## the shared part is four lines of arithmetic against a field-schema interpreter.
 ##
-## THE RGB BYTES ARE REPORTED TWICE, UNSIGNED AND SIGNED, AND THE SIGNED VIEW IS THE READABLE
-## ONE. These are colour DELTAS, so `246` means `-10`; `rgb_signed` exists so a +16/-10/-13
+## The RGB bytes are reported twice, unsigned and signed; the signed view is the readable
+## one. These are colour DELTAS, so `246` means `-10`; `rgb_signed` exists so a +16/-10/-13
 ## tint does not read as 16/246/243. Only `rgb` is written back (`EffectWritePalette` ignores
 ## the signed view), so referee B is blind to `rgb_signed`, `enabled`, `blend_mode` and
 ## `duration_frames` alike.

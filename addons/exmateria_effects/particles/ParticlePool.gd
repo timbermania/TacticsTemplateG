@@ -1,5 +1,4 @@
 extends RefCounted
-## Simple object pool for particles
 
 const Particle = preload("res://addons/exmateria_effects/particles/Particle.gd")
 

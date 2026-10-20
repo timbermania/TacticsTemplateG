@@ -1,64 +1,49 @@
 @tool
 extends Node
-## The registry of TINTED SURFACES — a set of `ShaderMaterial`s keyed by an opaque
+## The registry of tinted surfaces — a set of `ShaderMaterial`s keyed by an opaque
 ## token, with a stack of colour ops composited onto each.
 ##
-## 🔴 IT WAS CALLED `UnitTintOverlay` UNTIL #1223, AND THE OLD NAME CLAIMED A
-## COUPLING THAT DOES NOT EXIST. This class never dereferences the id it is keyed by:
-## `src/units/Unit.gd:730` calls `register_surface()` WITH THE MATERIAL, and nothing
-## here ever asks what the token points at. So it was never a registry of units — it
-## is a registry of surfaces, and `surface_id` is an opaque token (ADR-0288 dec. 7,
-## split into a rename half and a merge half by ADR-0290 dec. 7).
+## Renamed from `UnitTintOverlay` in #1223: the class never dereferences the id it
+## is keyed by — `src/units/Unit.gd:730` calls `register_surface()` with the
+## material, and nothing here asks what the token points at — so `surface_id` is
+## an opaque token (ADR-0288 dec. 7, split into a rename half and a merge half by
+## ADR-0290 dec. 7).
 ##
-## 🔴 #1224 ABSORBED `MapTintOverlay` AS THE `SURFACE_MAP` CASE, AND THE "ERASED KEY"
-## FRAMING WAS NOT QUITE TRUE. ADR-0288 dec. 7 reads *"MapTintOverlay IS
-## UnitTintOverlay WITH THE SURFACE KEY ERASED"*. Measured against the two files, it
-## was the key plus **four** differences, every one of which is preserved here rather
-## than flattened:
+## #1224 absorbed `MapTintOverlay` as the `SURFACE_MAP` case. ADR-0288 dec. 7 read
+## *"MapTintOverlay IS UnitTintOverlay WITH THE SURFACE KEY ERASED"*; measured
+## against the two files, it was the key plus four differences, preserved here
+## rather than flattened:
 ##
-##   1. **A surface holds MANY materials, not one.** `MapTintOverlay` kept
-##      `_map_materials: Array[ShaderMaterial]` — `MapComposer` emits one material per
-##      chunk and `BattlefieldWiring` registers each — while the unit side was 1:1. So
-##      `_surface_materials` now maps a token to an ARRAY. A unit registers one and
-##      behaves exactly as before; the map registers several under one token, which is
-##      what makes the erased-key claim true instead of nearly true.
-##   2. **The map's `update_stack` had no registration guard.** The unit's returns
-##      early when the surface is unknown; the map's stored the layer regardless,
-##      because materials arrive from `MapComposer` on a signal and may arrive late.
-##      `SURFACE_MAP` is therefore RESERVED at `_ready` with an empty material list, so
-##      `has()` is always true for it and the guard never fires for the map — identical
-##      behaviour on both sides with no branch in the hot path.
-##   3. **`update_layer` used a DIFFERENT MASK.** The unit's packs `MASK_WHOLE`; the
-##      map's packed `MASK_SURFACE0` (*"map is a single-surface consumer"*). Flattening
-##      that would have silently changed what a map delta means, so the mask is chosen
-##      per surface below. The map's variant had ZERO callers, so nothing would have
-##      caught it.
-##   4. **The map had a THIRD colour sink the unit side has no counterpart for** — the
-##      8-bit additive map-illumination applier (FUN_80090dec, Holy/E015). #1224 carried
-##      it over whole, on the grounds that *deleting a documented retention is a different
-##      argument from merging two registries*. 🟢 **#1192 THEN MADE THAT ARGUMENT AND
-##      IT IS GONE** (2026-09-12): its producer half in `PaletteSubsystem` was measured
-##      unreached — 2 hits in its own unit test as a positive control, 0 across eight
-##      battle and effect-playback scenes — and the owner ruled the future
-##      untextured-terrain scope dead. Producer and sink were one feature in two files, so
-##      both went; keeping this half would have left a sink nothing feeds. The difference
-##      is recorded rather than erased because it is why the merge was not a pure
-##      key-erasure.
+##   1. A surface holds many materials, not one: `MapComposer` emits one material
+##      per chunk and `BattlefieldWiring` registers each, while the unit side was
+##      1:1, so `_surface_materials` maps a token to an array.
+##   2. The map's `update_stack` had no registration guard — materials arrive from
+##      `MapComposer` on a signal and may arrive late — so `SURFACE_MAP` is reserved
+##      at `_ready` with an empty material list, and `has()` is always true for it.
+##   3. `update_layer` used a different mask: the unit's packs `MASK_WHOLE`, the
+##      map's packed `MASK_SURFACE0` ("map is a single-surface consumer"). The mask
+##      is chosen per surface below; the map's variant had zero callers, so nothing
+##      would have caught a flattening.
+##   4. The map had a third colour sink the unit side has no counterpart for — the
+##      8-bit additive map-illumination applier (FUN_80090dec, Holy/E015). #1224
+##      carried it over whole; #1192 (2026-09-12) deleted it: its producer half in
+##      `PaletteSubsystem` was measured unreached — 2 hits in its own unit test as a
+##      positive control, 0 across eight battle and effect-playback scenes — and the
+##      owner ruled the future untextured-terrain scope dead.
 ##
-## WHAT DID NOT SURVIVE: `MapTintOverlay.is_active()` is gone. Zero callers anywhere,
-## tests included, and `is_surface_registered()` already answers the neighbouring
-## question. That is a deletion, said out loud, not a fold.
+## Deletion record: `MapTintOverlay.is_active()` — zero callers anywhere, tests
+## included; `is_surface_registered()` already answers the neighbouring question.
 ##
 ## Implementation (ADR-0067 combat route, issue #164): concatenates each effect
 ## owner's ColorStack snapshot into the unified `color_layer_*` uniforms, so combat
 ## palette effects fold through color_apply over the real ALBEDO at 5-bit CLUT
 ## fidelity (Consumer profile: the palette applier color_tint_blend_apply
-## @0x8008f710 — quantize=true, absolute base). This REPLACES the old additive
+## @0x8008f710 — quantize=true, absolute base). This replaces the old additive
 ## `unit_tint` uniform, which couldn't express the base-dependent luma / absolute-
-## base modes. update_layer(delta) is kept as the additive bridge for the one
-## purely-additive consumer (TrapPaletteController). For the map the same fold happens
-## on the palette entry BEFORE lighting — the faithful CLUT-engine behaviour, the map
-## being tinted by its CLUT contents changing.
+## base modes. `update_layer(delta)` is kept as the additive bridge for the one
+## purely-additive consumer (TrapPaletteController until ADR-0369 retired it). For the map the same fold
+## happens on the palette entry before lighting — the faithful CLUT-engine
+## behaviour, the map being tinted by its CLUT contents changing.
 ## Vault: [[Map Tint]]
 
 const ColorStackClass = ExMateriaSchema.ColorStack
@@ -69,8 +54,8 @@ const ColorStackClass = ExMateriaSchema.ColorStack
 ## `BattlefieldWiring` registers anything into it — see difference 2 in the header.
 const SURFACE_MAP: int = 0
 
-# Maps an opaque surface token -> Array[ShaderMaterial]. A unit holds ONE; the map
-# holds one per composed chunk (#1224, difference 1). Today every non-map token is a
+# Maps an opaque surface token -> Array[ShaderMaterial]. A unit holds one; the map
+# holds one per composed chunk (#1224, difference 1). Every non-map token is a
 # `Unit.get_instance_id()`; nothing here depends on that (#1223).
 var _surface_materials: Dictionary = {}
 
@@ -78,6 +63,13 @@ var _surface_materials: Dictionary = {}
 # Maps surface_id -> {owner_id -> {rgb0: Array[Vector4], rgb1: Array[Vector4], meta: Array[int]}}
 # Each entry is a pre-evaluated ColorStack snapshot (see update_stack / update_layer).
 var _active_layers: Dictionary = {}
+
+# A unit's STATUS tint (#2060): surface_id -> one packed snapshot, like an owner's. Kept apart
+# from the effect owners because the ROM's status palette yields to them: it returns while
+# a palette effect owns the unit (`palette_modifier != 0` in
+# `battle_gfx_update_misc_unit_status_palette`), and the effect's track reads the sheet's own
+# CLUT, not the tinted one. So it is folded only while the surface has no effect owner.
+var _status_layers: Dictionary = {}
 
 
 
@@ -144,6 +136,27 @@ func unregister_surface(surface_id: int) -> void:
 		_surface_materials.erase(surface_id)
 	if _active_layers.has(surface_id):
 		_active_layers.erase(surface_id)
+	_status_layers.erase(surface_id)
+
+
+func set_status_stack(surface_id: int, stack) -> void:
+	"""Set (or, with `stack == null`, clear) a unit's status tint (#2060). A snapped,
+	time-free stack: it is evaluated at frame 0. Folded only while no effect owner is
+	active on the surface — see `_status_layers`."""
+	if not _surface_materials.has(surface_id) or surface_id == SURFACE_MAP:
+		return
+	if stack == null:
+		if not _status_layers.has(surface_id):
+			return
+		_status_layers.erase(surface_id)
+	else:
+		stack.evaluate(0)
+		_status_layers[surface_id] = {
+			"rgb0": stack.rgb0().duplicate(),
+			"rgb1": stack.rgb1().duplicate(),
+			"meta": stack.meta().duplicate(),
+		}
+	_recomposite(surface_id)
 
 
 func update_stack(surface_id: int, owner_id: int, stack, now: int) -> void:
@@ -175,7 +188,7 @@ func update_stack(surface_id: int, owner_id: int, stack, now: int) -> void:
 
 func update_layer(surface_id: int, owner_id: int, tint: Color) -> void:
 	"""Additive-bridge contribution for a purely-additive consumer
-	(TrapPaletteController). The delta becomes one scale=1 affine layer (bias =
+	(its consumer, TrapPaletteController, was retired by ADR-0369). The delta becomes one scale=1 affine layer (bias =
 	delta), so it folds to base + delta through the same stack seam as update_stack.
 
 	🔴 THE MASK DIFFERS BY SURFACE and that is preserved, not flattened (#1224,
@@ -241,11 +254,13 @@ func _recomposite(surface_id: int) -> void:
 	var rgb0: Array = []
 	var rgb1: Array = []
 	var meta: Array = []
-	if _active_layers.has(surface_id):
-		for snap in _active_layers[surface_id].values():
-			rgb0.append_array(snap.rgb0)
-			rgb1.append_array(snap.rgb1)
-			meta.append_array(snap.meta)
+	var owners: Array = _active_layers[surface_id].values() if _active_layers.has(surface_id) else []
+	if owners.is_empty() and _status_layers.has(surface_id):
+		owners = [_status_layers[surface_id]]
+	for snap in owners:
+		rgb0.append_array(snap.rgb0)
+		rgb1.append_array(snap.rgb1)
+		meta.append_array(snap.meta)
 
 	if rgb0.size() > ColorStackClass.MAX_COLOR_LAYERS:
 		push_warning("TintedSurfaces: %d combat colour layers on surface %d exceed budget %d; extras dropped" % [
@@ -262,7 +277,7 @@ func is_surface_registered(surface_id: int) -> bool:
 
 	⚠️ TRUE FOR `SURFACE_MAP` FROM BOOT, materials or not — it is reserved (difference
 	2). The map never had an is-registered question; the unit side's one caller
-	(`TrapPaletteController`) only ever asks about units.
+	(`TrapPaletteController`, retired by ADR-0369) only ever asked about units.
 	"""
 	return _surface_materials.has(surface_id)
 

@@ -1,5 +1,4 @@
 extends Node3D
-## Manages callback slots, dispatches invocations, and forwards child spawn requests.
 ## Vault: [[Effect Execution Model]]
 ## Vault: [[Embedded MIPS Effect Code]]
 
@@ -10,14 +9,26 @@ const CallbackRegistryClass = preload("res://addons/exmateria_effects/callbacks/
 
 var _slots: Array = [null, null, null, null]  # Up to 4 callback slots
 var effect_data: EffectData
+var rng: RandomNumberGenerator = null
+## The cast's ParticleSubsystem, for callbacks that drive particles themselves
+## (EffectCallback.particle_host). Null on a host that never set it.
+var particle_host = null
 
 signal child_spawn_requested(emitter_index: int, position: Vector3, frame: int)
 
 
-func initialize(data: EffectData, callback_slot_data: Array) -> void:
+func initialize(data: EffectData, callback_slot_data: Array, route_native: bool) -> void:
 	"""Initialize callback slots from parsed script data.
 
 	callback_slot_data: [{slot: int, callback_id: int}, ...]
+	route_native: THE ROUTE this cast draws on (ADR-0349 dec. 2) — true for Godot's in-scene
+	  blend, false for the display-space fold. Read ONCE per cast by EffectInstance and handed
+	  straight down; this manager does not resolve it and does not cache it, because a cast that
+	  re-read it could end up with two callbacks on two different sides of one frame.
+
+	  It is REQUIRED, not defaulted. A default here would be a route nobody chose, applied to
+	  every caller who forgot — and the whole defect this replaces is a producer that picked a
+	  side from something that was not the route.
 	"""
 	effect_data = data
 
@@ -33,7 +44,12 @@ func initialize(data: EffectData, callback_slot_data: Array) -> void:
 		if callback == null:
 			continue
 
+		callback.rng = rng
+		callback.particle_host = particle_host
 		callback.callback_id = cb_id
+		# BEFORE initialize, and before any invoke can reach _create_cb_mesh: the route has to be on
+		# the callback by the time it builds its mesh, because the mesh is where the twin is bound.
+		callback.set_route_native(route_native)
 		callback.initialize(data, slot)
 		callback.child_spawn_requested.connect(_on_child_spawn_requested)
 		add_child(callback)
@@ -41,6 +57,20 @@ func initialize(data: EffectData, callback_slot_data: Array) -> void:
 
 		if EffectsDebug.particle():
 			print("[CallbackManager] Slot %d = CB%d" % [slot, cb_id])
+
+
+func callback_in_slot(slot: int):
+	"""The callback loaded in `slot`, or null — for a host that reads a callback's own state
+	(the TRAP charge's handler ticks, which the Studio measures its drain from)."""
+	return _slots[slot] if slot >= 0 and slot < _slots.size() else null
+
+
+func set_particle_host(host) -> void:
+	"""Hand every loaded callback the cast's ParticleSubsystem (see particle_host)."""
+	particle_host = host
+	for callback in _slots:
+		if callback:
+			callback.particle_host = host
 
 
 func invoke(slot: int, emitter_index: int, spawn_counter: int, channel_index: int, duration_remaining: int = -1) -> void:
@@ -92,6 +122,15 @@ func update_anchors(origin: Vector3, target: Vector3, world_pos: Vector3,
 			callback.caster_facing_angle = facing
 
 
+func release_all() -> void:
+	"""Put every live callback into its CLEANUP (EffectInstance.release) — the same state
+	the timeline sets two frames before a span ends, so each winds down its own way (the
+	TRAP charge lines finish contracting, the orbs run their fade)."""
+	for callback in _slots:
+		if callback and callback.is_active():
+			callback.cleanup()
+
+
 func has_active_callbacks() -> bool:
 	"""Check if any callback is still active."""
 	for callback in _slots:
@@ -104,7 +143,10 @@ func reset() -> void:
 	"""Reset all callbacks to inactive state (for effect loop restart)."""
 	for callback in _slots:
 		if callback:
-			callback.cleanup()
+			if callback.has_method("force_cleanup"):
+				callback.force_cleanup()
+			else:
+				callback.cleanup()
 			callback.state = callback.State.INACTIVE  # Force INACTIVE for re-init on next loop
 
 

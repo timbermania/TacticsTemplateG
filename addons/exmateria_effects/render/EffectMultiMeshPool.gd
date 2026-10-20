@@ -1,24 +1,24 @@
 extends Node3D
-## Global shared MultiMesh pool for batched effect particle rendering (ADR-0040)
+## Global shared MultiMesh pool for batched effect particle rendering (ADR-0040).
 ##
-## Pre-creates N effect slots at game startup. #227: each slot is now ONE MultiMeshInstance3D —
-## RM_OPAQUE (canvas + depth, backs #210), the only in-scene draw. It carries the opaque shader on a
-## fixed material; the per-effect sheet rides the slot's plain `_effect_tex` field (set via
-## set_effect_texture on borrow). The four RM_MODE0..3 blend-mode carriers were retired — the combat
-## carrier builder draws the transparent prims published as CPU records below, so the
-## mode MultiMeshes (and their "stash the sheet on a mode material and read it back" indirection) are
-## gone.
+## Pre-creates N effect slots at game startup. Each slot is one MultiMeshInstance3D
+## (#227): RM_OPAQUE (canvas + depth, backs #210) is the only in-scene draw, carrying
+## the opaque shader on a fixed material; the per-effect sheet rides the slot's
+## `_effect_tex` field (set via set_effect_texture on borrow). The four RM_MODE0..3
+## blend-mode carriers are gone — transparent prims are published as CPU records and
+## drawn by the display-space compositor instead.
 ##
-## Per-instance state (corners, depth_mode, uv_rect, color_modulate, semi_trans_on) is packed into
-## the MultiMesh's per-instance buffers — see EffectParticleRenderer.gd for the packing and
-## effect_particle_stp.gdshaderinc for the shader-side unpack.
+## Per-instance state (corners, depth_mode, uv_rect, color_modulate, semi_trans_on)
+## is packed into the MultiMesh's per-instance buffers — see
+## EffectParticleRenderer.gd for the packing and effect_particle_stp.gdshaderinc
+## for the shader-side unpack.
 ##
-## Each slot also owns unified 24-float CPU records and depth-ordered runs. Particle and TRAP
-## producers publish through upload_unified; EngineFoldCompositor builds MultiMesh carriers from
-## these records in BOTH native and fold modes. No RenderingDevice resource is required.
+## Each slot also owns unified 24-float CPU records and depth-ordered runs. Particle
+## and TRAP producers publish through upload_unified; EngineFoldCompositor builds
+## MultiMesh carriers from these records in native and fold modes. No
+## RenderingDevice resource is required.
 ##
-## Effect spawn becomes a slot pop + one set_effect_texture. Replaces the per-MeshInstance3D
-## EffectMeshPool path that ADR-0040 retired.
+## Effect spawn is a slot pop + one set_effect_texture.
 ## Vault: [[Display Space Blend Fold]]
 ## Vault: [[Effect MultiMesh Pool]]
 
@@ -28,22 +28,19 @@ const WARMUP_SLOTS_PER_FRAME: int = 8
 const INITIAL_INSTANCE_COUNT: int = 32   # Per (slot, render_mode) MultiMesh
 const GROWTH_INSTANCE_COUNT: int = 32
 
-# #227: only the opaque draw survives per slot. RM_OPAQUE names the one in-scene MultiMesh (canvas +
-# depth, backs #210); the RM_MODE0..3 blend-mode carriers were retired — the display-space compositor
-# consumes transparent CPU records, and the effect sheet moved to the plain _effect_tex
-# slot field. The compositor's mode->pipeline mapping rides the run descriptors, not a pool constant.
+# RM_OPAQUE is the only in-scene MultiMesh (canvas + depth, backs #210); transparent prims go to the
+# display-space compositor as CPU records. The compositor's mode->pipeline mapping rides the run
+# descriptors, not a pool constant.
 const RM_OPAQUE: int = 0
 
-# #227: only the opaque shader — the pool draws only RM_OPAQUE in-scene. The four
-# effect_particle_mode0..3 shaders are no longer loaded here (the transparent fold happens in the
-# display-space compositor, not a per-mode in-scene material).
+# Opaque shader only — the pool draws only RM_OPAQUE in-scene; the transparent fold happens in the
+# display-space compositor, not a per-mode in-scene material.
 const _SHADER_PATHS: Array = [
 	"res://addons/exmateria_effects/render/effect_particle_opaque.gdshader",
 ]
 
-# Each slot is { _opaque_mm: MultiMeshInstance3D, _opaque_mat: ShaderMaterial, _effect_tex: Texture2D,
-# _unified_bytes/_runs/_count, _use_palette/_palette_tex_2d } — #227 collapsed the old
-# 5-wide mm[]/mat[] carriers to the single opaque draw + the plain sheet/palette fields.
+# Each slot: { _opaque_mm: MultiMeshInstance3D, _opaque_mat: ShaderMaterial, _effect_tex: Texture2D,
+# _unified_bytes/_runs/_count, _use_palette/_palette_tex_2d }.
 var _all_slots: Array[Dictionary] = []
 var _available_indices: Array[int] = []  # Free-list stack (LIFO)
 
@@ -53,10 +50,6 @@ var _shaders: Array[Shader] = []  # parallel to _SHADER_PATHS (opaque only since
 var _warmup_created: int = 0
 var _warmup_done: bool = false
 
-# #227: only RM_OPAQUE draws in-scene (canvas + depth, backs #210). The display-space compositor
-# consumes transparent CPU records (combat AND Studio/viewer, slice D #221)
-# — so the RM_MODE0..3 blend-mode carriers, the old `_mode_carriers_visible` gate, and the in-scene
-# LINEAR blend fallback were all retired.
 
 
 func _ready() -> void:
@@ -64,7 +57,6 @@ func _ready() -> void:
 	_shared_quad = QuadMesh.new()
 	_shared_quad.size = Vector2(1.0, 1.0)
 
-	# Load the slot shader(s) once (#227: opaque only)
 	_shaders.resize(_SHADER_PATHS.size())
 	for i in range(_SHADER_PATHS.size()):
 		_shaders[i] = load(_SHADER_PATHS[i])
@@ -95,8 +87,6 @@ func _warmup_frame() -> void:
 func _create_slot() -> void:
 	var slot_idx: int = _all_slots.size()
 
-	# #227: one MultiMesh per slot — RM_OPAQUE (canvas + depth, backs #210). The four RM_MODE0..3
-	# blend-mode carriers were retired (the compositor folds transparent prims from the unified SSBO).
 	var multimesh := MultiMesh.new()
 	multimesh.transform_format = MultiMesh.TRANSFORM_3D
 	multimesh.use_colors = true
@@ -119,7 +109,7 @@ func _create_slot() -> void:
 	mm_inst.visible = false
 	add_child(mm_inst)
 
-	# CPU records and ordinary textures feed BOTH native and fold MultiMesh carriers.
+	# CPU records and ordinary textures feed native and fold MultiMesh carriers.
 	# The retired RD buffer is not a prerequisite for publication (ADR-0200 dec. 3).
 	_all_slots.append({
 		"_opaque_mm": mm_inst, "_opaque_mat": mat,
@@ -136,8 +126,6 @@ func borrow_slot() -> int:
 		if EffectsDebug.particle():
 			print("[EffectMultiMeshPool] On-demand growth: +1 slot (total %d)" % _all_slots.size())
 	var idx: int = _available_indices.pop_back()
-	# #227: only RM_OPAQUE draws in-scene (canvas + depth). The compositor folds transparent prims
-	# from the unified buffer; nothing else renders in-scene.
 	var opaque: MultiMeshInstance3D = _all_slots[idx]["_opaque_mm"]
 	opaque.visible = true
 	opaque.multimesh.visible_instance_count = 0
@@ -177,7 +165,7 @@ func get_material(idx: int) -> ShaderMaterial:
 func set_effect_texture(idx: int, tex: Texture2D) -> void:
 	"""#227: stash this slot's effect sheet on the plain `_effect_tex` field. The compositor reads it
 	back via get_active_effect_buckets (once repointed in commit 3), replacing the sheet's old home
-	on a mode ShaderMaterial. Called by every producer (EffectParticleRenderer, TrapEffect) after
+	on a mode ShaderMaterial. Called by every producer (EffectParticleRenderer; TrapEffect until ADR-0369) after
 	borrow."""
 	if idx < 0 or idx >= _all_slots.size():
 		return
@@ -185,7 +173,7 @@ func set_effect_texture(idx: int, tex: Texture2D) -> void:
 
 
 func set_palette_texture(idx: int, tex: Texture2D) -> void:
-	"""Store the CLUT for native and fold ShaderMaterials. TrapEffect supplies this after borrow;
+	"""Store the CLUT for native and fold ShaderMaterials. TrapEffect supplied this after borrow (retired, ADR-0369);
 	RGBA producers need no palette. Published as palette_tex_2d, never as an RD texture."""
 	if idx < 0 or idx >= _all_slots.size():
 		return
@@ -207,19 +195,19 @@ func get_available_count() -> int:
 	return _available_indices.size()
 
 
-# --- #211/#217/#218: combat display-space compositor integration ---
 
 # Keep the ignored palette_tex argument so existing stager callers need no interface change.
 # The actual CLUT comes from set_palette_texture, never an RD handle.
 @warning_ignore("unused_parameter")
 func upload_unified(idx: int, bytes: PackedByteArray, count: int, runs: Array,
-		use_palette: bool = false, palette_tex: RID = RID(), palette_rows: int = 16) -> void:
+		use_palette: bool = false, palette_tex: RID = RID(), palette_rows: int = 16, normalized_modulation: bool = false) -> void:
 	"""Publish CPU records and ordered run descriptors for native or fold carriers immediately.
 	Records retain the 24-float layout (ADR-0040); runs carry mode/base/count/stride/depth.
 	palette_tex is an ignored legacy argument; set_palette_texture supplies the actual CLUT."""
 	if idx < 0 or idx >= _all_slots.size():
 		return
 	var slot: Dictionary = _all_slots[idx]
+	slot["_normalized_modulation"] = normalized_modulation
 	slot["_runs"] = runs
 	slot["_count"] = count
 	slot["_use_palette"] = use_palette
@@ -249,13 +237,10 @@ func get_active_effect_buckets() -> Array:
 		var bytes: PackedByteArray = slot["_unified_bytes"]
 		if bytes.is_empty():
 			continue
-		# #227: effect sheet from the slot's plain _effect_tex field (set by the producer via
-		# set_effect_texture), NOT read back off a mode ShaderMaterial. The mode-material round-trip is
-		# gone; the field is the sole source of truth.
 		var tex: Texture2D = slot["_effect_tex"]
 		if tex == null:
 			continue
-		# A paletted producer (TrapEffect's indexed TRAP1 sheet) sets these via upload_unified; the
+		# A paletted producer (TrapEffect's indexed TRAP1 sheet, retired by ADR-0369) set these via upload_unified; the
 		# RGBA renderer path leaves them off (default false / null palette).
 		var use_palette: bool = slot.get("_use_palette", false)
 		out.append({
@@ -265,5 +250,6 @@ func get_active_effect_buckets() -> Array:
 			"palette_tex_2d": slot.get("_palette_tex_2d", null),
 			"use_palette": use_palette,
 			"palette_rows": slot.get("_palette_rows", 16),
+			"normalized_modulation": slot.get("_normalized_modulation", false),
 		})
 	return out

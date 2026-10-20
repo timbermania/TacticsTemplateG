@@ -62,4 +62,5 @@ enum Logical {
 	APPROACHING = 8,
 	AWAITING_IMPACT = 9,
 	RETREATING = 10,
+	KNOCKED_BACK = 11,
 }

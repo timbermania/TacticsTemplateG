@@ -2,43 +2,30 @@ extends RefCounted
 ## The 40-byte `E###.BIN` file header, read in GDScript (#1316).
 ## Vault: [[Effect File Format]], [[Embedded MIPS Effect Code]]
 ##
-## WHY THIS IS HERE AT ALL. Until now this package parsed NO binary: `EffectData.gd`'s own
-## docstring reads *"loads pre-converted JSON from parser"*, and the parser is
-## the original project's `parse_effect.py` — 2,556 lines of host Python, run offline, whose
-## output `assets/effects/E###/*.json` is the de-facto interface between the ROM and 110 files
-## downstream. Python owned both directions of the format and GDScript owned neither. This is
-## the first slice of the read direction coming back: the 40 bytes that ARE the format
-## boundary, so the addon that models an effect can also say where one begins.
+## This file reads the header directly; the offline Python parser
+## (`tools/parse_effect.py`) still owns the rest of the format, its JSON output
+## `assets/effects/E###/*.json` being the interface between ROM and addon.
 ##
-## 🔴 THE HEADER IS NOT ALWAYS AT 0, AND THAT IS 109 OF THE 400 SHIPPED EFFECTS. A CODE-format
-## effect prepends MIPS to the file and the 40-byte header sits after it — measured over the
-## corpus, the leading gap runs 856…22,164 bytes (median 7,672), while every one of the 291
-## DATA-format effects has a gap of exactly `HEADER_SIZE`. So the split is bimodal and the
-## question "where does the header start" is a real lookup, not a constant. (110 of 401 counting
-## `E000`, the junk/placeholder dir every scanner skips — #301 carries the census.) Two answers,
-## in this order:
+## The header is not always at 0: 109 of the 400 shipped effects are CODE-format
+## — MIPS prepended, the 40-byte header after it, leading gap measured
+## 856…22,164 bytes (median 7,672) — while all 291 DATA-format effects gap
+## exactly `HEADER_SIZE`. (110 of 401 counting the `E000` junk dir; #301 carries
+## the census.) Two answers, in this order:
 ##
-##   1. `vfx_header_offset()` — BATTLE.BIN's per-effect table, which is what the GAME uses.
-##      Authoritative, and right for every effect regardless of layout.
-##   2. `find_header_offset()` — scan for the MIPS prologue, then for the first plausible
-##      header. The fallback for a caller with no BATTLE.BIN, and it MISSES effects whose file
-##      does not START with the prologue. `parse_effect.py` names `E259` as *"e.g."*;
-##      `EffectBinHeaderCorpusTest`, seeded to scan only, measures the real set — **E259, E338,
-##      E464**. All three then read as DATA-format and produce garbage pointers rather than an
-##      error, which is the failure mode this whole ordering exists to avoid.
+##   1. `vfx_header_offset()` — BATTLE.BIN's per-effect table, what the GAME
+##      uses; authoritative for every layout.
+##   2. `find_header_offset()` — the scan fallback for callers with no
+##      BATTLE.BIN; it MISSES files that do not START with the prologue.
+##      `EffectBinHeaderCorpusTest`, seeded to scan only, measures the real set:
+##      **E259, E338, E464**. All three read as DATA-format and yield garbage
+##      pointers rather than an error.
 ##
-## `header_offset()` composes them in that order. A caller with BATTLE.BIN should pass it.
+## `header_offset()` composes them; a caller with BATTLE.BIN should pass it.
 ##
-## POINTERS ARE RELATIVE TO THE HEADER, NOT TO THE FILE. `parse_header()` adds `base_offset`
-## to each, so what it returns is absolute file offsets and a CODE-format effect's numbers are
-## directly comparable to a DATA-format one's. `time_scale_ptr` is the exception in the other
-## direction: 0 means ABSENT, so it stays 0 rather than becoming `base_offset`.
-##
-## TRANSCRIBED, NOT ADAPTED. Every function here mirrors one in `tools/parse_effect.py`
-## (`find_header_offset`, `load_vfx_header_offset`, `parse_header`, `calculate_sections`)
-## including the scan's exact bounds and its skip of `time_scale_ptr` in the ascending check.
-## The Python is a byte-exact reference implementation over a 401-effect corpus, so the port
-## has a free referee — `EffectBinHeaderCorpusTest` runs it over all of them.
+## Transcribed from `tools/parse_effect.py` (`find_header_offset`,
+## `load_vfx_header_offset`, `parse_header`, `calculate_sections`), including the
+## scan's exact bounds; `EffectBinHeaderCorpusTest` runs it over the 401-effect
+## corpus.
 ##
 ## No `class_name` (ADR-0004) — file_model members stay path-preloaded.
 
@@ -56,7 +43,7 @@ const NUM_VFX: int = 511
 const MIPS_PROLOGUE_MASK: int = 0xFFFF0000
 const MIPS_PROLOGUE: int = 0x27BD0000
 
-## `vfx_header_offset()` when the table cannot answer for this id. Not 0 — 0 is the ANSWER
+## `vfx_header_offset()` when the table cannot answer for this id. Not 0 — 0 is the answer
 ## for every DATA-format effect, and a caller that cannot tell "at the start" from "no idea"
 ## silently parses the MIPS of a CODE-format file as a header.
 const NO_OFFSET: int = -1
@@ -89,14 +76,13 @@ static func vfx_header_offset(battle_bin: PackedByteArray, vfx_id: int) -> int:
 
 ## Where the header starts, by scanning — 0 for DATA format, > 0 for CODE format.
 ##
-## A file whose first word is not the MIPS prologue is DATA format and answers 0 immediately.
-## Otherwise walk forward looking for a `frames_ptr` of exactly `HEADER_SIZE` whose ten
-## pointers all land inside the file and ascend. `time_scale_ptr` is skipped in the ascending
-## check because 0 is its legal "absent" value and would break the ordering.
+## Walks forward looking for a `frames_ptr` of exactly `HEADER_SIZE` whose ten pointers all
+## land inside the file and ascend; `time_scale_ptr` is skipped in the ascending check
+## because 0 is its legal "absent" value.
 ##
-## Returns 0 when a CODE-format file yields no plausible header — the same answer the Python
-## gives, with the same consequence: the caller parses from 0 and gets nonsense. Prefer
-## `vfx_header_offset()`, which cannot fail this way.
+## 0 also answers a CODE-format file with no plausible header — the same answer the Python
+## gives, and the caller parses from 0 and gets nonsense. Prefer `vfx_header_offset()`,
+## which cannot fail this way.
 static func find_header_offset(data: PackedByteArray) -> int:
 	if data.size() < 40:
 		return 0

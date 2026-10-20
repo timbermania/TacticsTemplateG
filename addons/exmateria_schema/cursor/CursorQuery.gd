@@ -11,7 +11,8 @@ extends Node
 ##
 ## 🔴 THE CONSUMED SURFACE IS FOUR MEMBERS AND ALL FOUR ARE VALUE-TYPED. Measured across
 ## `addons/exmateria_ui` with `score_goals.strip_noncode`: `cursor_moved`, `cursor_confirmed`
-## and `cursor_inspected`, each carrying one `Vector2i`, and `grid_pos: Vector2i`. Nothing was
+## and `cursor_inspected`, each carrying one `Vector3i`, and `grid_pos: Vector3i` — a CELL,
+## `(x, z, level)`, since #795 (it was a `Vector2i` column before the level toggle). Nothing was
 ## widened to achieve that (ADR-0148) — `CursorRig` was already forbidden from handing out a
 ## node, because ADR-0164 dec. 4 criterion 1 made it the PUBLISHED cursor and `TileCursor` and
 ## `CursorController` lost their `class_name`s to keep them off the surface.
@@ -28,14 +29,14 @@ extends Node
 ## 🔴 THIS IS THE KERNEL'S FIRST `Node`, AND THAT IS THE PRICE. Every other published member of
 ## `addons/exmateria_schema` is a `RefCounted`, and the façade's own docstring says *"Nothing
 ## here is instantiated."* That stays TRUE OF THIS FILE in the sense it was written: a bare
-## `CursorQuery` is not a usable cursor — it answers `Vector2i.ZERO` for every cell and emits
+## `CursorQuery` is not a usable cursor — it answers `Vector3i.ZERO` for every cell and emits
 ## nothing — and nothing in this package instantiates one. It must `extend Node` because
 ## `CursorRig` does, and GDScript has single inheritance, so a `RefCounted` base could not be
 ## its parent. The alternative was leaving `Battlefield` as permanent declared debt for two
 ## annotation sites; gl-ADR-0363 dec. 2 prices both.
 ##
 ## ⚠️ IT IS A CONTRACT, NOT A DECORATION. GDScript checks an override's signature against its
-## parent, so a `Battlefield` cursor that stopped answering `Vector2i` would fail to PARSE
+## parent, so a `Battlefield` cursor that stopped answering `Vector3i` would fail to PARSE
 ## rather than drift — measured, gl-ADR-0363 dec. 3 arm B.
 ##
 ## The **SIBLING NAMER** that implements this is
@@ -44,16 +45,16 @@ extends Node
 ## The player moved the cursor — by device or by a host's `move_to`. `TileCursor`'s own
 ## `cursor_stepped` (device-only) is NOT here: no consumer outside `Battlefield` reads it, and a
 ## vocabulary is the members that CROSS.
-signal cursor_moved(grid_pos: Vector2i)
+signal cursor_moved(grid_pos: Vector3i)
 
 ## The player confirmed on the cell.
-signal cursor_confirmed(grid_pos: Vector2i)
+signal cursor_confirmed(grid_pos: Vector3i)
 
 ## The player asked to inspect the cell.
-signal cursor_inspected(grid_pos: Vector2i)
+signal cursor_inspected(grid_pos: Vector3i)
 
 
-## The cursor's current grid cell. `Vector2i.ZERO` where no cursor is bound — the same value a
+## The cursor's current grid cell, `(x, z, level)`. `Vector3i.ZERO` where no cursor is bound — the same value a
 ## fresh cursor reports, so a host cannot tell "unbound" from "at origin" and must not try to.
 ##
 ## 🔴 THE STORAGE IS THE IMPLEMENTATION'S, WHICH IS WHY THIS READS THROUGH A VERB. GDScript
@@ -61,12 +62,12 @@ signal cursor_inspected(grid_pos: Vector2i)
 ## and a `CursorRig` re-declaring it with its own getter is a PARSE ERROR — the way ADR-0332
 ## dec. 3's arm C closed on contact. The property lives here so the consumer's spelling does
 ## not change; the ANSWER is an overridable verb.
-var grid_pos: Vector2i:
+var grid_pos: Vector3i:
 	get:
 		return _grid_pos()
 
 
 ## The implementation's answer for [member grid_pos]. A bare `CursorQuery` has no cursor, so it
 ## answers the origin. Override this, never `grid_pos`.
-func _grid_pos() -> Vector2i:
-	return Vector2i.ZERO
+func _grid_pos() -> Vector3i:
+	return Vector3i.ZERO

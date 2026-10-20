@@ -30,6 +30,7 @@ var animation_held: bool = false      # Set when hitting terminal frame with lif
 var active: bool = false
 var emitter_index: int = -1
 var channel_index: int = 0  # Timeline lane identifier (0-4); NOT a Z-order key (see ADR-0015)
+var for_each_lane: int = 0  # The for_each lane (target) whose emitter spawned it (N36)
 
 # Child emitters
 var child_emitter_on_death: int = -1
@@ -46,6 +47,10 @@ var frameset_group_offset: int = 0  # Offset into flat frameset array for this p
 # particle so the renderer reads from one place per particle instead of
 # reaching back into the animator. Defaults are valid for an un-ticked particle.
 var frameset_idx: int = 0         # Frameset to render this tick (includes frameset_group_offset)
+## Per-particle brightness multiplier on the emitter's colour (1.0 = neutral). Only a
+## callback-driven particle writes it (TrapOrbitalCallback's per-slot trail weights,
+## ADR-0369); an ordinary emitter's colour is its curves, so it stays 1.0 there.
+var color_scale: float = 1.0
 var depth_mode: int = 0           # PSX depth_mode for this tick (STANDARD = 0)
 
 
@@ -61,6 +66,7 @@ func initialize(
 	velocity = vel
 	lifetime = life
 	emitter_index = emitter_idx
+	for_each_lane = 0
 	child_emitter_on_death = child_death
 	child_emitter_mid_life = child_mid
 
@@ -82,14 +88,13 @@ func initialize(
 	frameset_group_offset = 0
 	frameset_idx = 0
 	depth_mode = 0
+	color_scale = 1.0
 
 
 func is_dead() -> bool:
 	if lifetime == -1:
-		# Animation-driven: die when animation signals complete
 		return animation_complete
 	else:
-		# Fixed lifetime: die when age reaches lifetime
 		return age >= lifetime
 
 

@@ -16,11 +16,12 @@ const EffectEmitter = preload("res://addons/exmateria_effects/file_model/EffectE
 const Particle = preload("res://addons/exmateria_effects/particles/Particle.gd")
 const ParticlePhysics = preload("res://addons/exmateria_effects/particles/ParticlePhysics.gd")
 const ParticlePool = preload("res://addons/exmateria_effects/particles/ParticlePool.gd")
+const TrapSpawnModel = preload("res://addons/exmateria_effects/trap/TrapSpawnModel.gd")
 
-## ADR-0212 dec. 1 — `addons/exmateria_platform` publishes one global,
-## `ExMateriaPlatform`; aliasing a member back keeps every use site below
-## spelled the way it was (ADR-0211 dec. 4). The PSX trio arrived at
-## extraction #7 (#1220) and lost its three bare `class_name`s on the way.
+## ADR-0212 dec. 1 — alias the member back from the single `ExMateriaPlatform`
+## global so use sites stay spelled `PsxMagnitude.*` (ADR-0211 dec. 4); the PSX
+## trio lost its bare `class_name`s at extraction #7 (#1220), so there is no
+## bare symbol to call.
 const PsxMagnitude = ExMateriaPlatform.PsxMagnitude
 
 
@@ -42,6 +43,8 @@ var spawn_accumulator: float = 0.0
 var active: bool = false
 var emitter_index: int = -1
 var channel_index: int = 0  # Timeline lane that spawned this emitter; NOT a Z-order key (see ADR-0015)
+## The for_each lane (the target) this emitter plays for — 0 for lane 0 and the outer phases (N36).
+var for_each_lane: int = 0
 
 # Anchors (Godot world positions)
 var anchor_world: Vector3 = Vector3.ZERO
@@ -114,31 +117,40 @@ func _spawn_particles() -> void:
 
 func _initialize_particle(particle: Particle) -> void:
 	"""Initialize particle with interpolated parameters (all pre-converted)"""
+	if config.flags.get("spawn_model", "") == "TRAP":
+		_initialize_trap_particle(particle)
+		return
+
 	var velocity_inward_flag = config.flags.get("velocity_inward", false)
 	var align_to_facing_flag = config.flags.get("align_to_facing", false)
 	var is_unit_oriented = velocity_inward_flag and align_to_facing_flag
 
-	# Position (already Godot units)
 	var base_pos = _interpolate_vec3("position", config.position_start, config.position_end)
 	var spread = _interpolate_vec3("spread", config.spread_start, config.spread_end)
 
-	# OUTWARD_UNIT_ORIENTED: rotate position offset and spread by facing
 	if is_unit_oriented:
 		base_pos = _rotate_y(base_pos, caster_facing_angle)
 		spread = _rotate_y(spread, caster_facing_angle)
 
+	if config.get_emitter_anchor_mode() == EffectEmitter.AnchorMode.CAMERA:
+		# CAMERA anchors live in the ROM map frame: X/Y keep the usual PSX chirality,
+		# but map depth is reflected about the map centre before entering Godot world
+		# space. The camera subsystem already reflects its pivot; reflect local camera
+		# emitter offsets here so large map-centred summons (Odin) stay in the framed
+		# shot instead of being mirrored behind the camera target.
+		base_pos.z = -base_pos.z
+		spread.z = -spread.z
+
 	base_pos += _get_anchor_offset()
 	var final_pos = base_pos + _apply_spread(spread)
 
-	# Radial velocity (already Godot units/frame)
 	var radial_vel = _interpolate_range("radial_velocity",
 		config.radial_velocity_min_start, config.radial_velocity_max_start,
 		config.radial_velocity_min_end, config.radial_velocity_max_end)
 
-	# 4-mode velocity dispatch based on velocity_inward + align_to_facing flags
 	var velocity: Vector3
 	if is_unit_oriented:
-		# OUTWARD_UNIT_ORIENTED: outward (angle-based) + rotated by caster facing
+		# OUTWARD_UNIT_ORIENTED
 		var vel_angle = _interpolate_vec3("velocity_base_angle",
 			config.velocity_base_angle_start, config.velocity_base_angle_end)
 		var vel_spread = _interpolate_vec3("velocity_dir_spread",
@@ -147,17 +159,17 @@ func _initialize_particle(particle: Particle) -> void:
 		var final_dir = ParticlePhysics.random_cone_direction(base_dir, vel_spread, physics.rng)
 		velocity = _rotate_y(final_dir * radial_vel, caster_facing_angle)
 	elif velocity_inward_flag:
-		# INWARD: direction from particle toward emitter center (base_pos)
+		# INWARD
 		var to_center = base_pos - final_pos
 		if to_center.length_squared() < 0.0001:
 			velocity = Vector3(0, -radial_vel, 0)
 		else:
 			velocity = to_center.normalized() * radial_vel
 	elif align_to_facing_flag:
-		# SKIP: zero velocity (unimplemented in PSX, falls through)
+		# SKIP: unimplemented in PSX (zero velocity)
 		velocity = Vector3.ZERO
 	else:
-		# OUTWARD: standard angle-based direction
+		# OUTWARD
 		var vel_angle = _interpolate_vec3("velocity_base_angle",
 			config.velocity_base_angle_start, config.velocity_base_angle_end)
 		var vel_spread = _interpolate_vec3("velocity_dir_spread",
@@ -166,15 +178,41 @@ func _initialize_particle(particle: Particle) -> void:
 		var final_dir = ParticlePhysics.random_cone_direction(base_dir, vel_spread, physics.rng)
 		velocity = final_dir * radial_vel
 
+	_finish_particle(particle, final_pos, velocity)
+
+
+func _initialize_trap_particle(particle: Particle) -> void:
+	"""A TRAP-lifted emitter (ADR-0369): the ROM's TRAP spawn-init FUN_801a7f5c as
+	TrapSpawnModel ports it, reading the ordinary emitter fields so every curve and
+	studio edit still applies. position = ellipsoid centre, spread = its semi-axes,
+	velocity_base_angle / velocity_direction_spread = the cone angle / FULL randomisation
+	range, radial_velocity = speed. The velocity mode rides flags.trap_velocity_mode; a
+	DIRECTIONAL emitter aims along origin→target (the ROM's 0x400 start→end anchor)."""
+	var mode := TrapSpawnModel.parse_velocity_mode(str(config.flags.get("trap_velocity_mode", "")))
+	var centre := _interpolate_vec3("position", config.position_start, config.position_end)
+	var axes := _interpolate_vec3("spread", config.spread_start, config.spread_end)
+	var offset := TrapSpawnModel.ellipsoid_offset(axes, physics.rng)
+	var impact := anchor_target - anchor_origin
+	var pos := TrapSpawnModel.spawn_position(centre, offset, mode, impact) + _get_anchor_offset()
+	var speed_curve := _get_curve("radial_velocity")
+	var t := speed_curve.sample_by_frame(elapsed_frames) if speed_curve else 0.0
+	var velocity := TrapSpawnModel.spawn_velocity(mode, offset,
+		lerpf(config.radial_velocity_min_start, config.radial_velocity_min_end, t),
+		lerpf(config.radial_velocity_max_start, config.radial_velocity_max_end, t),
+		_interpolate_vec3("velocity_base_angle", config.velocity_base_angle_start, config.velocity_base_angle_end),
+		_interpolate_vec3("velocity_dir_spread", config.velocity_direction_spread_start, config.velocity_direction_spread_end),
+		impact, physics.rng)
+	_finish_particle(particle, pos, velocity)
+
+
+func _finish_particle(particle: Particle, final_pos: Vector3, velocity: Vector3) -> void:
 	# Lifetime (frames) - -1 means animation-driven (dies when animation completes)
 	var lifetime: int = int(_interpolate_range("lifetime",
 		float(config.lifetime_min_start), float(config.lifetime_max_start),
 		float(config.lifetime_min_end), float(config.lifetime_max_end)))
-	# Ensure positive lifetimes are at least 1, but preserve -1 for animation-driven
 	if lifetime >= 0:
 		lifetime = maxi(1, lifetime)
 
-	# Initialize particle
 	particle.initialize(
 		final_pos,
 		velocity,
@@ -193,7 +231,6 @@ func _initialize_particle(particle: Particle) -> void:
 		config.weight_min_start, config.weight_max_start,
 		config.weight_min_end, config.weight_max_end)
 
-	# Acceleration/drag (already Godot units)
 	particle.acceleration = _interpolate_vec3_range("acceleration",
 		config.acceleration_min_start, config.acceleration_max_start,
 		config.acceleration_min_end, config.acceleration_max_end)
@@ -202,7 +239,6 @@ func _initialize_particle(particle: Particle) -> void:
 		config.drag_min_start, config.drag_max_start,
 		config.drag_min_end, config.drag_max_end)
 
-	# Homing (already Godot units)
 	particle.homing_strength = _interpolate_range("homing",
 		config.homing_strength_min_start, config.homing_strength_max_start,
 		config.homing_strength_min_end, config.homing_strength_max_end)
@@ -221,6 +257,7 @@ func _initialize_particle(particle: Particle) -> void:
 
 	particle.anim_index = config.anim_index
 	particle.channel_index = channel_index  # Propagate lane id (used by callbacks/debug, not draw order)
+	particle.for_each_lane = for_each_lane
 	particle.frameset_group_offset = _get_group_offset(config.anim_param)
 
 
@@ -345,17 +382,14 @@ func spawn_particles_for_timeline(spawn_counter: int) -> void:
 	Called by ParticleSubsystem when timeline says this emitter should spawn.
 	Uses spawn_counter for curve lookups instead of elapsed_frames.
 	"""
-	# Use spawn_counter as elapsed_frames for curve lookups
 	var saved_elapsed = elapsed_frames
 	elapsed_frames = spawn_counter
 
-	# Check spawn interval
 	var interval = roundi(_get_spawn_interval())
 	if interval <= 0 or spawn_counter % interval != 0:
 		elapsed_frames = saved_elapsed
 		return
 
-	# Get particle count and spawn
 	var count = _get_particle_count()
 	for i in range(count):
 		var particle = particle_pool.acquire()

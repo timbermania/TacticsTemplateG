@@ -1,15 +1,10 @@
 extends "res://addons/exmateria_effects/callbacks/EffectCallback.gd"
-## CB91 - Trail projectile callback (PSX FUN_801c2500).
-## Manages custom sub-projectiles (NOT particles in the pool).
-## Each projectile has a 9-entry trail ring buffer for ribbon rendering.
-##
-## Movement: cosine_ease blend between ballistic position (start + velocity * t)
-## and target position. The initial velocity comes from the emitter's
-## velocity_base_angle/spread/radial_velocity fields, giving scattered launch
-## directions that smoothly converge to the target over the lifetime.
-##
-## After reaching lifetime, enters convergence phase where trail shortens
-## from TRAIL_LENGTH-1 down to 0 over additional frames.
+## CB91 - Trail projectile callback (PSX FUN_801c2500, shared load base): custom
+## sub-projectiles (NOT pool particles), each with a 9-entry trail ring buffer for
+## ribbon rendering. Movement: cosine_ease blend between ballistic position
+## (start + velocity * t) and target — scattered launch from the emitter's
+## velocity_base_angle/spread/radial_velocity fields; after lifetime a convergence
+## phase shortens the trail from TRAIL_LENGTH-1 to 0.
 ## Vault: [[Embedded MIPS Effect Code]]
 
 const ParticlePhysics = preload("res://addons/exmateria_effects/particles/ParticlePhysics.gd")
@@ -17,15 +12,24 @@ const ParticlePhysics = preload("res://addons/exmateria_effects/particles/Partic
 const TRAIL_LENGTH: int = 9
 const MAX_PROJECTILES: int = 8
 
-# PSX brightness table (DAT_801c24e0): 0/4096 to 4096/4096 in 9 steps
-# Index 0 = tail (dimmest), index 8 = head (brightest)
-const BRIGHTNESS_TABLE: Array[float] = [0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0]
+## Per-trail-segment brightness, PSX 0-4096, index 0 = tail, 8 = head. Read from
+## `callbacks/CB91/callback_data.json`; EMPTY when no file was found.
+##
+## 🔴 THIS USED TO BE A HARDCODED CONST, AND THE CONST CITED AN IMPOSSIBLE ADDRESS.
+## It read `[0.0, 0.125, ... 1.0]` with the comment "PSX brightness table
+## (DAT_801c24e0)". 0x801C24E0 is 32 bytes BELOW the 0x801C2500 load base — file
+## offset -32 — so it cannot be in the effect file at all. The real table is at
+## file+0x36B0 and the routine picks a ROW from it: `lh r2, 0x4E(r9)` then base
+## 0x801C5BB0 with stride 0x24. The const was row 0 of six, and it was right only
+## because every E317 emitter's +0x4E happens to be 0, so no other row is reachable.
+## Correct by luck of the data, not by derivation — and structurally unable to reveal
+## a missing table, which is how the impossible citation went unnoticed.
+var _brightness_row: Array = []
+var _brightness_row_idx: int = 0
 
-# Sub-projectile data
 var _projectiles: Array = []  # Array of dictionaries
 var _total_spawned: int = 0
 
-# Texture UV mapping (read from emitter config in _on_init)
 var _base_u: int = 0
 var _base_v: int = 0
 var _uv_step: int = 3
@@ -52,8 +56,27 @@ func _on_init(emitter_index: int, spawn_counter: int, channel_index: int) -> voi
 		_uv_step = int(emitter_config.callback_params.get("param_A8", 24)) >> 3
 		# V height from param_AA
 		_v_height = int(emitter_config.callback_params.get("param_AA", 15))
+		# Row index: emitter+0x4E, read by `lh r2, 0x4E(r9)` at E317 file+0x1484.
+		_brightness_row_idx = int(emitter_config.callback_params.get("param_4E", 0))
 
-	# Load texture onto material
+	_brightness_row = []
+	if effect_data:
+		var cb_data = _load_cb_data()
+		if cb_data:
+			var rows: Array = cb_data.get("brightness_table", [])
+			if _brightness_row_idx >= 0 and _brightness_row_idx < rows.size():
+				_brightness_row = rows[_brightness_row_idx]
+		# WARN, never raise. `parse_by_routine` raises because it is BUILD time and the
+		# cost is a rebuild; this is RUNTIME and the cost is the player's battle. The
+		# render falls back to flat 1.0 below.
+		if _brightness_row.size() < TRAIL_LENGTH:
+			push_warning(
+				"TrailProjectileCallback: %s CB%d has no usable brightness row %d "
+				% [effect_data.name, callback_id, _brightness_row_idx]
+				+ "(need %d values). Trail will render FLAT. " % TRAIL_LENGTH
+				+ "Regenerate with tools/parse_effect_callbacks.py.")
+			_brightness_row = []
+
 	if effect_data and effect_data.texture and _material:
 		_material.set_shader_parameter("effect_texture", effect_data.texture)
 		_material.set_shader_parameter("use_texture", true)
@@ -67,12 +90,10 @@ func _on_animate(emitter_index: int, spawn_counter: int, _channel_index: int) ->
 	if emitter_config == null:
 		return
 
-	# Spawn interval check
 	var interval: int = emitter_config.spawn_interval_start
 	if interval > 1 and (spawn_counter % interval) != 0:
 		return
 
-	# Spawn new projectiles based on particle_count
 	var count: int = emitter_config.particle_count_start
 	for i in range(count):
 		if _projectiles.size() >= MAX_PROJECTILES:
@@ -81,22 +102,17 @@ func _on_animate(emitter_index: int, spawn_counter: int, _channel_index: int) ->
 
 func _spawn_projectile(emitter_index: int, _spawn_counter: int) -> void:
 	"""Create a new sub-projectile with velocity from emitter config fields."""
-	# Start position: resolve emitter anchor + position offset
 	var start_pos: Vector3 = _resolve_emitter_anchor() + emitter_config.position_start
 
-	# Target position: resolve target anchor + target_offset
 	var target_pos: Vector3 = _resolve_target_anchor() + emitter_config.target_offset_start
 
-	# Get ribbon half-width from callback_params
 	var half_width_raw: int = emitter_config.callback_params.get("param_AA", 15)
 	var half_width: float = float(half_width_raw) * PSX_SCALE * 0.5
 
-	# Get lifetime from emitter config
 	var lifetime: int = emitter_config.lifetime_max_start
 	if lifetime <= 0:
 		lifetime = 25
 
-	# Initial velocity from emitter's velocity_base_angle + direction_spread + radial_velocity
 	var vel_angle: Vector3 = emitter_config.velocity_base_angle_start
 	var vel_spread: Vector3 = emitter_config.velocity_direction_spread_start
 	var base_dir: Vector3 = ParticlePhysics.angle_to_direction(vel_angle.x, vel_angle.y, vel_angle.z)
@@ -110,7 +126,6 @@ func _spawn_projectile(emitter_index: int, _spawn_counter: int) -> void:
 
 	var velocity: Vector3 = final_dir * radial_vel
 
-	# Initialize trail ring buffer
 	var trail: Array[Vector3] = []
 	for _t in range(TRAIL_LENGTH):
 		trail.append(start_pos)
@@ -180,7 +195,6 @@ func physics_step() -> void:
 			var ballistic_pos: Vector3 = proj["start"] + proj["velocity"] * float(t)
 			proj["position"] = cosine_ease_vec3(ballistic_pos, proj["target"], lifetime, t)
 
-			# Record in trail ring buffer
 			var head: int = proj["trail_head"]
 			proj["trail"][head] = proj["position"]
 			proj["trail_head"] = (head + 1) % TRAIL_LENGTH
@@ -192,7 +206,6 @@ func physics_step() -> void:
 						emitter_config.child_emitter_mid_life,
 						proj["position"], t)
 
-			# Check if reached lifetime -> enter convergence
 			if t >= lifetime:
 				proj["convergence_age"] = TRAIL_LENGTH - 1
 				if EffectsDebug.particle():
@@ -210,9 +223,23 @@ func physics_step() -> void:
 	for idx in dead_indices:
 		_projectiles.remove_at(idx)
 
-	# Transition to INACTIVE when no projectiles remain and we've spawned some
-	if _projectiles.is_empty() and _total_spawned > 0 and state == State.ANIMATE:
-		state = State.INACTIVE
+	if _projectiles.is_empty() and _total_spawned > 0 and state in [State.ANIMATE, State.CLEANUP]:
+		super.cleanup()
+
+func is_active() -> bool:
+	"""Stay ticking after callback cleanup so in-flight trails can reach target."""
+	return state == State.ANIMATE or not _projectiles.is_empty()
+
+func cleanup() -> void:
+	"""Stop accepting timeline invocations, but let existing sub-projectiles finish.
+
+	E070 Carbuncle cb23's phase1 slot ends at f42 while its trails are still in
+	flight; the ROM lets those child projectiles converge before disappearing.
+	"""
+	if _projectiles.is_empty():
+		super.cleanup()
+		return
+	state = State.CLEANUP
 
 func update_render() -> void:
 	"""Rebuild ArrayMesh with ribbon quads for all active trails."""
@@ -221,7 +248,7 @@ func update_render() -> void:
 
 	_array_mesh.clear_surfaces()
 
-	if _projectiles.is_empty():
+	if not is_active() or _projectiles.is_empty():
 		return
 
 	# Get camera basis for billboard ribbons
@@ -250,7 +277,6 @@ func _draw_ribbon(proj: Dictionary, cam_forward: Vector3,
 	var head: int = proj["trail_head"]
 	var hw: float = proj["half_width"]
 
-	# Determine how many quads to draw
 	var visible_quads: int = TRAIL_LENGTH - 1
 	if proj["convergence_age"] >= 0:
 		visible_quads = proj["convergence_age"]
@@ -263,7 +289,6 @@ func _draw_ribbon(proj: Dictionary, cam_forward: Vector3,
 		var idx: int = (head - 1 - i + TRAIL_LENGTH) % TRAIL_LENGTH
 		ordered.append(trail[idx])
 
-	# Number of positions we need (one more than quads)
 	var valid_count: int = mini(visible_quads + 1, TRAIL_LENGTH)
 	if valid_count < 2:
 		return
@@ -314,7 +339,6 @@ func _draw_ribbon(proj: Dictionary, cam_forward: Vector3,
 				else:
 					perps[i] = avg.normalized()
 
-	# Draw quads using shared edge vertices with per-segment UV stepping
 	var num_quads: int = mini(visible_quads, valid_count - 1)
 	for i in range(num_quads):
 		var p0: Vector3 = ordered[i]
@@ -339,18 +363,23 @@ func _draw_ribbon(proj: Dictionary, cam_forward: Vector3,
 		var vb: float = float(_base_v + _v_height) / _tex_size.y
 
 		var brightness_idx: int = TRAIL_LENGTH - 1 - i
-		var brightness: float = BRIGHTNESS_TABLE[clampi(brightness_idx, 0, TRAIL_LENGTH - 1)]
+		# Flat 1.0 when no table loaded — the same signature every sibling class
+		# produces, so the failure looks like the failure this project recognises on
+		# sight. Deliberately NOT row 0's values: those are what a working E317 looks
+		# like today, so falling back to them would be indistinguishable from working.
+		var brightness: float = 1.0
+		if not _brightness_row.is_empty():
+			brightness = float(_brightness_row[clampi(brightness_idx, 0, TRAIL_LENGTH - 1)]) \
+					/ BRIGHTNESS_SCALE
 		var color := Color(brightness, brightness, brightness, 1.0)
 
 		# Quad centroid for GTE-style depth
 		var centroid: Vector3 = (v0 + v1 + v2 + v3) * 0.25
 
-		# Triangle 1: v0, v1, v2
 		positions.append(v0); colors.append(color); uvs.append(Vector2(u0, vt))
 		positions.append(v1); colors.append(color); uvs.append(Vector2(u0, vb))
 		positions.append(v2); colors.append(color); uvs.append(Vector2(u1, vt))
 
-		# Triangle 2: v1, v3, v2
 		positions.append(v1); colors.append(color); uvs.append(Vector2(u0, vb))
 		positions.append(v3); colors.append(color); uvs.append(Vector2(u1, vb))
 		positions.append(v2); colors.append(color); uvs.append(Vector2(u1, vt))
@@ -360,7 +389,8 @@ func _draw_ribbon(proj: Dictionary, cam_forward: Vector3,
 			custom0.append(centroid.y)
 			custom0.append(centroid.z)
 
-func cleanup() -> void:
+func force_cleanup() -> void:
+	"""Hard reset path used by CallbackManager.reset()."""
 	_projectiles.clear()
 	_total_spawned = 0
 	if _array_mesh:

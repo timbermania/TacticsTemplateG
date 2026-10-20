@@ -1,13 +1,11 @@
 extends "res://addons/exmateria_effects/callbacks/EffectCallback.gd"
 ## CB14 - Rotating tube/cylinder (PSX FUN_801c2500 in E041).
-## World-space 3D: 9 rings × 8 vertices = 64 quads forming a rotating tube.
-## Vertices placed in 3D world space; Godot camera handles projection.
+## World-space 3D: 9 rings × 8 vertices = 64 quads; Godot camera handles projection.
 ##
 ## PCSX dump validation (E041 frame 36, emitter 8):
 ##   rot_angle=3136, z_base=0, uv_angle=4352(scroll 17)
 ##   UVs: U=104→119, V=33→64 (base 104,16 + scroll 17, width 15, height 31)
 ##   Colors: purple gradient (127,31,163) → (0,0,0)
-##   Tube: ~50px screen extent, 8 quads/ring × 8 bands
 ## Vault: [[Effect Callback Mesh]]
 ## Vault: [[Embedded MIPS Effect Code]]
 
@@ -140,7 +138,6 @@ func update_render() -> void:
 	var height_accel: int = int(lerpf(float(_ri(raw, "drag_min_start", 1)), float(_ri(raw, "drag_min_end", 1)), drag_curve_t))
 	var radius_accel: int = int(lerpf(float(_ri(raw, "drag_min_start", 2)), float(_ri(raw, "drag_min_end", 2)), drag_curve_t))
 
-	# Rotation: 4 sin/cos values for the octagonal cross-section
 	var angle_rad: float = float(_rotation_angle) * ANGLE_SCALE
 	var angle2_rad: float = angle_rad + TAU * 512.0 / BRIGHTNESS_SCALE  # +0x200 = 45 degrees
 	var sin_a: float = sin(angle_rad)
@@ -148,10 +145,6 @@ func update_render() -> void:
 	var cos_a: float = cos(angle_rad)
 	var cos_a2: float = cos(angle2_rad)
 
-	# Generate 9 rings of 8 vertices
-	# PSX (lines 285-322): two accumulators per ring step
-	#   iVar27 (radius offset): += local_648 (radius_vel), local_648 += local_638 (radius_accel)
-	#   iVar30 (height):        += local_64c (height_vel), local_64c += local_63c (height_accel)
 	var rings: Array = []
 	var height_vel: int = height_vel_initial
 	var radius_vel: int = radius_vel_initial
@@ -164,7 +157,6 @@ func update_render() -> void:
 		var h: float = float(height_accum >> 8) * PSX_SCALE
 
 		# 8 vertices: octagon using cos/sin at 0° and 45° with sign flips
-		# Matches PSX pattern: (cos*r, h, sin*r), (cos2*r, h, sin2*r), etc.
 		var verts: Array = []
 		verts.append(Vector3(cos_a * r, -h, sin_a * r))        # 0: (+cos, +sin)
 		verts.append(Vector3(cos_a2 * r, -h, sin_a2 * r))      # 1: (+cos2, +sin2)
@@ -176,13 +168,11 @@ func update_render() -> void:
 		verts.append(Vector3(sin_a2 * r, -h, -cos_a2 * r))      # 7: (+sin2, -cos2)
 		rings.append(verts)
 
-		# Advance per-ring accumulators (PSX lines 317-320)
 		height_vel += height_accel    # local_64c += local_63c
 		radius_vel += radius_accel    # local_648 += local_638
 		radius_accum += radius_vel    # iVar27 += local_648
 		height_accum += height_vel    # iVar30 += local_64c
 
-	# UV computation (all quads share same UVs)
 	# U: lerp(angle_start[0], angle_end[0]) to U + spread_start[0]
 	# V: lerp(angle_start[1], angle_end[1]) + scroll to V + spread_start[1] + scroll
 	var uv_curve_t: float = _curve_t_nibble(0, 2)  # (emitter+0x08 >> 8 & 0xF)
@@ -202,7 +192,6 @@ func update_render() -> void:
 	var uv_v0: float = float((v_base + v_scroll) & 0xFF) / tex_h
 	var uv_v1: float = float((v_base + v_height + v_scroll) & 0xFF) / tex_h
 
-	# Color curves
 	var curve_color: Color = _sample_colors()
 	var r_val: float = curve_color.r
 	var g_val: float = curve_color.g
@@ -211,12 +200,10 @@ func update_render() -> void:
 	if maxf(r_val, maxf(g_val, b_val)) < 0.001 and _frame_counter > 1:
 		return
 
-	# Brightness
 	var bright_row: Array = []
 	if _brightness_row_idx >= 0 and _brightness_row_idx < _brightness_table.size():
 		bright_row = _brightness_table[_brightness_row_idx]
 
-	# Build mesh: 8 ring bands × 8 quads = 64 quads
 	var positions := PackedVector3Array()
 	var colors := PackedColorArray()
 	var uvs := PackedVector2Array()

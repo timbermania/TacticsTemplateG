@@ -2,8 +2,8 @@ extends RefCounted
 ## Combat-compositor depth ordering (ADR-0009): farthest first, nearest last, so the
 ## transparent fold accumulates far -> near and the nearest prim wins where prims
 ## overlap. Runs are maximal adjacent same-DIRECTION spans: add {1,3} and sub {2}
-## merge (per-prim level_scale at record [20] supplies each 1.0/0.25), mix {0}
-## always solo. Byte-exact vs separate draws (proto_ordered_fold Q3, 200k trials).
+## merge (per-prim level_scale at record [20] supplies each 1.0/0.25), replace {4} is a distinct direction/barrier, mix {0}
+## always solo. No run spans depth buckets (ADR-0365). Byte-exact vs separate draws (proto_ordered_fold Q3).
 ## Ordering contract, the age tie-break, PSX double-head-insert, #212/#214, DEMI:
 ## vault: .vaults/comments/exmateria_effects/ot-depth-ordering.md
 ## Vault: [[Display Space Blend Fold]]
@@ -33,13 +33,13 @@ const _FLOATS_PER_INSTANCE := 24
 const _UNIFIED_STRIDE := 24
 
 
-## Direction class of a compositor blend mode. add/sub accumulate (runs may merge
-## same-direction prims); mix rescales dst and is always its own run.
-enum Direction { ADD, SUB, MIX }
+## Direction class of a compositor blend mode: add/sub accumulate, mix is always solo.
+enum Direction { ADD, SUB, MIX, REPLACE }
 
 
 static func _direction_of(mode: int) -> int:
 	match mode:
+		4: return Direction.REPLACE
 		2: return Direction.SUB
 		0: return Direction.MIX
 		_: return Direction.ADD   # 1 (add) and 3 (add25) share the additive direction
@@ -48,6 +48,7 @@ static func _direction_of(mode: int) -> int:
 ## Representative mode for a direction's fold pipeline / is_mix selection.
 static func _rep_mode_for(direction: int) -> int:
 	match direction:
+		Direction.REPLACE: return 4
 		Direction.SUB: return 2
 		Direction.MIX: return 0
 		_: return 1
@@ -65,9 +66,7 @@ static func _rep_mode_for(direction: int) -> int:
 ##   * `ages` empty: submission order - correct ONLY if the caller already stages
 ##     back-to-front, or overlapping opposite-direction prims mis-order (#212).
 ## Runs: {"mode", "base", "count", "stride", "depth"} - adjacent same-direction
-## spans; run.depth is the run's base ot_order_z, a consumer's fold-order key
-## (ADR-0200 dec. 1: the descriptor writes five fields, not the four an old
-## docstring listed).
+## spans; run.depth is the run's base ot_order_z, a consumer's fold-order key.
 static func order(records: PackedFloat32Array, modes: PackedInt32Array,
 		depths: PackedFloat32Array, ages: PackedFloat32Array = PackedFloat32Array()) -> Dictionary:
 	var n: int = modes.size()
@@ -128,8 +127,7 @@ static func order(records: PackedFloat32Array, modes: PackedInt32Array,
 			key_max = nb
 	order_idx = _stable_counting_sort(order_idx, bucket_keys, key_max)
 
-	# --- Emit records in depth order + build maximal same-DIRECTION runs. A prim joins
-	#     the current run iff same direction AND that direction is not MIX. ---
+	# --- Emit in depth order; build maximal same-DIRECTION runs (MIX never joins). ---
 	var unified := PackedFloat32Array()
 	unified.resize(n * _FLOATS_PER_INSTANCE)
 	var runs: Array = []
@@ -149,7 +147,8 @@ static func order(records: PackedFloat32Array, modes: PackedInt32Array,
 			unified[dst_off + f] = records[src_off + f]
 
 		var d: int = _direction_of(modes[src])
-		if d == run_dir and d != Direction.MIX:
+		# Never batch across a bucket: another producer may sit between those depths.
+		if d == run_dir and d != Direction.MIX and _bucket_of(depths[src]) == _bucket_of(run_base_depth):
 			run_count += 1
 		else:
 			if run_count > 0:

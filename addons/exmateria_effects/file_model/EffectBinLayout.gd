@@ -2,22 +2,17 @@ extends RefCounted
 ## The `E###.BIN` ROM layout: every offset a section writer needs, in ONE place (#1326).
 ## Vault: [[Effect File Format]]
 ##
-## WHY A SEPARATE FILE. `tools/parse_effect.py` keeps its layout constants at module scope and
-## every `write_effect_*.py` imports them from there, so reader and writer can never disagree
-## about geometry — the docstrings say so explicitly ("so there is exactly ONE ROM layout shared
-## by reader and writer"). This file is that module scope, transcribed. The GDScript writers
-## import from here for the same reason, and `EffectBinHeader.gd` holds the header half.
-##
-## TRANSCRIBED, NOT ADAPTED. Every table below mirrors the identically-named constant in
-## `parse_effect.py`. The one representation change is the absent-value sentinel: Python's
-## `None` for "this context has no explicit max_keyframe offset" becomes `NO_MAX_KF` (-1),
-## because 0 is a real offset and a caller that cannot tell them apart writes a watermark over
-## a keyframe's bytes.
+## Every table mirrors the identically-named constant in `tools/parse_effect.py` (the single
+## shared ROM layout reader and writer import, so they cannot disagree about geometry).
+## The GDScript writers import from here for the same reason; `EffectBinHeader.gd` holds the
+## header half. The one representation change: Python's `None` absent-value sentinel becomes
+## `NO_MAX_KF` (-1) — 0 is a real offset.
 ##
 ## No `class_name` (ADR-0004) — file_model members stay path-preloaded.
 
 ## `SCREEN_TRACK_OFFSETS["phase1"]["max_keyframe"]` when the watermark has no offset of its own
-## and lives at the channel's own tail instead. NOT 0 — 0 is a real channel-relative offset.
+## and lives at the channel's own tail instead. Not 0 — 0 is a real channel-relative offset;
+## confusing the two writes a watermark over the keyframe's bytes.
 const NO_MAX_KF: int = -1
 
 # --- record sizes (parse_effect: HEADER_SIZE … FRAMESET_HEADER_SIZE) ---------
@@ -30,8 +25,7 @@ const FRAMESET_HEADER_SIZE: int = 4
 
 # --- screen (parse_effect.SCREEN_TRACK_OFFSETS / MAX_SCREEN_KEYFRAMES) -------
 
-## `for_each` is based at `timeline_ptr + 8`; `phase1`/`phase2` at `timeline_ptr` directly, and
-## their watermark sits at the channel's own tail (+298) rather than at a table offset.
+## `phase1`/`phase2` watermarks sit at the channel's own tail (+298), not a table offset.
 const SCREEN_TRACK_OFFSETS: Dictionary = {
 	"for_each": {"data": 0x057E, "max_keyframe": 0x06A8},
 	"phase1": {"data": 0x1036, "max_keyframe": NO_MAX_KF},
@@ -76,10 +70,9 @@ const CAMERA_TRACK_TABLES: Dictionary = {
 
 # --- timeline header (write_effect_timeline_header.OFF_*) -------------------
 
-## The 12 bytes at `timeline_section_ptr` that precede the particle channels. Six s16 slots,
-## of which THREE are authorable phase durations; the other three (`0x00`, `0x02`, `0x08`) are
-## read by the parser and ignored by the engine, are non-zero across the corpus, and are
-## therefore preserved verbatim rather than written as part of a whole-struct save.
+## The 12 bytes at `timeline_section_ptr` before the particle channels: six s16 slots, three
+## authorable phase durations, three (`0x00`, `0x02`, `0x08`) read by the parser and ignored
+## by the engine — non-zero across the corpus, so preserved verbatim, not written whole-struct.
 const TIMELINE_HEADER_BYTES: int = 12
 const TIMELINE_OFF_PHASE1_DURATION: int = 0x04
 const TIMELINE_OFF_SPAWN_DELAY: int = 0x06
@@ -90,10 +83,9 @@ const TIMELINE_OFF_PHASE2_DELAY: int = 0x0A
 const PARTICLE_CHANNEL_SIZE: int = 128
 const PARTICLE_SLOTS: int = 25
 
-## 🔴 `time[]` and `emitter_id[]` PHYSICALLY SHARE byte 0x31: `time[]` is 25 s16 spanning
-## 0x00..0x31, and `emitter_id[]` starts at 0x31. `emitter_id[0]` is the semantic owner (the
-## parser reads 0x31 as `emitter_id[0]`, and `time[24]` is a phantom slot real data never
-## reaches), so a byte-exact writer MUST write `time[]` BEFORE `emitter_id[]`.
+## `time[]` (25 s16 spanning 0x00..0x31) and `emitter_id[]` (from 0x31) physically share byte
+## 0x31: `time[24]` is a phantom slot, `emitter_id[0]` is the semantic owner, so a byte-exact
+## writer writes `time[]` BEFORE `emitter_id[]`.
 const PARTICLE_OFF_TIME: int = 0x00          ## + i*2, s16
 const PARTICLE_OFF_EMITTER_ID: int = 0x31    ## + i,   u8
 const PARTICLE_OFF_ACTION_FLAGS: int = 0x4A  ## + i*2, u16
@@ -102,19 +94,16 @@ const PARTICLE_OFF_MAX_KEYFRAME: int = 0x7E  ## s16
 const PARTICLE_FOR_EACH_OFFSETS: Array = [0x0004, 0x0084, 0x0104, 0x0184, 0x0204]
 const PARTICLE_PHASE1_OFFSETS: Array = [0x082A, 0x08AA, 0x092A, 0x09AA, 0x0A2A]
 const PARTICLE_PHASE2_OFFSETS: Array = [0x0AAA, 0x0B2A, 0x0BAA, 0x0C2A, 0x0CAA]
-## 🔴 THE `for_each` BIAS IS THE WHOLE TIMELINE SUPER-SECTION'S, NOT THE PARTICLE LANES'.
-## Every `for_each` channel — particle, screen AND palette — bases at `timeline_ptr + 8` while
-## its `phase1`/`phase2` siblings base at `timeline_ptr` directly. The CAMERA tables are the
-## exception in the other direction: none of the three is biased, `for_each` included
-## (`parse_camera_keyframes` says so in as many words). Named for the section rather than for
-## the lane because three subsystems read it and only one of them is particles.
+## The `for_each` bias is the whole timeline super-section's, not the particle lanes': every
+## `for_each` channel — particle, screen AND palette — bases at `timeline_ptr + 8` while its
+## `phase1`/`phase2` siblings base at `timeline_ptr`. The camera tables are the exception:
+## none of the three is biased (`parse_camera_keyframes`). Named for the section, not the
+## lane, because three subsystems read it.
 const TIMELINE_FOR_EACH_BASE_BIAS: int = 8
 
 
-## File offset of ONE particle channel from its context + lane index. Lives here, not on a
-## writer, because the reader and the writer must not be able to disagree about it —
-## `parse_effect` keeps `particle_channel_offset` at module scope for exactly that reason.
-## Returns -1 for an unknown context or an out-of-range lane; NEVER 0, which is a real offset.
+## File offset of one particle channel from its context + lane index. Returns -1 for an
+## unknown context or out-of-range lane; never 0, which is a real offset.
 static func particle_channel_offset(timeline_ptr: int, context: String,
 		channel_index: int) -> int:
 	var table: Array
@@ -203,10 +192,9 @@ const TEXTURE_PTR_OFF: int = 0x24
 # --- the header's ten section pointers, for the RELOCATION contract ----------
 
 ## Stored offset -> the key `EffectBinHeader.parse_header` publishes it under. The order is
-## the header's own, and it is also the SECTION order: measured over all 401 non-empty corpus
-## effects, the non-zero stored pointers are monotonically non-decreasing by offset in every
-## one. The relocation contract still compares VALUES rather than trusting that, because a
-## rule that depends on the order being what it happens to be is a rule that breaks silently.
+## the header's own and also the section order: measured over all 401 non-empty corpus
+## effects, the non-zero stored pointers are non-decreasing by offset in every one. The
+## relocation contract still compares VALUES rather than trusting that order.
 const HEADER_POINTERS: Array = [
 	[0x00, "frames_ptr"], [0x04, "animation_ptr"], [0x08, "script_data_ptr"],
 	[0x0C, "effect_data_ptr"], [0x10, "anim_table_ptr"], [0x14, "time_scale_ptr"],
@@ -214,15 +202,11 @@ const HEADER_POINTERS: Array = [
 	[0x20, "sound_def_ptr"], [0x24, "texture_ptr"],
 ]
 
-## 🔴 A STORED `0` MEANS THE SECTION IS ABSENT, NOT "AT THE HEADER BASE" — and it is not only
-## `time_scale_ptr`. Measured over the 401 non-empty corpus effects: `time_scale_ptr` is 0 in
-## 270 of them and `effect_flags_ptr` is 0 in 2 (E509 and E510, which zero BOTH). Anything
-## deriving a section's extent from these has to treat 0 as "not present" rather than as an
-## address — `calculate_sections` already does, which is why E509's AnimCurves size comes out
-## NEGATIVE rather than plausible.
-##
-## `EffectBinWriter.relocate` needs no clause for it: its rule is "move every stored pointer
-## greater than the resized section's own", no section begins at stored 0, and a separate
-## zero test was measured to discriminate nothing. The constant is here for readers of a
-## header, not for that writer.
+## A stored `0` means the section is ABSENT, not "at the header base" — and it is not only
+## `time_scale_ptr`: measured over the 401 non-empty corpus effects, `time_scale_ptr` is 0 in
+## 270 and `effect_flags_ptr` in 2 (E509 and E510, which zero both). Anything deriving a
+## section's extent must treat 0 as "not present", not an address — `calculate_sections`
+## does, which is why E509's AnimCurves size comes out negative rather than plausible.
+## `EffectBinWriter.relocate` needs no clause: its rule moves only stored pointers greater
+## than the resized section's own, and no section begins at stored 0.
 const PTR_ABSENT: int = 0

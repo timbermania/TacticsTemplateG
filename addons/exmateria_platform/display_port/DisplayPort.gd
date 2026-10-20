@@ -86,6 +86,85 @@ const NATIVE_VIEWPORT_HEIGHT := 240.0
 ## other pose. The GTE adds `TR` after the rotation; so must we.
 const VERTICAL_DATUM_PX := 40.0
 
+
+## The PSX 3D framebuffer's WIDTH in native pixels — the other half of the 256x240 frame
+## above. The game's old base viewport, 1024x960, was exactly this frame at 4 screen px per
+## native px, so every screen-space consumer that divided by the VIEWPORT'S width was, until
+## gl-ADR-0382, dividing by the frame's.
+const NATIVE_FRAME_WIDTH := 256.0
+
+## The PSX frame's aspect, 16:15. NOT the viewport's: since gl-ADR-0382 the base viewport is
+## wider (16:9-class) and the frame sits CENTRED in it at full height, so the viewport's own
+## aspect only says how much side room there is.
+const FRAME_ASPECT := NATIVE_FRAME_WIDTH / NATIVE_VIEWPORT_HEIGHT
+
+## The base viewport's aspect: 16:9. `project.godot`'s base width is the EVEN width nearest
+## `960 * 16/9` (1706), so the frame's two margins are equal whole pixels (341 each).
+## There is no stricter alignment rule. The FRAGCOORD-keyed PSX dither is anchored at the frame's
+## corner (`psx_dither.gdshaderinc`), so the margin does not need to be a whole number of
+## dither periods. At 1706 the centre 1024x960 differs from the old base by at most 1 px, one
+## 5-bit step (measured, N45 review). `PsxMagnitudeTest` holds the base size.
+const BASE_ASPECT := 16.0 / 9.0
+
+
+## The centred PSX frame inside a viewport of `viewport_size`, in that viewport's px: full
+## height, `height * FRAME_ASPECT` wide, left edge FLOORED to a whole pixel so a consumer that
+## adds it to an integer layout keeps landing on whole pixels. On a viewport narrower than
+## 16:15 the frame is the whole width (it never pillarboxes itself).
+##
+## This is THE centred-frame rule of gl-ADR-0382, and the GDScript half of it; the shader half
+## is `native_frame.gdshaderinc` beside this file, which spells the same arithmetic. Everything
+## PSX-authored in screen space — an effect's 256x240 quad, a dialogue box, a cutscene card, a
+## PSX-drawn menu — is placed in THIS rect, never in the viewport.
+static func frame_rect(viewport_size: Vector2) -> Rect2:
+	var w := minf(viewport_size.x, viewport_size.y * FRAME_ASPECT)
+	var x := floorf((viewport_size.x - w) * 0.5)
+	return Rect2(x, 0.0, w, viewport_size.y)
+
+
+## The BACKDROP span (gl-ADR-0382 dec. 9): the rect, in the CONTENT's own native px, that a
+## backdrop must cover so it reaches both edges of a viewport of `viewport_size`. The content
+## is `native_size` native px, drawn at full height and centred — the 256x240 frame, or a
+## 320-mode image like the title backdrop (320x240). Its own rect is (0, 0, native_size); the
+## span extends it left and right by the margin, measured in the same native px, so a
+## backdrop that computes its pattern from native px continues it across the margin with the
+## same phase and scale. On a viewport no wider than the content the span is the content.
+##
+## `backdrop_span.gdshaderinc` beside this file is the shader half: a quad sized to this span
+## maps its UV back to native px with `backdrop_span_px`. `tools/check_centred_frame.py`
+## requires every backdrop producer to size itself here.
+static func backdrop_span(viewport_size: Vector2, native_size: Vector2) -> Rect2:
+	if viewport_size.y <= 0.0 or native_size.y <= 0.0:
+		return Rect2(Vector2.ZERO, native_size)
+	var wide := viewport_size.x * native_size.y / viewport_size.y
+	var margin := maxf(0.0, (wide - native_size.x) * 0.5)
+	return Rect2(-margin, 0.0, native_size.x + 2.0 * margin, native_size.y)
+
+
+## One native PSX pixel as a length in world units, under an orthographic camera of
+## this vertical extent: `world = px * native_px_to_world(camera.size)`.
+##
+## This is the law `NATIVE_VIEWPORT_HEIGHT` above already states in prose and that two
+## call sites already apply inline — `PlayerCamera` (`(vertical_datum_px / 240) *
+## camera.size`) and `ScenarioCameraDirector` (the same, on `ortho`). Naming it gives
+## the third caller — effect sprite corners, #1507 — that arithmetic instead of a
+## fourth spelling of it.
+##
+## 🔴 IT IS ZOOM-DEPENDENT, AND THAT IS THE POINT. A PSX sprite is drawn at a fixed
+## size in SCREEN PIXELS, so as a length in WORLD units it must scale with the camera's
+## world extent — otherwise its on-screen size changes when the player zooms, and the
+## ROM's does not. `exmateria_effects` used `PsxNum.UNITS_PER_TILE` (1/28) here, which
+## is the BOARD scale: right for world positions (it is why the map is right) and a
+## category error for a screen-pixel extent. 1/28 equals this only at `ortho_size =
+## 240/28 = 8.571`, so the old constant silently baked in one zoom.
+##
+## ⚠️ Assumes KEEP_HEIGHT, where `Camera3D.size` IS the vertical world extent — the
+## same assumption both datum call sites make. The caller must check the camera is
+## actually orthographic; `size` means something else under perspective.
+static func native_px_to_world(ortho_size: float) -> float:
+	return ortho_size / NATIVE_VIEWPORT_HEIGHT
+
+
 ## Resolved singleton, or `null`. Same cache discipline as `TunePort`: never
 ## caches a negative, and `has_method` rejects the editor's non-`@tool`
 ## placeholder, which answers to the name and carries none of the methods.

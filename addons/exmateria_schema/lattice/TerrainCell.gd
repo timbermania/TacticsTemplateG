@@ -93,8 +93,21 @@ var unselectable: bool = false
 var pass_through_only: bool = false
 
 ## What the map data calls this surface ("Grassy", "Water", "Stone Floor", …).
-## Read once in `src/`, by `PlacementPolicy._is_valid_for_placement`.
+## Read in `src/` by `PlacementPolicy._is_valid_for_placement` and, since N52, by
+## `DistanceFieldGenerator`, which turns it into the ROM's per-surface move-cost column.
 var surface_type: String = "Unknown"
+
+## Water depth, in whole height steps (map tile byte 3 bits 5-7). `height` is the FLOOR under
+## the water and `height + depth` its surface (UNIT_WATER_RENDERING.md §2). A seventh field,
+## and a terrain FACT like `height`, not a policy: the class-dependent rules it feeds — who
+## may enter, who may stop, what it costs — are `MovementClass`'s, in the host (gl-ADR-0385).
+var depth: int = 0
+
+## How far a sloped tile's lifted edge rises above `height`, in the same FFT half-steps; 0 on a
+## flat tile. A terrain FACT read by the player-facing Terrain window (#1947). Which corners lift
+## (`slope_type`) is deliberately NOT carried: the rise reads the same from every camera angle, a
+## compass direction does not.
+var slope_height: int = 0
 
 
 # No `grid_x` / `grid_z` accessors, and their absence is the decision rather than an
@@ -105,5 +118,6 @@ var surface_type: String = "Unknown"
 
 
 func _to_string() -> String:
-	return "TerrainCell(%d,%d L%d h=%d%s)" % [
-		grid.x, grid.y, grid.z, height, " impassable" if impassable else ""]
+	return "TerrainCell(%d,%d L%d h=%d%s%s)" % [
+		grid.x, grid.y, grid.z, height, (" d=%d" % depth) if depth != 0 else "",
+		" impassable" if impassable else ""]

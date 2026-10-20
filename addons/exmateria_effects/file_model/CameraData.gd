@@ -1,11 +1,6 @@
 extends RefCounted
-## Parsed camera-subsystem keyframe data (angle, position, zoom). Renamed
-## from CameraTrackData as part of the Track→Subsystem migration (#31).
-##
-## Parses `camera.json` (renamed from `camera_tracks.json` in #31) organized
-## by phase table (phase1, for_each, phase2). Keyframes carry a
-## `channel_mask` bitmask that selects which of {angle, position, zoom} the
-## keyframe activates.
+## Parsed camera-subsystem keyframe data (angle, position, zoom) from
+## `camera.json`.
 
 class Keyframe:
 	## Single keyframe in a camera phase table

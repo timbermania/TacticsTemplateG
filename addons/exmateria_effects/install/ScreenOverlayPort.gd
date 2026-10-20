@@ -2,27 +2,26 @@
 extends RefCounted
 
 ## PORT SIGNATURE - the four verbs a member may name instead of the
-## `ScreenEffectOverlay` autoload identifier; the same ruling as
-## TintedSurfacesPort (ADR-0308 dec. 1) - the host registers THIS addon's
-## script, so the node-path bind is free on arm 2b's stated grounds.
-## The two reads are the only verbs in either port whose absent answer is NOT
-## the identity: they feed ScreenSubsystem.initialize's baselines, so a wrong
-## value makes the WYSIWYG solver (#255) return wrong numbers rather than
-## absent. Absent answer = the shipped script's own corner fallbacks, derived
-## from it, not copied (ADR-0154).
+## `ScreenEffectOverlay` autoload identifier. The host registers this addon's
+## script, so the node-path bind is free - the same ruling as TintedSurfacesPort
+## (ADR-0308 dec. 1).
+## The two reads are the only verbs whose absent answer is NOT the identity:
+## they feed ScreenSubsystem.initialize's baselines, so a wrong value makes the
+## WYSIWYG solver (#255) return wrong numbers rather than absent. Absent answer
+## = the shipped script's own corner fallbacks, derived from it, not copied
+## (ADR-0154).
 ## vault: .vaults/comments/exmateria_effects/port-contracts.md
 
 
-## The shipped script - `_absent_pair()` instances it; this file records which
-## script the autoload identifier it replaces pointed at.
+## The shipped script - `_absent_pair()` instances it.
 const ScreenEffectOverlayScript = preload("res://addons/exmateria_effects/overlay/ScreenEffectOverlay.gd")
 
 ## `[top, bottom]` read off a detached overlay on first need; the node is
 ## built AND freed inside `_absent_pair()`, so only the two Colors outlive it.
 static var _absent_baselines: Array = []
 
-## Resolved singleton, or `null`. Never caches a negative -
-## `TintedSurfacesPort._port`.
+## Resolved singleton, or `null`. Never caches a negative: the autoload can
+## appear after first touch.
 static var _port: Node = null
 
 
@@ -38,9 +37,9 @@ static func _absent_pair() -> Array:
 
 
 ## The live overlay node, or `null` where the consumer registered no autoload.
-## 🔴 has_method IS load-bearing here, unlike in the tinted port:
-## ScreenEffectOverlay.gd is NOT @tool, so the editor instantiates the autoload
-## as a PLACEHOLDER that answers to the name with none of its methods.
+## has_method is load-bearing: ScreenEffectOverlay.gd is NOT @tool, so the
+## editor instantiates the autoload as a PLACEHOLDER that answers to the name
+## with none of its methods.
 static func _resolve() -> Node:
 	if _port != null and is_instance_valid(_port):
 		return _port
@@ -57,7 +56,7 @@ static func _resolve() -> Node:
 	return n
 
 
-## Test seam - `TintedSurfacesPort._forget_port`.
+## Test seam - drop the cache so the next call re-resolves.
 static func _forget_port() -> void:
 	_port = null
 

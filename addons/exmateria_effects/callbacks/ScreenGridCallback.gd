@@ -1,23 +1,16 @@
 extends "res://addons/exmateria_effects/callbacks/EffectCallback.gd"
-## CB16 - Full-screen textured grid callback (PSX FUN_801c2500).
-## Renders a 4×4 grid of quads covering the entire screen as a 2D overlay.
-## Vertex positions are FIXED at init (never change). Only UV scrolling and
-## per-quad Gouraud-shaded brightness update each frame.
-##
-## Analysis Checklist:
-## 1. Quad count: 16 (4×4 grid). Alloc 0x6e4 bytes, double-buffered.
-## 2. Topology: Flat screen-filling grid. Each quad = 64×64 PSX pixels.
-## 3. Orientation: 2D screen overlay. Absolute PSX screen pixels. Fixed at init.
-## 4. Blend mode: (emitter+0x4C & 3) << 5 | 0x86. Emitter 10: additive.
-## 5. Emitter offsets: UV base from position_start (bag of bytes). Brightness from param_4E.
-## 6. Fixed-point: UV counters >> 0xc, colors >> 0xc.
-## 7. Color: Brightness table at DAT_801c58e8, 5 int32s/row, indexed by param_4E.
-##    Gouraud: inner/outer vertex brightness from adjacent table entries.
-## 8. Color curves: emitter 10 has r=4, g=4, b=4.
-## 9. Init: set up 16 fixed-position quads, store UV bases.
-## 10. Animation: UV scrolling + color updates only. No geometry changes.
-## 11. Cleanup: two-phase (flag at +0x6e0).
-## 12. callback_data.json: brightness table.
+## Full-screen textured grid callback. Registered for ids 9/15/16/20/57 — the id names a
+## file OFFSET, and the code at that offset is compiled per E###.BIN, so each effect has
+## its own function and its own data addresses: E065 CB16 is FUN_801c2500 (file+0), E015
+## CB09 is FUN_801c4fc8 (file+0x2AC8). Both are this same 4×4 screen grid; only UV scroll
+## and Gouraud brightness change per frame.
+## ROM notes: 16 quads (PSX alloc 0x6e4, double-buffered). Blend: (emitter+0x4C & 3) << 5
+## | 0x86 — emitter 10: additive. Brightness table: 5 int32/row, per-effect address (E065
+## CB16: DAT_801c58e8 = file+0x33E8; E015 CB09: DAT_801c585c = file+0x335C); emitter 10's
+## r/g/b curves are all 4. Cleanup is two-phase (flag at +0x6e0).
+## Holy's full-screen white flash IS this callback: E015 emitter 7 (channel 2 → slot 2)
+## carries param_4E = 6, whose row is all-4096 → a uniform full-bright additive wash,
+## ramped by the colour curves.
 ## Vault: [[Effect Callback Mesh]]
 
 const GRID_COLS: int = 4
@@ -29,8 +22,8 @@ var _uv_counter_x: int = 0
 var _uv_counter_y: int = 0
 var _uv_base_x: int = 0         # emitter+0x14 = raw_data["position_start"][0] (bag of bytes)
 var _uv_base_y: int = 0         # emitter+0x16 = raw_data["position_start"][1]
-var _half_wrap_x: int = 0       # (param_A8 + 1) >> 1
-var _half_wrap_y: int = 0       # (param_AA + 1) >> 1
+var _half_wrap_x: int = 0       # halve_toward_zero(param_A8)
+var _half_wrap_y: int = 0       # halve_toward_zero(param_AA)
 
 # UV velocity fields
 var _uv_vel_start: int = 0      # emitter+0x5C = raw_data["radial_min_start"]
@@ -43,6 +36,31 @@ var _brightness_row_idx: int = 0 # emitter+0x4E = callback_params["param_4E"]
 
 # Parsed data
 var _brightness_table: Array = []
+
+## The Gouraud brightness at grid row `row`'s top and bottom edges, as 0.0-1.0.
+## PSX: `iVar27 = *(int *)(&DAT_<table> + row * 4 + param_4E * 0x14)` for the top pair and
+## the same +4 for the bottom, so a table row's five entries are the five horizontal edges
+## of the 4-row grid and all four columns of a row share them.
+## An empty row returns (0, 0): every vertex colour goes black and the grid renders as
+## nothing. That is how Holy's full-screen flash went missing for months —
+## parse_effect_callbacks.py claimed E015 CB09 had no table and emitted `[]`, while the ROM
+## has 7 rows at file+0x335C. Mirrored as-is from the PSX (which would read garbage rather
+## than clamp); a caller seeing (0, 0) across a whole effect should suspect its DATA, not
+## this function.
+static func row_edges(brightness_row: Array, row: int) -> Vector2:
+	var inner: float = 0.0
+	if row >= 0 and row < brightness_row.size():
+		inner = float(brightness_row[row]) / BRIGHTNESS_SCALE
+	var outer: float = 0.0
+	if row + 1 >= 0 and row + 1 < brightness_row.size():
+		outer = float(brightness_row[row + 1]) / BRIGHTNESS_SCALE
+	return Vector2(inner, outer)
+
+
+static func halve_toward_zero(v: int) -> int:
+	"""PSX `(x - (x >> 31)) >> 1`: halve, truncating toward zero rather than flooring."""
+	return -((-v) >> 1) if v < 0 else v >> 1
+
 
 func _ready() -> void:
 	_create_cb_mesh()
@@ -66,34 +84,30 @@ func _on_init(emitter_index: int, spawn_counter: int, channel_index: int) -> voi
 	if emitter_config:
 		var raw: Dictionary = emitter_config.raw_data
 
-		# UV base from position_start (bag of bytes: emitter+0x14, +0x16)
 		_uv_base_x = _ri(raw, "position_start", 0)
 		_uv_base_y = _ri(raw, "position_start", 1)
 
-		# Half-wrap from param_A8/AA
+		# Half-wrap from param_A8/AA — a signed halve truncating toward zero (the ROM gives
+		# 3 for Holy's emitter 7 carrying 7; `(v + 1) >> 1` would give 4). GDScript `>>`
+		# floors, so halve_toward_zero spells the truncation out for negatives.
 		var param_a8: int = int(emitter_config.callback_params.get("param_A8", 4096))
 		var param_aa: int = int(emitter_config.callback_params.get("param_AA", 4096))
-		_half_wrap_x = (param_a8 + 1) >> 1 if param_a8 > 0 else 0
-		_half_wrap_y = (param_aa + 1) >> 1 if param_aa > 0 else 0
+		_half_wrap_x = halve_toward_zero(param_a8)
+		_half_wrap_y = halve_toward_zero(param_aa)
 
-		# UV velocity (emitter+0x5C/0x60 = radial_min_start/end)
 		_uv_vel_start = int(raw.get("radial_min_start", 0))
 		_uv_vel_end = int(raw.get("radial_min_end", 0))
 
-		# UV direction angle (emitter+0x2E/0x34 = angle_start[1]/angle_end[1])
 		_uv_dir_start = _ri(raw, "angle_start", 1)
 		_uv_dir_end = _ri(raw, "angle_end", 1)
 
-		# Brightness row index
 		_brightness_row_idx = int(emitter_config.callback_params.get("param_4E", 0))
 
-	# Load brightness table
 	if effect_data:
 		var cb_data = _load_cb_data()
 		if cb_data:
 			_brightness_table = cb_data.get("brightness_table", [])
 
-		# Enable texture
 		if effect_data.texture and _material:
 			_material.set_shader_parameter("effect_texture", effect_data.texture)
 			_material.set_shader_parameter("use_texture", true)
@@ -111,7 +125,6 @@ func physics_step() -> void:
 	if _frame_counter < FRAME_MAX:
 		_frame_counter += 1
 
-	# UV velocity: lerp(radial_min_start, radial_min_end, curve) with direction
 	var vel_curve_t: float = _sample_curve("radial_velocity")
 	var vel_mag: int = int(lerpf(float(_uv_vel_start), float(_uv_vel_end), vel_curve_t))
 
@@ -123,7 +136,6 @@ func physics_step() -> void:
 	var uv_vel_x: int = int(cos(dir_rad) * BRIGHTNESS_SCALE) * vel_mag * 16 >> 12
 	var uv_vel_y: int = int(sin(dir_rad) * BRIGHTNESS_SCALE) * vel_mag * 16 >> 12
 
-	# Update UV counters with wrapping
 	_uv_counter_x = _wrap_counter(_uv_counter_x + uv_vel_x, _half_wrap_x)
 	_uv_counter_y = _wrap_counter(_uv_counter_y + uv_vel_y, _half_wrap_y)
 
@@ -147,12 +159,12 @@ func update_render() -> void:
 	var cam_fwd: Vector3 = -camera.global_basis.z
 
 	# PSX screen (256×240) → Godot view units
-	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
-	var aspect: float = viewport_size.x / viewport_size.y
+	# The PSX 256-px screen spans the centred FRAME, never the viewport (gl-ADR-0382): a wider
+	# viewport shows more world at the sides, it does not stretch a screen-space quad.
+	var aspect: float = DisplayPort.FRAME_ASPECT
 	var psx_scale_x: float = camera.size * aspect / 256.0
 	var psx_scale_y: float = camera.size / 240.0
 
-	# Update scrolling UV rect on material
 	if _material and effect_data.texture:
 		var tex_size: Vector2 = effect_data.texture.get_size()
 		if tex_size.x > 0 and tex_size.y > 0:
@@ -164,15 +176,13 @@ func update_render() -> void:
 				float(_half_wrap_x) / tex_size.x,
 				float(_half_wrap_y) / tex_size.y))
 
-	# Color curves — check for valid curve indices directly rather than the
-	# color_curve_enabled flag, which may be incorrect in parsed JSON.
-	# PSX: flags_lo & 0x40 enables curves. Default without curves = 0x80 (0.5).
+	# Colour curves: check the curve indices directly, not the color_curve_enabled flag,
+	# which may be incorrect in parsed JSON (PSX: flags_lo & 0x40; default 0x80 = 0.5).
 	var curve_color: Color = _sample_colors()
 	var r_val: float = curve_color.r
 	var g_val: float = curve_color.g
 	var b_val: float = curve_color.b
 
-	# Get brightness row
 	var brightness_row: Array = []
 	if _brightness_row_idx >= 0 and _brightness_row_idx < _brightness_table.size():
 		brightness_row = _brightness_table[_brightness_row_idx]
@@ -184,12 +194,10 @@ func update_render() -> void:
 			print("[CB16] frame=%d r=%.3f g=%.3f b=%.3f bright[0]=%.3f curve_r_idx=%d" % [
 				_frame_counter, r_val, g_val, b_val, bright0, r_idx])
 
-	# Skip rendering entirely when color is effectively zero
 	var max_color: float = maxf(r_val, maxf(g_val, b_val))
 	if max_color < 0.001:
 		return
 
-	# Build mesh arrays: 4×4 grid of screen-filling quads
 	var positions := PackedVector3Array()
 	var colors := PackedColorArray()
 	var uvs := PackedVector2Array()
@@ -210,12 +218,9 @@ func update_render() -> void:
 			var v10: Vector3 = base_pos + cam_right * (x0 - 128.0) * psx_scale_x + cam_up * (-(y1 - 120.0)) * psx_scale_y
 			var v11: Vector3 = base_pos + cam_right * (x1 - 128.0) * psx_scale_x + cam_up * (-(y1 - 120.0)) * psx_scale_y
 
-			var bright_inner: float = 0.0
-			if row < brightness_row.size():
-				bright_inner = float(brightness_row[row]) / BRIGHTNESS_SCALE
-			var bright_outer: float = 0.0
-			if row + 1 < brightness_row.size():
-				bright_outer = float(brightness_row[row + 1]) / BRIGHTNESS_SCALE
+			var edges: Vector2 = row_edges(brightness_row, row)
+			var bright_inner: float = edges.x
+			var bright_outer: float = edges.y
 
 			var col_inner := Color(r_val * bright_inner, g_val * bright_inner, b_val * bright_inner, 1.0)
 			var col_outer := Color(r_val * bright_outer, g_val * bright_outer, b_val * bright_outer, 1.0)

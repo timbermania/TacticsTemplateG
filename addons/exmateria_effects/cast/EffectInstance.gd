@@ -1,12 +1,6 @@
 @tool
 extends Node3D
 ## Reusable wrapper for a single effect with its own manager, renderer, and controls
-##
-## Encapsulates:
-## - EffectData loading
-## - ParticleSubsystem (physics/animation)
-## - EffectParticleRenderer (textured quads via individual MeshInstance3D)
-## - Screen background color control (ScreenSubsystem)
 ## Vault: [[Effect Camera System]]
 ## Vault: [[Effect Execution Model]]
 ## Vault: [[Effect Frame Pacing]]
@@ -16,30 +10,20 @@ extends Node3D
 const EffectsDebug = preload("res://addons/exmateria_effects/install/EffectsDebug.gd")
 const EffectData = preload("res://addons/exmateria_effects/file_model/EffectData.gd")
 const ParticleSubsystem = preload("res://addons/exmateria_effects/subsystem/ParticleSubsystem.gd")
+const EffectPhaseClass = preload("res://addons/exmateria_effects/cast/EffectPhase.gd")
 
-## ADR-0212 dec. 1 — `addons/exmateria_platform` publishes one global,
-## `ExMateriaPlatform`; aliasing a member back keeps every use site below
-## spelled the way it was (ADR-0211 dec. 4). The PSX trio arrived at
-## extraction #7 (#1220) and lost its three bare `class_name`s on the way.
+## ADR-0212 dec. 1 — alias a published member back so every use site stays
+## spelled the way it was (ADR-0211 dec. 4).
 const PsxChirality = ExMateriaPlatform.PsxChirality
 
 ## The battle effect-SFX engine, reached through the platform PORT instead of the
-## host's `ExMateriaEffectSfx` autoload identifier — eleven lines in this file, and the
-## last of this addon's twenty-six arm-2 standalone-parse reaches (ADR-0308 dec. 1).
-##
-## 🔴 WHY THIS ONE IS A PORT AND THE TWO OVERLAY PORTS BELOW ARE NOT. All three
-## identifiers were the same defect to arm 2, but arm 2b splits them: a node-path bind
-## is free only when *"the autoload points at a script THIS addon ships"*. The host
-## registers `TintedSurfaces` and `ScreenEffectOverlay` at
-## `res://addons/exmateria_effects/…` paths, so this addon binds them itself.
-## `ExMateriaEffectSfx` lives at `res://addons/exmateria_sound/runtime/…`, which this
-## addon does not ship, and a node path there would only swap a parse error for a
-## silent null — a quieter report of the same dependency. So it routes through the port
-## tier, which is what a system addon is allowed to name (ADR-0139 dec. 9/12).
-##
-## The absent path needed no work at any of the eleven sites: `SfxPort`'s answers are
-## the engine's own not-ready answers, and `_sfx_token == 0` is already this file's
-## "no cast".
+## host's `ExMateriaEffectSfx` autoload identifier (ADR-0308 dec. 1). The two
+## overlay ports below differ: a node-path bind is free only when the autoload
+## points at a script THIS addon ships. `ExMateriaEffectSfx` lives in
+## `addons/exmateria_sound/`, which this addon does not ship, and a node path
+## there would only swap a parse error for a silent null (ADR-0139 dec. 9/12).
+## `SfxPort`'s not-ready answers are the engine's own; `_sfx_token == 0` is
+## this file's "no cast".
 const SfxPort = ExMateriaPlatform.SfxPort
 
 
@@ -47,44 +31,55 @@ const EffectParticleRendererClass = preload("res://addons/exmateria_effects/rend
 const ScreenSubsystemClass = preload("res://addons/exmateria_effects/subsystem/ScreenSubsystem.gd")
 const PaletteSubsystemClass = preload("res://addons/exmateria_effects/subsystem/PaletteSubsystem.gd")
 const CallbackManagerClass = preload("res://addons/exmateria_effects/callbacks/CallbackManager.gd")
+
+## The render ROUTE, through a port rather than a bare autoload identifier — the same ruling the two
+## overlay ports below carry (ADR-0308 dec. 1), and the reason this file can name the router at all.
+## Its absent answer is the build fact, so a consumer with the addon and no router still gets the
+## right side (ADR-0349 dec. 3).
+const RoutePort = preload("res://addons/exmateria_effects/install/RoutePort.gd")
 const CameraSubsystemClass = preload("res://addons/exmateria_effects/subsystem/CameraSubsystem.gd")
 const EffectSoundControllerClass = ExMateriaPlatform.EffectSoundController
 const EffectTimelineClass = preload("res://addons/exmateria_effects/cast/EffectTimeline.gd")
+const EffectEndModelClass = preload("res://addons/exmateria_effects/cast/EffectEndModel.gd")
 const SoundSubsystemClass = preload("res://addons/exmateria_effects/subsystem/SoundSubsystem.gd")
 const EffectSoundScheduleClass = preload("res://addons/exmateria_effects/cast/EffectSoundSchedule.gd")
 const EffectSoundResolverClass = ExMateriaPlatform.EffectSoundResolver
 
-## This addon's two overlay autoloads, reached through their PORTS rather than as bare
-## identifiers — a member may name no autoload at all (ADR-0308 dec. 1). Seven of this
-## file's reaches were `TintedSurfaces` and `ScreenEffectOverlay`; the eleven that are
-## `ExMateriaEffectSfx` go through `ExMateriaPlatform.SfxPort` instead, and the
-## difference is not style. The two below point at scripts THIS addon ships, so the
-## node-path bind inside them is free on arm 2b's stated grounds; `ExMateriaEffectSfx`
-## points into `addons/exmateria_sound/`, which this addon does not ship, and for that
-## one a node path would only swap a parse error for a silent null.
+## This addon's two overlay autoloads, reached through their PORTS: both point at
+## scripts THIS addon ships, so the node-path bind inside them is free (ADR-0308
+## dec. 1; contrast `SfxPort` above, whose target the addon does not ship).
 const TintedSurfacesPort = preload("res://addons/exmateria_effects/install/TintedSurfacesPort.gd")
 const ScreenOverlayPort = preload("res://addons/exmateria_effects/install/ScreenOverlayPort.gd")
 
-# Signals for external logging/UI
 signal emitter_started(effect_name: String, emitter_idx: int, channel_idx: int, frame: int)
 signal emitter_stopped(effect_name: String, emitter_idx: int, channel_idx: int, frame: int)
 
-# Signals for game integration - three-stage reaction system
-# Bit 6 (0x0040) = ABILITY_REACT - play reaction animation (early, when particles start)
-# Bit 4 (0x0010) = HIT_REACT - apply damage/healing, show popups (when particles "hit")
-# Bit 5 (0x0020) = REFRESH_TILE - end reaction animation, refresh unit state
 signal ability_react_triggered(frame: int)
 signal hit_reaction_triggered(frame: int)
 signal refresh_tile_triggered(frame: int)
 signal camera_started()
 signal camera_finished()
+## A held effect started playing (`play_held()`). ITEM_USE_EXECUTION.md §6: the PSX
+## `effect_system_state` 1 -> 2 edge.
+signal released()
 
-# Action flags constants
 const ACTION_FLAG_ABILITY_REACT = 0x0040  # Bit 6 - play reaction animation
 const ACTION_FLAG_HIT_REACTION = 0x0010   # Bit 4 - apply damage, show popups
 const ACTION_FLAG_REFRESH_TILE = 0x0020   # Bit 5 - end reaction, refresh state
+const ACTION_FLAG_CASTER_SLOT = 0x0008    # Bit 3 - act on the caster slot, not the targets
 
-# Exported properties for editor preview
+## Which units an action keyframe (0x40 / 0x20) applies to — `action_scope()`.
+enum ActionScope {
+	ALL_TARGETS,  ## every target at once (outer-phase lane, 0x08 clear)
+	PER_TARGET,   ## one target per for_each child, each on its own beat (0x08 clear)
+	CASTER,       ## the caster slot alone (0x08 set, either lane)
+}
+
+## The phase lane (EffectPhase.*) and the flags of the latest action-flag keyframe, set
+## before its emits.
+var _action_lane: String = ""
+var _action_flags: int = 0
+
 @export_dir var effect_path: String = "":
 	set(value):
 		effect_path = value
@@ -97,14 +92,20 @@ const ACTION_FLAG_REFRESH_TILE = 0x0020   # Bit 5 - end reaction, refresh state
 # cinematic spotlight. Spawn-side sets this BEFORE add_child.
 var is_cinematic: bool = false
 
-# Public properties
+# HELD: loaded but not playing — PSX `effect_system_state` 1 (ITEM_USE_EXECUTION.md
+# §6). Set BEFORE initialize(); the instance then loads its data, textures and
+# subsystems but starts no clock, arms no sound and claims no camera until
+# play_held(). Released, it is indistinguishable from an instance spawned unheld, so
+# the camera snapshot a host takes on camera_started is the camera AT RELEASE —
+# the SLOT_COPY source PSX takes two loops after release (§4.5).
+var held: bool = false
+var _has_timeline: bool = false
+
 var effect_name: String = ""
 
-# Per-instance RNG (ADR-0070). Seeded once at spawn from a fresh entropy seed and
-# re-applied on every reset() (loop restart / backward seek) by the timeline, so
-# in-instance replay is bit-identical while each new cast still varies. Threaded
-# into the particle subsystem + camera subsystem, and registered with the
-# timeline for the re-seed.
+# Per-instance RNG (ADR-0070). Seeded once at spawn from fresh entropy and
+# re-applied on every reset() (loop restart / backward seek) by the timeline,
+# so in-instance replay is bit-identical while each new cast still varies.
 var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var _rng_seed: int = 0
 
@@ -114,11 +115,9 @@ var _rng_seed: int = 0
 # gameplay/combat playback.
 var playback_paused: bool = false
 
-# Looping control
 var auto_loop: bool = true             # Auto-restart when loop_frames reached
 var loop_frames: int = 300             # Frames until loop (default ~10s at 30fps)
 
-# Internal state
 var effect_data: EffectData
 var manager: ParticleSubsystem
 var sprite_renderer: Node3D
@@ -144,10 +143,16 @@ var _studio_disabled_emitters: Dictionary = {}
 # effect-flags config, and emits sound_event → ExMateriaEffectSfx.play_pair.
 var _sound_loaded = null        # EffectSoundSchedule (this addon's, read off EffectData)
 var _sound_controller = null    # EffectSoundController
-var _sfx_token: int = 0         # ExMateriaEffectSfx cast token (for end_effect)
-# Number of for-each (for_each) targets. Default 1 = single-target (faithful);
-# set via set_target_count() before initialize() to schedule AoE per-target sounds.
-var _target_count: int = 1
+var _sfx_token: int = 0         # baked-SFX cast token (for end_effect)
+## This effect's id (`E117`), taken from `data_path` at initialize. The audible path
+## addresses the baked corpus with it; no bank is parsed to make a sound.
+var _effect_id: String = ""
+# The for_each LANES the host asked for (N36; `set_for_each_lanes`): one unit per target in
+# the host's hit-stamp order and each lane's start, in frames after phase 1 (lane 0's = 0).
+# Empty = the single-target document. `_lane_count` is what initialize() granted.
+var _lane_units: Array = []   # WeakRef per lane
+var _lane_offsets: PackedInt32Array = PackedInt32Array()
+var _lane_count: int = 1
 
 # Unit references for caster/target tinting (WeakRef to avoid keeping freed units alive)
 var caster_unit: WeakRef = null
@@ -166,8 +171,10 @@ func _ready() -> void:
 	# ADR-0037: combat-visual — rides combat domain's pause axis via process_mode.
 	# Cinematic spell EffectInstances opt OUT so they stay active while the rest
 	# of combat_visuals is frozen for the cinematic spotlight (dec. 7).
-	if not Engine.is_editor_hint() and not is_cinematic:
-		add_to_group("combat_visuals")
+	# They are exempt from the CINEMATIC axis only: `cinematic_visuals` is the group a host's
+	# stop still freezes them by (a Space stop inside a cinematic halts its effect too, N37).
+	if not Engine.is_editor_hint():
+		add_to_group("cinematic_visuals" if is_cinematic else "combat_visuals")
 	if effect_path != "":
 		var path_name = effect_path.get_file()
 		if path_name == "":
@@ -177,7 +184,6 @@ func _ready() -> void:
 
 func _exit_tree() -> void:
 	"""Clean up screen, map, and sound effects when removed from scene"""
-	# Clean up anchor markers parented to units
 	if _origin_anchor and is_instance_valid(_origin_anchor) and _origin_anchor.is_inside_tree():
 		_origin_anchor.queue_free()
 	_origin_anchor = null
@@ -185,11 +191,9 @@ func _exit_tree() -> void:
 		_target_anchor.queue_free()
 	_target_anchor = null
 
-	# Return borrowed meshes to global pool
 	if sprite_renderer and sprite_renderer.has_method("release_pool_meshes"):
 		sprite_renderer.release_pool_meshes()
 
-	# Disconnect from the manager's unified emitter signal surface (#30 step 5).
 	if manager:
 		if manager.emitter_started.is_connected(_on_timeline_emitter_started):
 			manager.emitter_started.disconnect(_on_timeline_emitter_started)
@@ -211,13 +215,11 @@ func _exit_tree() -> void:
 	_sound_controller = null
 	_sound_loaded = null
 
-	# Disconnect callback manager signal and clear manager reference
 	if callback_manager and callback_manager.child_spawn_requested.is_connected(_on_callback_child_spawn):
 		callback_manager.child_spawn_requested.disconnect(_on_callback_child_spawn)
 	if manager:
 		manager.callback_manager = null
 
-	# Emit camera_finished when removed from scene
 	if camera_controller:
 		camera_finished.emit()
 		camera_controller = null
@@ -232,20 +234,15 @@ func _exit_tree() -> void:
 
 func _reinitialize() -> void:
 	"""Reinitialize when effect_path changes in editor"""
-	# Clear screen effect if active
 	if screen_controller and not Engine.is_editor_hint():
 		ScreenOverlayPort.remove_layer(screen_controller.get_owner_id())
-	# Clear map tint effect if active
 	if palette_controller and not Engine.is_editor_hint():
 		TintedSurfacesPort.remove_layer(TintedSurfacesPort.SURFACE_MAP, palette_controller.get_owner_id())
-		# Clear unit tints
 		TintedSurfacesPort.remove_all_layers_for_owner(palette_controller.get_owner_id())
 
-	# Return borrowed meshes before clearing renderer
 	if sprite_renderer and sprite_renderer.has_method("release_pool_meshes"):
 		sprite_renderer.release_pool_meshes()
 
-	# Clear existing children
 	for child in get_children():
 		child.queue_free()
 	sprite_renderer = null
@@ -259,7 +256,6 @@ func _reinitialize() -> void:
 	_sound_subsystem = null
 	caster_unit = null
 	target_unit = null
-	# Clean up anchor markers (they're parented to units, not this node)
 	if _origin_anchor and is_instance_valid(_origin_anchor):
 		_origin_anchor.queue_free()
 	_origin_anchor = null
@@ -267,7 +263,6 @@ func _reinitialize() -> void:
 		_target_anchor.queue_free()
 	_target_anchor = null
 
-	# Reinitialize if path is set
 	if effect_path != "":
 		var path_name = effect_path.get_file()
 		if path_name == "":
@@ -287,6 +282,21 @@ func initialize(name: String, data_path: String, anchor: Vector3, init_pool_size
 	Returns:
 		true if initialization succeeded
 	"""
+	var data := EffectData.load_from_directory(data_path)
+	if data == null:
+		push_error("EffectInstance [%s]: Failed to load effect data from %s" % [name, data_path])
+		return false
+	# The effect's ID, free from the path we were handed. THIS is what the audible path
+	# needs now: a baked render is addressed by name, not by a parsed opcode bank, so the
+	# play path does no parsing at all. `res://assets/effects/E117` -> `E117`.
+	return initialize_from_data(name, data, anchor, init_pool_size, data_path.get_file())
+
+
+func initialize_from_data(name: String, data: EffectData, anchor: Vector3,
+		init_pool_size: int = 512, effect_id: String = "") -> bool:
+	"""Initialize from an EffectData already in memory — the seam for a document with
+	no E### directory (a TRAP handler lifted into E### form, ADR-0369). `effect_id`
+	addresses the baked SFX corpus; an id with no baked pairs plays silent."""
 	effect_name = name
 
 	# Seed the per-instance RNG (ADR-0070) from fresh entropy, then capture that
@@ -295,29 +305,30 @@ func initialize(name: String, data_path: String, anchor: Vector3, init_pool_size
 	_rng.randomize()
 	_rng_seed = _rng.seed
 
-	# Load effect data
-	effect_data = EffectData.load_from_directory(data_path)
-	if effect_data == null:
-		push_error("EffectInstance [%s]: Failed to load effect data from %s" % [name, data_path])
-		return false
+	_effect_id = effect_id if not effect_id.is_empty() else data.name
+	effect_data = data
 
 	if EffectsDebug.iteration():
 		print("EffectInstance [%s]: Loaded %d emitters, %d curves" % [
 			name, effect_data.emitters.size(), effect_data.curves.size()
 		])
 
-	# Initialize manager
 	manager = ParticleSubsystem.new()
 	manager.rng = _rng  # per-instance RNG (ADR-0070) — set BEFORE initialize forwards it to physics
 	manager.initialize(effect_data, init_pool_size)
 
-	# Set anchors (target = anchor position)
 	manager.set_anchors(
 		Vector3.ZERO,  # world
 		Vector3.ZERO,  # cursor
 		Vector3.ZERO,  # origin
 		anchor         # target
 	)
+	_lane_count = 1
+	if _lane_offsets.size() > 1 and spawns_for_each_children(data):
+		manager.set_for_each_lanes(_lane_offsets)
+		_lane_count = manager.for_each_lane_count()
+	# Phase 2 opens after the LAST lane starts (0x801A4838), so every clock shifts by it.
+	var lane_shift: int = _lane_offsets[_lane_count - 1] if _lane_count > 1 else 0
 
 	# Initialize CAMERA anchor from map center
 	# PSX: get_camera_position() returns map dimensions, * 14 = map center
@@ -326,14 +337,10 @@ func initialize(name: String, data_path: String, anchor: Vector3, init_pool_size
 	cam_anchor.y = -global_position.y  # Cancel effect Y so particle Y = purely emitter offset
 	manager.anchor_camera = cam_anchor
 
-	# Create particle renderer
 	sprite_renderer = EffectParticleRendererClass.new()
 	sprite_renderer.initialize(effect_data, init_pool_size)
 	add_child(sprite_renderer)
 
-	# Subscribe to the manager's unified emitter signal surface (#30 step 5).
-	# The manager re-emits from its three inner phase controllers; nine
-	# subscriptions collapse to three.
 	manager.emitter_started.connect(_on_timeline_emitter_started)
 	manager.emitter_stopped.connect(_on_timeline_emitter_stopped)
 	manager.action_flags_triggered.connect(_on_action_flags_triggered)
@@ -341,20 +348,23 @@ func initialize(name: String, data_path: String, anchor: Vector3, init_pool_size
 		or manager.phase2_block != null \
 		or manager.for_each_block != null
 
-	# Spawn-drive is now the EffectTimeline (built below). The old "manual mode"
-	# (no for-each timeline → start_emitter(0)) is gone: every real effect is
-	# timeline-driven; the only timeline-less effects are 0-byte empty slots
-	# (ADR-0012). `has_timeline` decides whether the timeline starts ticking.
+	# ADR-0012: every real effect is timeline-driven (timeline-less = 0-byte
+	# empty slots); `has_timeline` decides whether the timeline starts ticking.
 
-	# Initialize callback manager if effect has MIPS callbacks
 	if not effect_data.callback_slots.is_empty():
 		callback_manager = CallbackManagerClass.new()
-		callback_manager.initialize(effect_data, effect_data.callback_slots)
+		# ONE read of the route per cast (ADR-0349 dec. 2), here, at the top of the cast — not per
+		# callback and not per frame. Every callback in this cast then draws on the same side as the
+		# particle producer for the cast's whole lifetime, which is the property that was missing:
+		# `EngineFoldCompositor` routed on the autopilot's `native_blend` while each callback took its
+		# own `Fold.owns()`, so with the comparison override on, one frame carried both.
+		callback_manager.rng = _rng
+		callback_manager.initialize(effect_data, effect_data.callback_slots, RoutePort.is_native())
 		callback_manager.child_spawn_requested.connect(_on_callback_child_spawn)
 		add_child(callback_manager)
 		manager.callback_manager = callback_manager
+		callback_manager.set_particle_host(manager)
 
-	# Initialize screen subsystem if screen data exists
 	if effect_data.screen and not Engine.is_editor_hint():
 		screen_controller = ScreenSubsystemClass.new()
 		# Pass the map's default gradient TOP + BOTTOM baselines (the ColorStack folds
@@ -363,7 +373,6 @@ func initialize(name: String, data_path: String, anchor: Vector3, init_pool_size
 		screen_controller.initialize(effect_data.screen,
 			ScreenOverlayPort.get_default_top(), ScreenOverlayPort.get_default_bottom())
 
-	# Initialize palette subsystem if palette data exists (map tinting)
 	if effect_data.palette and not Engine.is_editor_hint():
 		palette_controller = PaletteSubsystemClass.new()
 		palette_controller.initialize(effect_data.palette)
@@ -374,34 +383,34 @@ func initialize(name: String, data_path: String, anchor: Vector3, init_pool_size
 		if _c or _t:
 			palette_controller.set_units(_c, _t)
 
-	# Initialize camera subsystem if camera data exists
 	if effect_data.camera and effect_data.camera.has_active_keyframes() and not Engine.is_editor_hint():
 		camera_controller = CameraSubsystemClass.new()
 		camera_controller.rng = _rng  # deterministic camera shake for scrub (ADR-0070)
 		var cam_p1_dur = 0
 		var cam_spawn_delay = 0
-		var cam_p2_start = 0
+		var cam_p2_delay = 0
 		if effect_data.timeline:
 			cam_p1_dur = effect_data.timeline.phase1_duration
 			cam_spawn_delay = effect_data.timeline.spawn_delay
-			var cam_p2_delay = effect_data.timeline.phase2_delay
-			cam_p2_start = cam_p1_dur + cam_p2_delay
-		camera_controller.initialize(effect_data.camera, cam_p1_dur, cam_spawn_delay, cam_p2_start)
-		# Detect pattern 2 (opcode 40 = for_each) for continuous camera timeline
-		for op in effect_data.script_ops:
-			if op is Dictionary and op.get("opcode") == 40:
-				camera_controller.continuous_for_each = true
-				break
-		# Set initial reference position from anchor
-		camera_controller.target_position = PsxChirality.godot_position_to_psx(anchor)
-		camera_controller.cursor_position = PsxChirality.godot_position_to_psx(anchor)
-		camera_controller.caster_position = PsxChirality.godot_position_to_psx(anchor)
-		camera_started.emit()
+			cam_p2_delay = effect_data.timeline.phase2_delay
+		# The hit counter is the target table's size: every unit the cast hits, whether or not
+		# this document fans its PARTICLES out per target (the camera search, 0x801ACB08, walks
+		# the table either way). The camera's windows are spawn_delay apart, as the ROM's are;
+		# the particle lanes are the kernel's stride apart (#1753).
+		camera_controller.initialize(effect_data.camera, cam_p1_dur, cam_spawn_delay, cam_p2_delay,
+			maxi(1, _lane_units.size()))
+		camera_controller.map_center = PsxChirality.godot_position_to_psx(map_center_godot)
+		camera_controller.target_position = camera_controller.world_position_to_psx(anchor)
+		camera_controller.cursor_position = camera_controller.world_position_to_psx(anchor)
+		camera_controller.caster_position = camera_controller.world_position_to_psx(anchor)
+		if not held:
+			camera_started.emit()
 
 	# Initialize timeline-driven effect sound (FEDS). Runtime-only — never
 	# synthesize audio in the editor preview, and ExMateriaEffectSfx is not a @tool
-	# autoload.
-	if not Engine.is_editor_hint():
+	# autoload. A held effect arms it at play_held(): `SfxPort.begin_effect()` ends
+	# whatever cast is sounding, and a held effect is not sounding yet.
+	if not Engine.is_editor_hint() and not held:
 		_load_effect_sound()
 
 	# Build the effect timeline: it owns the clock + fixed accumulator and pumps
@@ -413,7 +422,7 @@ func initialize(name: String, data_path: String, anchor: Vector3, init_pool_size
 	var _p2s := 0
 	if effect_data.timeline:
 		_p1d = effect_data.timeline.phase1_duration
-		_p2s = _p1d + effect_data.timeline.phase2_delay  # single-target formula
+		_p2s = _p1d + effect_data.timeline.phase2_delay + lane_shift
 	effect_timeline.setup(_p1d, _p2s, effect_data.time_scale)
 	# Register the per-instance RNG so the timeline re-seeds it on reset() /
 	# backward seek — the deterministic-replay contract (ADR-0070).
@@ -423,10 +432,32 @@ func initialize(name: String, data_path: String, anchor: Vector3, init_pool_size
 	effect_timeline.set_subsystems(
 		[manager, _sound_subsystem, screen_controller, palette_controller, camera_controller])
 	manager.timeline = effect_timeline  # back-ref for phase boundary reads (#30)
-	if has_timeline:
+	_has_timeline = has_timeline
+	if has_timeline and not held:
 		effect_timeline.start()
 
 	return true
+
+
+func is_held() -> bool:
+	return held
+
+
+## Start a HELD effect (PSX `effect_release_held`, `effect_system_state` 1 -> 2): arm its
+## sound, hand its camera to the host (camera_started), start its clock, and emit
+## `released`. A no-op on an effect that is not held. Not `release()`, which ENDS a
+## kept-open TRAP charge (ADR-0369) — the opposite edge.
+func play_held() -> void:
+	if not held:
+		return
+	held = false
+	if not Engine.is_editor_hint():
+		_load_effect_sound()
+	if camera_controller:
+		camera_started.emit()
+	if _has_timeline and effect_timeline:
+		effect_timeline.start()
+	released.emit()
 
 
 func _load_effect_sound() -> void:
@@ -461,24 +492,59 @@ func _load_effect_sound() -> void:
 			_sound_controller.sound_event.connect(_on_sound_event)
 			# Fresh SFX cast (re-seeds the entity; ends any prior cast's sound).
 			_sfx_token = SfxPort.begin_effect()
-			# pre_anchor_offset=0, vm_snapshot={} — PCSX parity-calibration
-			# inputs that default to faithful in-game behaviour.
-			_sound_controller.start(_target_count, 0, {})
+			_start_sound_walk()
 		else:
 			_sound_controller = null
 
 
-func set_target_count(count: int) -> void:
-	"""Set the number of for-each (for_each) targets, so AoE effects schedule
-	per-target sounds. Call BEFORE initialize(). Defaults to 1 (single-target)."""
-	_target_count = maxi(1, count)
+## Start the sound walk: one for_each context per lane, each on its lane's offset, so every
+## target hears its own for_each sounds (N36). pre_anchor_offset = 0 and vm_snapshot = {} are
+## PCSX parity-calibration inputs that default to faithful in-game behaviour.
+func _start_sound_walk() -> void:
+	var offsets := _lane_offsets.slice(0, _lane_count) if _lane_count > 1 else PackedInt32Array()
+	_sound_controller.start(_lane_count, 0, {}, offsets)
+
+
+## Give the document one for_each LANE per target (N36): `units` in the host's hit-stamp
+## order (the kernel's; the ROM's target-table order is not verified), `offsets` each lane's start in frames after phase 1, lane 0's
+## 0 — the stride the kernel stamps the targets' hits with. Call BEFORE initialize(). The ROM
+## plays the for_each phase once per target: `outer_phases_timeline_tick` (0x801A4838) spawns
+## a child per target-table entry (0x801BAD10), and each child runs
+## `for_each_phase_timeline_tick` (0x801A3408) on its own slot (ctx+0x26) — its emitters,
+## its sounds, its keyframe actions. Only a document whose root spawns children (opcode 41)
+## fans out; an opcode-40 root plays its one lane (`spawns_for_each_children`).
+##
+## Lane k's particles anchor at `units[k]`; its for_each sounds play on its offset; its
+## ACTION keyframes (0x10 / 0x20 / 0x40) stay lane 0's to emit — the host fans them out to
+## every hit unit on the kernel's own clock (CombatLoop._fan_out), so each lands on its
+## target's stamp without a second copy.
+func set_for_each_lanes(units: Array, offsets: PackedInt32Array) -> void:
+	_lane_units.clear()
+	for u in units:
+		_lane_units.append(weakref(u) if u != null else null)
+	_lane_offsets = offsets.duplicate()
+
+
+## The for_each lanes this document plays (1 unless the host fanned it out).
+func for_each_lane_count() -> int:
+	return _lane_count
+
+
+## True when `data`'s root spawns a for_each child per target: its script runs opcode 41
+## (`outer_phases_timeline_tick` 0x801A4838, the spawner). An opcode-40 root runs the for_each
+## tick itself, on one slot.
+static func spawns_for_each_children(data) -> bool:
+	for op in data.script_ops:
+		if op is Dictionary and int(op.get("opcode", -1)) == 41:
+			return true
+	return false
 
 
 func _on_sound_event(_frame: int, from_phase: String, from_channel: int,
 		sound_id: int) -> void:
 	"""A scheduled sound fired: dispatch it as a FEDS pair through the persistent SFX
 	engine, IF there is a bank. sound_id is the resolver's output (the value
-	ExMateriaEffectSfx/play_feds_pair wants for the chan+0x92 static seed); see
+	the sequencer wanted for the chan+0x92 static seed, retired with it); see
 	CONTEXT.md "Audio" → SoundContainer + EffectSoundResolver.
 
 	🔴 THE FEDS ARITHMETIC IS THIS SIDE'S, NOT THE WALKER'S (ADR-0318 dec. 1). `pair_idx
@@ -492,34 +558,25 @@ func _on_sound_event(_frame: int, from_phase: String, from_channel: int,
 	# addon's whole-channel walk stays untouched; a rescrub re-fires the rest.
 	if _muted_sound.has("%s:%d" % [from_phase, from_channel]):
 		return
-	var bank = _live_feds_bank()
-	if bank == null:
+	if _effect_id.is_empty():
 		return
-	# The bounds test the walker used to make. `_play_pair_locked` makes it too and
-	# `push_warning`s on a miss, so skipping it here would turn a silent, legitimate
-	# "this effect has no bytes for that id" into console noise on every fire.
+	# The bounds test the walker used to make, asked of the BAKED MANIFEST rather than of
+	# a parsed header's `num_pairs`. Same purpose — keep a legitimate "this effect has no
+	# bytes for that id" silent instead of console noise on every fire — but it now asks
+	# what is actually playable rather than what a bank declares.
 	var pair_idx: int = sound_id - 1
-	if pair_idx < 0 or pair_idx >= bank.num_pairs:
+	if pair_idx < 0 or not SfxPort.has_pair(_effect_id, pair_idx):
 		return
-	SfxPort.play_pair(_sfx_token, bank, pair_idx, sound_id)
+	SfxPort.play_pair(_sfx_token, _effect_id, pair_idx, sound_id)
 
 
 ## The FEDS bank the audible path must use: `EffectData`'s when there is one, else the
-## schedule's captured one. Read at PLAY time, never cached.
-##
-## `_load_effect_sound` captures `EffectData`'s bank into `_sound_loaded` ONCE, which is
-## enough for a same-size byte patch (the studio mutates `raw` in place, so both names
-## reach the edited bytes). It is NOT enough for a STRUCTURAL verb: insert / delete /
-## un-rest / paint / drag / outro / prune, and undo of any of them, all REPLACE
-## `data.feds_bank` with a freshly built object — that is what makes the snapshot undo
-## exact (ADR-0085 2026-08-18b). The capture holds the old object, so from the first
-## structural edit onward the studio drew one bank and Play sounded another, and every
-## later param patch landed on the bank nobody was playing. (Before ADR-0318 dec. 6 the
-## same one-time capture was spelled as a re-point over `EffectJSONLoader`'s second parse;
-## deleting that parse removed the second copy, not the staleness of a captured handle.)
-##
-## Reading through `effect_data` at fire time makes the identity irrelevant: whatever the
-## editor is holding NOW is what sounds, with no re-bind to remember on any new verb.
+## schedule's captured one. Read at PLAY time, never cached: a same-size byte patch
+## reaches the edited bytes through either name, but a structural edit (insert /
+## delete / paint / drag / undo, …) REPLACES `data.feds_bank` with a fresh object
+## (that is what makes the snapshot undo exact, ADR-0085) — a captured handle would
+## keep the old bank. Read through `effect_data` at fire time, whatever the editor
+## holds now is what sounds.
 func _live_feds_bank():
 	if effect_data and effect_data.feds_bank != null:
 		return effect_data.feds_bank
@@ -538,8 +595,7 @@ func audition_container(index: int, fires: int = 6, spacing_ms: int = 380) -> vo
 	a FRESH resolver forward `fires` times (the resolver stays the single source of mode
 	truth) and plays each resolved FEDS pair through the persistent SFX engine, spaced so
 	the alternation is audible. No byte/timeline mutation — pure playback."""
-	var feds_bank = _live_feds_bank()
-	if feds_bank == null or _sound_loaded == null:
+	if _effect_id.is_empty() or _sound_loaded == null:
 		return
 	var containers = _sound_loaded.sound_containers
 	if not (containers is Dictionary) or containers.is_empty():
@@ -556,8 +612,8 @@ func audition_container(index: int, fires: int = 6, spacing_ms: int = 380) -> vo
 	for fire in range(fires):
 		var resolved: int = int(resolver.resolve(index, timeline_sid))
 		var pair_idx := resolved - 1
-		if resolved > 0 and pair_idx >= 0 and pair_idx < feds_bank.num_pairs:
-			SfxPort.play_pair(tok, feds_bank, pair_idx, resolved)
+		if resolved > 0 and pair_idx >= 0 and SfxPort.has_pair(_effect_id, pair_idx):
+			SfxPort.play_pair(tok, _effect_id, pair_idx, resolved)
 		# Space the fires so successive sounds are distinct to the ear (the last fire
 		# needs no trailing wait).
 		if fire < fires - 1:
@@ -575,13 +631,12 @@ func audition_sound(resolved: int) -> void:
 	Bypasses the container's mode/counter on purpose: this previews the ENTRY, not the
 	selection logic (audition_container covers that). No byte/timeline mutation. Opens
 	its own cast for the same dead-token reason as audition_container."""
-	var feds_bank = _live_feds_bank()
-	if feds_bank == null:
+	if _effect_id.is_empty():
 		return
 	var pair_idx := resolved - 1
-	if resolved > 0 and pair_idx >= 0 and pair_idx < feds_bank.num_pairs:
+	if resolved > 0 and pair_idx >= 0 and SfxPort.has_pair(_effect_id, pair_idx):
 		var tok: int = SfxPort.begin_effect()
-		SfxPort.play_pair(tok, feds_bank, pair_idx, resolved)
+		SfxPort.play_pair(tok, _effect_id, pair_idx, resolved)
 		await get_tree().create_timer(AUDITION_RINGOUT_S).timeout
 		SfxPort.end_effect(tok)
 
@@ -598,26 +653,25 @@ func _process(delta: float) -> void:
 	if _perf_enabled:
 		_tp0 = Time.get_ticks_usec()
 
-	# Update anchor offsets from marker nodes (tracks unit movement)
 	if _origin_anchor and is_instance_valid(_origin_anchor) and _target_anchor and is_instance_valid(_target_anchor):
 		var origin_offset = _origin_anchor.global_position - global_position
 		var target_offset = _target_anchor.global_position - global_position
 		manager.set_anchors(target_offset, target_offset, origin_offset, target_offset)
-		# Update CAMERA anchor from map center (same as EFFECT_CTR camera source)
 		var cam_anchor = map_center_godot - global_position
 		cam_anchor.y = -global_position.y  # Cancel effect Y so particle Y = purely emitter offset
 		manager.anchor_camera = cam_anchor
 		for emitter in manager.active_emitters:
 			emitter.anchor_camera = cam_anchor
+	_push_lane_targets()
 
 	# Set camera anchors before pumping — the camera subsystem reads them in advance().
 	if camera_controller:
 		if _target_anchor and is_instance_valid(_target_anchor):
-			var target_psx = PsxChirality.godot_position_to_psx(_target_anchor.global_position)
+			var target_psx = camera_controller.world_position_to_psx(_target_anchor.global_position)
 			camera_controller.target_position = target_psx
 			camera_controller.cursor_position = target_psx
 		if _origin_anchor and is_instance_valid(_origin_anchor):
-			camera_controller.caster_position = PsxChirality.godot_position_to_psx(_origin_anchor.global_position)
+			camera_controller.caster_position = camera_controller.world_position_to_psx(_origin_anchor.global_position)
 
 	# Pump the timeline: it owns the clock + fixed accumulator and advances every
 	# subsystem (particle → sound → color → camera) per fixed 30 Hz frame (ADR-0012).
@@ -626,7 +680,6 @@ func _process(delta: float) -> void:
 	if not playback_paused:
 		effect_timeline.tick(delta)
 
-	# Update callback anchors and render
 	if callback_manager:
 		callback_manager.update_anchors(
 			manager.anchor_origin, manager.anchor_target,
@@ -634,9 +687,6 @@ func _process(delta: float) -> void:
 			manager.caster_facing_angle)
 		callback_manager.update_render()
 
-	# (Effect sound is a subsystem now — pumped inside tick() via the
-	# SoundSubsystem adapter, which passes the controller's own fire_sub_tick.
-	# No loop here.)
 
 	# Check for auto-loop (never while parked — the Studio owns the frame via seek)
 	if not playback_paused and auto_loop and loop_frames > 0 and effect_timeline.effect_frame >= loop_frames:
@@ -646,22 +696,17 @@ func _process(delta: float) -> void:
 	if _perf_enabled:
 		_tp1 = Time.get_ticks_usec()
 
-	# Color subsystems self-deliver their overlay output inside their own advance()
-	# now (ADR-0014); EffectInstance is no longer the courier. Screen → screen
-	# overlay, palette → map + caster/target unit tint overlays, pushed during tick().
+	# Color subsystems self-deliver their overlays inside advance() (ADR-0014).
 
-	# (Camera is a subsystem now — advanced inside tick(); its anchors were set
-	# before tick(), and PlayerCamera reads its pose when in effect-camera mode.)
 
 	if _perf_enabled:
 		_tp2 = Time.get_ticks_usec()
 
-	# Render: pass Particle objects directly (zero-alloc). Per-particle
-	# frameset_idx + depth_mode live on each Particle (written by
-	# ParticleAnimator.tick() during manager.advance), so the renderer reads
-	# them straight off the particle without a manager handle.
+	# Pass Particles directly: frameset_idx + depth_mode live on each Particle
+	# (written by ParticleAnimator.tick()), so no manager handle is needed.
 	if sprite_renderer:
 		sprite_renderer._effect_world_origin = global_position
+		sprite_renderer.sprite_zoom_q12 = camera_controller.sprite_zoom_q12 if camera_controller else 4096.0
 		sprite_renderer.update_particles(manager.get_active_particles())
 
 	if _perf_enabled:
@@ -703,11 +748,6 @@ func _push_emitter_filter() -> void:
 	sprite_renderer.disabled_emitters = merged
 
 
-## Apply the Effect Studio Solo/Mute selection (debug-only). `audibility` is the whole
-## EffectScoreModel.resolve_audibility result: `disabled_emitters` (particles, per-emitter
-## render-skip) plus the per-lane exclusion filters `muted_screen` / `muted_palette`
-## (routed to the subsystems) and `muted_sound` (applied per-channel at the trigger).
-## Camera is display-only (no mute). The runtime never calls this — only the Studio host.
 ## Re-fold + re-deliver the read-live COLOUR subsystems (screen + palette) in place at the
 ## current frame (#255 authoring). For an edit whose channel is read-live
 ## (invalidates_sim=false), the once-per-frame guard would otherwise hold the stale folded
@@ -720,6 +760,11 @@ func redeliver_colors() -> void:
 		palette_controller.redeliver()
 
 
+## Apply the Effect Studio Solo/Mute selection (debug-only). `audibility` is the whole
+## EffectScoreModel.resolve_audibility result: `disabled_emitters` (particles, per-emitter
+## render-skip) plus the per-lane exclusion filters `muted_screen` / `muted_palette`
+## (routed to the subsystems) and `muted_sound` (applied per-channel at the trigger).
+## Camera is display-only (no mute). The runtime never calls this — only the Studio host.
 func apply_audibility(audibility: Dictionary) -> void:
 	_studio_disabled_emitters = audibility.get("disabled_emitters", {})
 	_push_emitter_filter()
@@ -830,10 +875,57 @@ func refresh_render_emitter_caches() -> void:
 		sprite_renderer.refresh_emitter_caches()
 
 
+func release() -> void:
+	"""End a HELD effect — a TRAP charge the game keeps open until the cast ends (ADR-0369):
+	stop every timeline channel and put the callbacks into their fade. Live particles
+	finish their lives; is_finished() turns true once everything is gone."""
+	if manager:
+		manager.stop_spawning()
+	if callback_manager:
+		callback_manager.release_all()
+
+
+func is_finished() -> bool:
+	"""The cast is over — the engine's REAP, EffectEndModel's rule. A 3-phase root (one
+	that branches on opcode 30, 0x801A2C7C) stays in its opcode-41 loop until the ROM
+	timeline bound T, and its camera plays to T, however early its particles die (E005:
+	gone ~f128-139, T = 140); only then is it done, once past the last spawn with no
+	particle and no active callback. Any other root keeps the quiescence answer: timeline
+	over (or released), no particle, no active callback (ParticleSubsystem.is_quiescent)."""
+	if manager == null:
+		return true
+	var bound := timeline_bound()
+	if bound <= 0:
+		return manager.is_quiescent()
+	var frame := get_effect_frame()
+	if frame < bound:
+		return false
+	if callback_manager and callback_manager.has_active_callbacks():
+		return false
+	return EffectEndModelClass.settled(manager, frame)
+
+
+## The ROM timeline bound T of a 3-phase root (EffectEndModel.timeline_bound), 0 for any
+## other root.
+func timeline_bound() -> int:
+	return EffectEndModelClass.timeline_bound(effect_data)
+
+
 func set_paused(paused: bool) -> void:
 	"""Park (true) or run (false) the wall-clock pump. Parked = the frame only
 	moves via seek() — the Effect Studio's parked-document / transport model."""
 	playback_paused = paused
+
+
+func seed_rng(seed_value: int) -> void:
+	"""Replace the spawn-time entropy seed with `seed_value` and rewind to it (ADR-0070): a
+	host that must draw the SAME stream in every process — the Effect Studio's charge dry
+	run and its posed playback (N26) — seeds the instance after initialize. The live cast
+	keeps its entropy seed, so gameplay still varies cast to cast."""
+	_rng_seed = seed_value
+	_rng.seed = seed_value
+	if effect_timeline:
+		effect_timeline.set_rng(_rng, _rng_seed)
 
 
 func is_timeline_finished() -> bool:
@@ -842,10 +934,9 @@ func is_timeline_finished() -> bool:
 		return true
 	if not effect_timeline or not effect_timeline.is_started():
 		return true
-	# Check all phase controllers
 	if manager.phase1_block and not manager.phase1_block.is_finished():
 		return false
-	if manager.for_each_block and not manager.for_each_block.is_finished():
+	if not manager.for_each_finished():
 		return false
 	if manager.phase2_block and not manager.phase2_block.is_finished():
 		return false
@@ -876,7 +967,52 @@ func _restart_sound_cast() -> void:
 	if _sound_controller and not Engine.is_editor_hint():
 		SfxPort.end_effect(_sfx_token)
 		_sfx_token = SfxPort.begin_effect()
-		_sound_controller.start(_target_count, 0, {})
+		_start_sound_walk()
+
+
+## Follow each for_each lane's unit (N36): its emitters anchor at it, live, and the camera's
+## ALL_TARGETS source is the centroid of every lane's unit (0x801AB1D4's 0x180 arm averages
+## the target table).
+func _push_lane_targets() -> void:
+	_push_camera_targets()
+	if _lane_count <= 1:
+		return
+	var sum := Vector3.ZERO
+	var n := 0
+	for k in _lane_count:
+		var ref = _lane_units[k] if k < _lane_units.size() else null
+		var unit = ref.get_ref() if ref != null else null
+		if unit == null or not is_instance_valid(unit):
+			continue
+		manager.set_lane_target(k, unit.global_position - global_position)
+		sum += unit.global_position
+		n += 1
+	if camera_controller and n > 0:
+		camera_controller.all_targets_position = camera_controller.world_position_to_psx(sum / n)
+
+
+## The camera's target table (gl-ADR-0410): each target's PSX position, so a for_each
+## TARGET keyframe found for target k frames unit k.
+func _push_camera_targets() -> void:
+	if camera_controller == null or _lane_units.size() <= 1:
+		return
+	var positions: Array = []
+	for k in _lane_units.size():
+		var ref = _lane_units[k]
+		var unit = ref.get_ref() if ref != null else null
+		if unit != null and is_instance_valid(unit):
+			positions.append(camera_controller.world_position_to_psx(unit.global_position))
+		else:
+			positions.append(camera_controller.target_position)
+	camera_controller.target_positions = positions
+
+
+## The units of the target table, hit order (the host's lanes; [] for a one-target document).
+func lane_units() -> Array:
+	var out: Array = []
+	for ref in _lane_units:
+		out.append(ref.get_ref() if ref != null else null)
+	return out
 
 
 func set_anchors(world: Vector3, cursor: Vector3, origin: Vector3, target: Vector3) -> void:
@@ -932,7 +1068,6 @@ func attach_anchors_to_units(caster: Node3D, target: Node3D) -> void:
 			print("[EffectInstance] Target anchor attached to %s at %s" % [target.name, target.global_position])
 
 
-# --- Signal Handlers ---
 
 func _on_timeline_emitter_started(emitter_idx: int, channel_idx: int, frame: int) -> void:
 	"""Re-emit with effect name"""
@@ -946,6 +1081,31 @@ func _on_timeline_emitter_stopped(emitter_idx: int, channel_idx: int, frame: int
 
 
 
+## Which units the action keyframe just emitted (ABILITY_REACT 0x40, REFRESH_TILE 0x20)
+## applies to. Both ROM dispatchers read bit 0x08 first:
+##   * 0x08 set: the CASTER slot alone (0x801BADB0), in either lane —
+##     `dispatch_unit_triggers_and_register_callback` (0x801A3D30) and
+##     `process_keyframe_actions` (0x801A31A8) both branch on `param_1 & 8`. The Dances
+##     (E089-E094) carry 0x28 on phase1: it refreshes the dancer only; each target is
+##     refreshed by its own for_each 0x20.
+##   * 0x08 clear, for_each lane: once PER TARGET — `for_each_phase_timeline_tick`
+##     (0x801A3408) hands its child's own target slot (ctx+0x26) to 0x801A31A8, whose 0x40
+##     arm reacts that one unit (`apply_unit_ability_reaction` 0x80068B54) and whose 0x20
+##     arm refreshes it (`refresh_unit_tile_state`). The children start `child_spawn_delay`
+##     apart, so each target acts on its own beat — the stride the kernel stamps its hits
+##     with (for_each_delay).
+##   * 0x08 clear, outer-phase lane: 0x801A3D30's 0x40 / 0x20 arms loop the WHOLE target
+##     table at 0x801BAD10 — every target on the one frame.
+## The document plays one for_each lane per target (`set_for_each_lanes`), but only lane 0
+## (the first target's) emits its actions; the host fans them out on the kernel's clock.
+func action_scope() -> ActionScope:
+	if _action_flags & ACTION_FLAG_CASTER_SLOT:
+		return ActionScope.CASTER
+	if _action_lane == EffectPhaseClass.PHASE_FOR_EACH:
+		return ActionScope.PER_TARGET
+	return ActionScope.ALL_TARGETS
+
+
 func _on_action_flags_triggered(flags: int, _channel_idx: int, frame: int) -> void:
 	"""Handle action_flags from timeline keyframes
 
@@ -954,6 +1114,13 @@ func _on_action_flags_triggered(flags: int, _channel_idx: int, frame: int) -> vo
 	- Bit 4 (0x0010) HIT_REACT: Apply damage/healing, show popups (when particles "hit")
 	- Bit 5 (0x0020) REFRESH_TILE: End reaction animation, refresh unit state
 	"""
+	# A fanned-out lane k >= 1 plays its target's keyframes, but the actions are lane 0's to
+	# emit: the host fans lane 0's out to every hit unit on the kernel's clock (set_for_each_lanes).
+	# Returned before the writes below, so action_scope() only ever describes lane 0's keyframe.
+	if manager and manager.last_action_lane > 0:
+		return
+	_action_lane = manager.last_action_phase if manager else ""
+	_action_flags = flags
 	if flags & ACTION_FLAG_ABILITY_REACT:
 		ability_react_triggered.emit(frame)
 

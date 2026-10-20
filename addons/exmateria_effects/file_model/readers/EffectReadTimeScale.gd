@@ -21,7 +21,7 @@ static func _unpack_region(buf: PackedByteArray, region_start: int) -> Array:
 
 
 ## The time_scale block, or `null` when the section is absent or out of bounds.
-## `time_scale_ptr == 0` means ABSENT — it is not an offset (131 of 400 effects have one).
+## `time_scale_ptr == 0` means ABSENT — it is not an offset.
 static func parse(buf: PackedByteArray, header: Dictionary):
 	var off: int = int(header.get("time_scale_ptr", 0))
 	var flags_off: int = int(header.get("effect_flags_ptr", -1))

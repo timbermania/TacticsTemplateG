@@ -68,4 +68,7 @@ enum Kind {
 	CURSOR_ACTIVE = 4,          ## The cell the cursor is on.
 	PLACEMENT_UNAVAILABLE = 5,  ## Already claimed.
 	SELECTED = 6,               ## Picked and LATCHED — the cursor has moved on.
+	MOVE_LEGAL = 7,             ## A Move aim is open and the walker can REACH this cell.
+	PLACEMENT_EXTRA = 8,        ## Friendly, but an EXTRA deployment tile — added by a host's zone
+	                            ## override, not the zone table's. Shares the placement slot.
 }

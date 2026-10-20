@@ -6,7 +6,7 @@ extends RefCounted
 ## holds the CLUT fixed and the VRAM header is derived. meta()/swatches()/clut_words()/decode are
 ## DERIVED VIEWS (named statics, not registry entries; patch_all refuses no-serializer sections).
 ## Only section load-bearing at render time: a raw .BIN with no extract folder draws NO PIXELS.
-## 🔴 `+0x403` IS THE UPLOAD STRIDE, NOT THE DEPTH — they disagree for 282 of the 401 corpus effects;
+## `+0x403` IS THE UPLOAD STRIDE, NOT THE DEPTH — they disagree for 282 of the 401 corpus effects;
 ## depth is the per-frame `flags_byte0 & 0x80`. No class_name (ADR-0004) — path-preloaded.
 ## Vault: [[Effect File Format]]
 ## vault: .vaults/comments/exmateria_effects/texture-reader-referees.md
@@ -25,7 +25,7 @@ const OPAQUE_ALPHA: int = 255
 # --- the registered section: the indexed pixel plane -------------------------
 
 ## The indexed pixel plane — `[texture_ptr + 0x404, EOF)` — or `null` when absent/out of bounds.
-## ZERO slack in all 401 corpus effects: EOF is the section's true end (the u24 at `+0x400` is a cross-check only).
+## EOF is the section's true end; the u24 at `+0x400` is a cross-check only.
 static func parse(buf: PackedByteArray, header: Dictionary):
 	var start: int = _plane_start(header)
 	if start < 0 or start >= buf.size():
@@ -151,9 +151,9 @@ static func sheet_depth(buf: PackedByteArray, header: Dictionary):
 ## `(width, height)` in TEXELS for the whole sheet, or `Vector2i.ZERO` when it cannot be derived — transcribed from
 ## the Lua extractor, which sized the committed TGAs. Height = the 16-bit word at `+0x400` shifted by the stride's
 ## amount; when that reads ZERO the plane LENGTH is used instead — not dead code: 56 of the 401 corpus effects carry
-## a pixel-data size of exactly 0x10000 (low 16 bits zero). ⚠️ The fallback's row width is DEPTH-dependent (256 at
+## a pixel-data size of exactly 0x10000 (low 16 bits zero). The fallback's row width is DEPTH-dependent (256 at
 ## 8bpp, 128 at 4bpp); the Python forces 256 there — a third tool disagreement, followed Lua because the Lua sized the
-## referee-C TGAs. 🔴 UNGUARDED: all 56 fallback effects are 8bpp (the two readings agree there), so do NOT read
+## referee-C TGAs. UNGUARDED: all 56 fallback effects are 8bpp (the two readings agree there), so do NOT read
 ## referee C as covering a 4bpp 0x10000 sheet.
 static func dimensions(buf: PackedByteArray, header: Dictionary, is_8bpp: bool) -> Vector2i:
 	var base: int = int(header.get("texture_ptr", 0))
@@ -179,7 +179,7 @@ static func dimensions(buf: PackedByteArray, header: Dictionary, is_8bpp: bool) 
 
 ## The sheet as RGBA bytes, four per texel, top-left-origin row order — the same order/channels `TextureTga.decode`
 ## hands back, so the two are directly comparable; empty when the section is absent or unsized. REPLICATE = correct +
-## default; TRUNCATE reproduces texture.tga byte for byte, keeping referee C exact. ~13M texels via an int32 lookup.
+## default; TRUNCATE reproduces texture.tga byte for byte, keeping referee C exact.
 static func decode_rgba(buf: PackedByteArray, header: Dictionary, is_8bpp: bool,
 		uses_palette_2: bool = false, palette_id: int = 0,
 		expand: int = EXPAND_REPLICATE) -> PackedByteArray:

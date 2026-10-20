@@ -88,7 +88,7 @@ const DisplayPort = preload("res://addons/exmateria_platform/display_port/Displa
 ## soft-bound by node path like its two siblings above (ADR-0175 dec. 2). Two verbs,
 ## `connect_unit_hp_changed` and `connect_unit_mp_changed`, added because extraction
 ## #8's `UIRosterBar` and `UIVitalsRoster` reached for exactly those two signals
-## (#1274, ADR-0308 dec. 2).
+## (#1274, ADR-0308 dec. 2); both are deleted (N32) and `SquadBar` calls them now.
 ## 🔴 SUBSCRIBE-ONLY, STATED AS AN ASYMMETRY. `EventBus` also publishes the three
 ## `emit_*` verbs and `unit_died`; no addon reaches them today so none is on the
 ## port, and the first addon that wants to RAISE a unit event adds `emit_*` here
@@ -114,6 +114,19 @@ const EventPort = preload("res://addons/exmateria_platform/event_port/EventPort.
 ## is not incidental here: this port exists BECAUSE its consumer is an addon, so unlike
 ## its three siblings it has no host namer at all and is not expected to grow one.
 const SfxPort = preload("res://addons/exmateria_platform/sfx_port/SfxPort.gd")
+
+## Resolve a music slot or a sound pair to a PRE-RENDERED WAV.
+##
+## 🔴 IT LIVES HERE BECAUSE IT IS THE ONE AUDIO PIECE THAT NEEDS NO SPU. Everything else
+## in `exmateria_sound`'s runtime `preload`s the native core, which binds at PARSE time —
+## so a project that plays baked audio and does NOT want the GPL core cannot reach this
+## through that package at all. This addon is SPU-free and is vendored by
+## `exmateria-sound`, so both sides reach one copy rather than keeping two.
+## Host use: `src/audio/MusicPlayer.gd` resolves every song through it and
+## `src/debug/BakedAudioDebugPanel.gd` reads `available()` for the F3 AUDIO readout;
+## `tests/BakedAudioSourceSwapTest.gd` drives the covered and uncovered paths.
+const BakedAudio = preload("res://addons/exmateria_platform/baked_audio/BakedAudio.gd")
+
 
 ## The EVENT-SOUND router's port signature — seven verbs (`play_cue`,
 ## `play_system_by_id`, `play_bg`, `set_bg_volume`, `stop_bg_handle`,
@@ -153,11 +166,9 @@ const SfxRouterPort = preload("res://addons/exmateria_platform/sfx_router_port/S
 ## Host use: `tests/TunePortTest.gd` drives both the bound and the absent path.
 const MusicPort = preload("res://addons/exmateria_platform/music_port/MusicPort.gd")
 
-## The dialled-in camera mapping: raw PSX zoom (4096 = 1.0×) ↔ Godot orthographic
-## size, carrying `GODOT_CAMERA_SIZE = 12.6` — the value that makes PSX FFT tile
-## coverage come out right at 4:3. It is HERE and not beside the fixed-point pair
-## because that constant is a CALIBRATION, which is precisely what
-## `PsxMagnitude` refuses by charter. It arrived from the effects runtime at
+## Raw PSX zoom (4096 = 1.0×) ↔ Godot KEEP_HEIGHT orthographic span.
+## Unity spans 240/28 world units: the native frame height divided by FFT units
+## per tile. Pixel aspect remains a separate display transform. Arrived from the effects runtime at
 ## extraction #7 (ADR-0290 dec. 5, #1220) under the name `CameraCalib`: 35 lines, no
 ## reach into `Effects` at all, so that directory was only ever its address of
 ## convenience. (The old path is named in the ADR, not here — a dead `src/` path in a
@@ -191,10 +202,12 @@ const CameraCalibration = preload("res://addons/exmateria_platform/display_port/
 ## no `feds.bin` runs its walker, publishes its events and is silent.
 ## Host use: `tests/stranger/exmateria_effects/no_sound_events.gd` drives it in a project
 ## with no audio package at all, which is the state the move exists for. Like `SfxPort`
-## it has no host namer in production and is not expected to grow one — both its
-## production namers are **sibling namers** (ADR-0212 dec. 7):
-## `addons/exmateria_effects/cast/EffectInstance.gd` (the game's consumer) and
-## `src/audio/SfxStressTest.gd`. The offline SPU parity rig at
+## it has no host namer in production and is not expected to grow one — its one
+## remaining production namer is a **sibling namer** (ADR-0212 dec. 7):
+## `addons/exmateria_effects/cast/EffectInstance.gd` (the game's consumer).
+## `SfxStressTest.gd` was the second until `ef9fc3a16` ("THE CUT") deleted it
+## (#1557) — named without its path, because a citation the checker can resolve
+## must point at a file that exists. The offline SPU parity rig at
 ## `exmateria-sound/workspace/harness/render_effect_sound.gd` is the third, in the other
 ## package, and `ExMateriaSound` re-exports the name the way it re-exports the vendored
 ## SPU's three.
@@ -204,9 +217,9 @@ const EffectSoundController = preload("res://addons/exmateria_platform/sound_sch
 ## `sound_containers.json` resolving a timeline `sound_id` to the id a backend plays.
 ## Zero audio content — `exmateria_effects` owns the containers file and the Effect
 ## Studio edits it. The walker builds one internally; a consumer rarely needs its own.
-## Host use: `src/effects/studio/SoundGhostProjector.gd` and
-## `src/effects/studio/SoundContainerModel.gd` — the Effect Studio's score projection and
-## its container editor, both real host namers. Its one **sibling namer** (ADR-0212
+## Host use: `src/effects/studio/SoundContainerModel.gd` — the Effect Studio's container
+## editor, a real host namer. Its score projection, `SoundGhostProjector.gd`, was the
+## second until the FEDS excision deleted it (#1557). Its one **sibling namer** (ADR-0212
 ## dec. 7) is `addons/exmateria_effects/cast/EffectInstance.gd`, whose
 ## `studio_audition_container` drives a fresh resolver forward to make a container's mode
 ## audible (ADR-0318 dec. 8 — #1222 carries the move of that method itself).

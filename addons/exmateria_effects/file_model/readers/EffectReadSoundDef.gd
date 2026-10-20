@@ -9,7 +9,7 @@ extends RefCounted
 ## takes a `PackedByteArray` and splices it back, and `feds.bin` is the committed copy of
 ## exactly these bytes.
 ##
-## 🔴 THIS IS THE ONLY `RESIZING_SECTIONS` MEMBER, SO REFEREE B MEANS SOMETHING ELSE HERE. For
+## THIS IS THE ONLY `RESIZING_SECTIONS` MEMBER, SO REFEREE B MEANS SOMETHING ELSE HERE. For
 ## every other section a round-trip is an in-place overwrite and byte equality proves the
 ## offsets. For this one the writer may SHIFT the whole tail and repoint `texture_ptr`. An
 ## unedited round-trip never resizes — measured, all 401 corpus sections are 4-aligned and the
@@ -18,8 +18,8 @@ extends RefCounted
 ## blob, which is why `_test_a_resized_sound_def_relocates_and_reads_back` exists as its own
 ## arm rather than being left to the corpus.
 ##
-## ⚠️ `feds.json` IS DELIBERATELY NOT PORTED, and this is a design decision rather than an
-## omission. Decoding the blob into opcodes needs the FEDS opcode table, and that table already
+## `feds.json` IS DELIBERATELY NOT PORTED — a design decision, not an omission. Decoding the
+## blob into opcodes needs the FEDS opcode table, and that table already
 ## exists TWICE — in `addons/exmateria_sound/runtime/sound_opcodes.gd`, which is the one that
 ## actually PLAYS `feds.bin`, and in `parse_effect.py`, which mirrors it. Those two are pinned
 ## against each other by `test_feds_opcode_drift.py` (ADR-0085 amendment 2026-08-11) because a

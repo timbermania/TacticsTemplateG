@@ -3,34 +3,27 @@ extends RefCounted
 ## does to the ROM's shared 15-slot curve table.
 ##
 ## A curve belongs to its **use site**: an `(emitter, slot)` pair, where slot is a param
-## name or one of colour r/g/b. Every curve reference in the game resolves through one of
-## those two dicts on an emitter (the callbacks included — `WarpedGridCallback`'s
-## `emitter+0x08` nibbles are lerp *parameters*, not table indices), so this file's walk
-## over `emitters[*].curves` + `emitters[*].color_curves` is the COMPLETE census.
+## name or one of colour r/g/b. Every curve reference resolves through an emitter's two
+## dicts (the callback `emitter+0x08` nibbles are lerp *parameters*, not table indices),
+## so this walk over `emitters[*].curves` + `color_curves` is the COMPLETE census.
 ##
-## The explode hands every use site its own private copy at its own new index and repoints
-## the emitter field. After it, no two use sites share an index — privacy is STRUCTURAL,
-## not a rule a future write path could forget to honour. That matters because sharing is
-## the common case, not the tail: 70.8% of corpus curve slots have more than one referrer
-## and E009's slot 0 carries 30, so edit-in-place restyled emitters the author was not
-## looking at most of the time.
+## The explode hands every use site its own private copy at a new index; after it, no two
+## use sites share an index — privacy is STRUCTURAL, because an edit-in-place would
+## restyle every other emitter still sharing the curve.
 ##
 ## **The array grows; the read path does not change.** Each use site gets its own INDEX
 ## rather than its own accessor, so every `EffectData.get_curve` caller is untouched.
 ##
 ## Two things are carried, not dropped:
-##   • **Provenance** — the copy remembers the slot it came from in `EffectCurve.index`,
-##     so the deferred compiler can restore an untouched effect's original indices by
-##     provenance first and value-dedup second (fidelity resting on a rule, not on an
-##     optimization happening to be order-stable). Nothing reads it yet; that is a
-##     knowingly carried cost, recorded in the ADR.
-##   • **Residue** — curves nothing references are not use sites (6.5 per effect on
-##     average; 71.9% all-zero padding, but 28% distinct real shapes). They never enter
-##     the authoring model, and are set aside so a byte-exact export can carry them back
-##     to their original slots instead of silently losing them.
+##   • **Provenance** — the copy remembers its source slot in `EffectCurve.index`, so the
+##     deferred compiler restores an untouched effect's original indices by provenance
+##     first, value-dedup second. Nothing reads it yet — a knowingly carried cost,
+##     recorded in the ADR.
+##   • **Residue** — curves nothing references never enter the authoring model; they are
+##     set aside in `curve_residue` so a byte-exact export can carry them back to their
+##     original slots instead of silently losing them.
 ##
-## Sharing still exists — in the compiler, as an OUTPUT format (dedup by value, restore
-## indices by provenance, re-pack the nibbles, refuse past 15 distinct shapes). Never here.
+## Sharing still exists — in the compiler, as an OUTPUT format. Never here.
 ##
 ## No `class_name` (ADR-0004) — preloaded by path.
 
@@ -70,6 +63,9 @@ static func explode(data) -> void:
 	for i in range(source.size()):
 		if not referenced.has(i):
 			residue.append({"index": i, "curve": source[i]})
+	# Keep the pre-explode table addressable for the callbacks, whose curve references are
+	# ROM slot ordinals packed into the emitter nibbles, not authoring use sites.
+	data.curves_raw = source.duplicate()
 	data.curves = exploded
 	data.curve_residue = residue
 
@@ -123,10 +119,9 @@ static func set_site_index(data, emitter_index: int, slot: String, kind: String,
 
 
 ## Append a fresh private curve for a use site that had none and point the site at it.
-## Decision 5: the minted curve is the IDENTITY — all zeros — so adding a curve changes
-## nothing until it is painted. That is exact, not approximate: with no curve the sim holds
-## the START values, and an all-zero curve lerps to `min_start` at every frame. (FFT's own
-## dead padding agrees: 71.9% of unreferenced ROM curve slots are already all-zero.)
+## The minted curve is the IDENTITY — all zeros — so adding a curve changes nothing
+## until it is painted: with no curve the sim holds the START values, and an all-zero
+## curve lerps to `min_start` at every frame (ADR-0089 dec. 5).
 ## Returns the new index, or the existing one when the site already has a curve.
 static func mint_identity(data, emitter_index: int, slot: String, kind: String,
 		length: int = 160) -> int:
@@ -148,11 +143,11 @@ static func mint_identity(data, emitter_index: int, slot: String, kind: String,
 # --- internals -------------------------------------------------------------
 
 ## Copy the slot this use site points at into its own new entry and return that entry's
-## index. A reference that does not resolve — the corpus has exactly 60, all in E509/E510,
-## whose emitters point at a curves.json with ZERO entries — becomes an explicit -1: it
-## read as "no curve" before the explode (get_curve range-checks) and must keep reading
-## that way, which a stale index into a LONGER array would not. The ROM nibble in
-## `raw_data.curve_indices_raw` still carries what it originally said.
+## index. A reference that does not resolve (E509/E510 point at a curves.json with ZERO
+## entries) becomes an explicit -1: it read as "no curve" before the explode (get_curve
+## range-checks) and must keep reading that way, which a stale index into a LONGER array
+## would not. The ROM nibble in `raw_data.curve_indices_raw` still carries what it
+## originally said.
 static func _repoint(source: Array, exploded: Array[EffectCurve], referenced: Dictionary,
 		slot: int) -> int:
 	if slot < 0 or slot >= source.size():

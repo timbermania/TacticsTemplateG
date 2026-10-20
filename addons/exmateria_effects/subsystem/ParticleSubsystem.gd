@@ -1,17 +1,12 @@
 extends RefCounted
-## The **particle subsystem** for an effect cast (renamed from EmitterManager,
-## #30 step 8). Owns three [PhaseBlock] instances (one per phase), the
-## emitter pool, and the particle physics step. Conforms duck-typed to the
-## [Subsystem] contract (`advance(frame, phase)` / `reset()` / `is_done()`);
-## the back-reference to [EffectTimeline] supplies phase boundary state.
-##
-## After ADR-0014's relocation completed (#30): no clock, no phase mirror —
-## the timeline owns those. This subsystem owns its keyframe-cursor state
-## (the three phase blocks), produces particle output, and re-emits its
-## per-block emitter lifecycle signals as one unified surface for
-## [EffectInstance] to subscribe to.
-##
-## See CONTEXT.md "Effect orchestration" for the vocabulary.
+## The **particle subsystem** for an effect cast. Owns three [PhaseBlock]
+## instances (one per phase), the emitter pool, and the particle physics step;
+## duck-typed to the [Subsystem] contract (`advance(frame, phase)` / `reset()` /
+## `is_done()`). No clock, no phase mirror (ADR-0014) — the [EffectTimeline]
+## owns those; this subsystem owns its keyframe-cursor state, produces particle
+## output, and re-emits the per-block emitter lifecycle signals as one unified
+## surface for [EffectInstance]. See CONTEXT.md "Effect orchestration" for the
+## vocabulary.
 ## Vault: [[E001 Emitter Interaction]]
 ## Vault: [[E001.BIN Memory Mapping]]
 ## Vault: [[Effect Execution Model]]
@@ -27,22 +22,17 @@ const Particle = preload("res://addons/exmateria_effects/particles/Particle.gd")
 const ParticlePhysics = preload("res://addons/exmateria_effects/particles/ParticlePhysics.gd")
 const ParticlePool = preload("res://addons/exmateria_effects/particles/ParticlePool.gd")
 
-## ADR-0212 dec. 1 — `addons/exmateria_platform` publishes one global,
-## `ExMateriaPlatform`; aliasing a member back keeps every use site below
-## spelled the way it was (ADR-0211 dec. 4). The PSX trio arrived at
-## extraction #7 (#1220) and lost its three bare `class_name`s on the way.
+## ADR-0212 dec. 1 — alias a published member back so every use site stays
+## spelled the way it was (ADR-0211 dec. 4).
 const PsxMagnitude = ExMateriaPlatform.PsxMagnitude
 
 
-# Preload to ensure classes are available (avoids load order issues)
 const PhaseBlockClass = preload("res://addons/exmateria_effects/subsystem/PhaseBlock.gd")
 const ParticleAnimatorClass = preload("res://addons/exmateria_effects/particles/ParticleAnimator.gd")
 const EffectPhaseClass = preload("res://addons/exmateria_effects/cast/EffectPhase.gd")
 
-# Effect data
 var effect_data: EffectData
 
-# Systems
 var particle_pool: ParticlePool
 var physics: ParticlePhysics
 var animator = null  # ParticleAnimator - untyped to avoid load order issues
@@ -53,26 +43,32 @@ var animator = null  # ParticleAnimator - untyped to avoid load order issues
 var rng: RandomNumberGenerator = null
 
 # Back-reference to the cast's EffectTimeline — set by EffectInstance after
-# constructing both. The timeline is the single source of truth for clock +
-# phase boundary state; later steps in #30 swap the local mirror flags
-# (phase1_finished / phase2_started) for read-throughs against this ref.
+# constructing both. Single source of truth for clock + phase boundary state.
 var timeline = null
 
-# Timeline controllers (optional - for timeline-driven effects)
-var for_each_block = null      # PhaseBlock for the for-each (for_each) phase
+var for_each_block = null      # PhaseBlock for the for-each (for_each) phase — lane 0's
+## The for_each LANES (N36): lane k plays the ROM's for_each CHILD for target-table entry k
+## (`outer_phases_timeline_tick` 0x801A4838 spawns one child per target; each runs
+## `for_each_phase_timeline_tick` 0x801A3408 on its own target slot, ctx+0x26). Each lane is
+## its own PhaseBlock, opened `for_each_lane_offsets[k]` frames after phase 1, and its
+## emitters anchor at its own target. Lane 0 is `for_each_block`. ONE lane (the default) is
+## the single-target document: its emitters are the document's, on `anchor_target`.
+## `set_for_each_lanes` adds the others; then every lane's emitters are its own, keyed
+## `k + 1` (0 stays the outer phases'), and anchor at `lane_targets[k + 1]`.
+var for_each_lanes: Array = []
+var for_each_lane_offsets: PackedInt32Array = PackedInt32Array([0])
+## Effect-relative target position per emitter lane key; entry 0 is unused (the document's).
+var lane_targets: Array = [Vector3.ZERO]
 var phase1_block = null        # PhaseBlock for phase1
 var phase2_block = null        # PhaseBlock for phase2
 
-# Phase timing (from timeline header)
 var phase1_duration: int = 0        # Frames until phase1 ends
 var phase2_start: int = 0           # Frame when phase2 begins (runs parallel to for_each)
 var effect_frame: int = 0           # Current effect frame counter
 
-# Phase boundary state — read-through against the timeline's single source
-# of truth (#30 step 6). The manager no longer mirrors these flags locally;
-# the timeline computes them from its own effect_frame + boundaries.
-# Falls back to false when timeline isn't wired yet (between ParticleSubsystem
-# construction and EffectInstance setting `timeline`).
+# Phase boundary state — read-through against the timeline's single source of
+# truth (#30 step 6); the timeline computes them from its own effect_frame +
+# boundaries. Falls back to false when the timeline isn't wired yet.
 var phase1_finished: bool:
 	get:
 		return timeline != null and timeline.phase1_finished()
@@ -80,14 +76,9 @@ var phase2_started: bool:
 	get:
 		return timeline != null and timeline.phase2_started()
 
-# Time-modulation moved to EffectTimeline (ADR-0014): the timeline owns the
-# pacing curve and computes the factor from its own frame + phase. The particle
-# subsystem no longer carries it.
 
-# Active emitters
 var active_emitters: Array[ActiveEmitter] = []
 
-# Mid-life debug one-shot flag
 var _midlife_debug_logged: bool = false
 
 # Per-edge child-spawn suppression (ADR-0075). Keyed by "<parent_index>:<edge>" where
@@ -97,7 +88,9 @@ var _midlife_debug_logged: bool = false
 # state: it deliberately survives reset() so every deterministic re-pump re-applies it.
 var _suppressed_edges: Dictionary = {}
 
-# Anchors (set by caller)
+## A driven particle's lifetime: long enough that only its callback ends it.
+const DRIVEN_LIFETIME: int = 1 << 30
+
 var anchor_world: Vector3 = Vector3.ZERO
 var anchor_cursor: Vector3 = Vector3.ZERO
 var anchor_origin: Vector3 = Vector3.ZERO
@@ -105,16 +98,21 @@ var anchor_target: Vector3 = Vector3.ZERO
 var anchor_camera: Vector3 = Vector3.ZERO  # PSX CAMERA anchor: (tile*14/28, 0, tile*14/28) relative to effect
 var caster_facing_angle: float = 0.0  # Radians, Y-axis rotation for OUTWARD_UNIT_ORIENTED
 
-# Callback manager (set by EffectInstance if callbacks exist)
 var callback_manager = null  # CallbackManager
 
 # Unified emitter lifecycle signal surface — re-emitted from the three inner
-# phase controllers (phase1 / phase2 / for_each). EffectInstance subscribes
-# once per signal type here instead of nine times across the three controllers.
-# Payload shape is the same as PhaseBlock's signals.
+# phase controllers; EffectInstance subscribes once per signal type instead of
+# nine times. Payload shape matches PhaseBlock's signals.
 signal emitter_started(emitter_index: int, channel_index: int, frame: int)
 signal emitter_stopped(emitter_index: int, channel_index: int, frame: int)
 signal action_flags_triggered(flags: int, channel_index: int, frame: int)
+## The phase lane (EffectPhase.PHASE1 / PHASE_FOR_EACH / PHASE2) of the keyframe the latest
+## `action_flags_triggered` came from, set just before that emission. A listener reads it
+## synchronously: the ROM runs the two kinds of lane differently (see EffectInstance
+## `action_scope`).
+var last_action_phase: String = ""
+## The for_each lane (0 for an outer phase) of that same keyframe.
+var last_action_lane: int = 0
 
 
 func initialize(data: EffectData, pool_size: int = 256) -> void:
@@ -124,38 +122,105 @@ func initialize(data: EffectData, pool_size: int = 256) -> void:
 	physics = ParticlePhysics.new()
 	animator = ParticleAnimatorClass.new()
 
-	# Configure physics from effect data
 	physics.gravity = data.gravity
 	physics.inertia_threshold = data.inertia_threshold
 	physics.effect_data = data  # For homing curve lookups
 	physics.rng = rng  # Forward the instance RNG (ADR-0070) into the physics helpers
 
-	# Initialize animator with animation data
 	animator.initialize(data)
 
 	active_emitters.clear()
 	effect_frame = 0
 
-	# Initialize timeline controllers if timeline data exists
 	if data.timeline:
-		# Get timing from header
 		phase1_duration = data.timeline.phase1_duration
 		var phase2_delay = data.timeline.phase2_delay
 		phase2_start = phase1_duration + phase2_delay  # Single target formula
 
-		# Create phase controllers
 		phase1_block = _create_phase_block(data.timeline, EffectPhaseClass.PHASE1)
 		phase2_block = _create_phase_block(data.timeline, EffectPhaseClass.PHASE2)
 		for_each_block = _create_phase_block(data.timeline, EffectPhaseClass.PHASE_FOR_EACH)
+		for_each_lanes = [for_each_block] if for_each_block != null else []
+		for_each_lane_offsets = PackedInt32Array([0])
+		lane_targets = [Vector3.ZERO]
 
 		# Wire each controller's signals into the unified surface above so
 		# EffectInstance can subscribe once instead of nine times (#30 step 4).
-		for ctrl in [phase1_block, phase2_block, for_each_block]:
+		var lanes := {EffectPhaseClass.PHASE1: phase1_block, EffectPhaseClass.PHASE2: phase2_block,
+			EffectPhaseClass.PHASE_FOR_EACH: for_each_block}
+		for lane in lanes:
+			var ctrl = lanes[lane]
 			if ctrl == null:
 				continue
 			ctrl.emitter_started.connect(_relay_emitter_started)
 			ctrl.emitter_stopped.connect(_relay_emitter_stopped)
-			ctrl.action_flags_triggered.connect(_relay_action_flags_triggered)
+			ctrl.action_flags_triggered.connect(_relay_action_flags_triggered.bind(lane, 0))
+
+
+## Give the document one for_each lane per target (N36): lane k opens `offsets[k]` frames
+## after phase 1 (offsets[0] is lane 0's and must be 0 — the stride is relative to the first
+## target). Called once, after initialize, before the clock runs. Its lanes k >= 1 are fresh
+## PhaseBlocks over the same for_each channels; their emitters anchor at `set_lane_target(k)`.
+## Their keyframes' emitter start/stop is not relayed (the document's lifecycle surface is
+## lane 0's), and their ACTION keyframes are relayed with their lane, so the host can tell
+## them apart (EffectInstance keeps lane 0's).
+func set_for_each_lanes(offsets: PackedInt32Array) -> void:
+	if for_each_block == null or offsets.size() <= 1:
+		return
+	for_each_lanes = [for_each_block]
+	for_each_lane_offsets = offsets.duplicate()
+	for_each_lane_offsets[0] = 0
+	lane_targets = [Vector3.ZERO, anchor_target]
+	# Phase 2 opens `phase2_delay` after the LAST child starts (0x801A4838:
+	# phase1 + (N - 1) * spawn_delay + phase2_delay) — here, after the last lane's offset.
+	phase2_start = phase1_duration + offsets[offsets.size() - 1] + effect_data.timeline.phase2_delay
+	for k in range(1, offsets.size()):
+		var block = _create_phase_block(effect_data.timeline, EffectPhaseClass.PHASE_FOR_EACH)
+		block.action_flags_triggered.connect(
+			_relay_action_flags_triggered.bind(EffectPhaseClass.PHASE_FOR_EACH, k))
+		for_each_lanes.append(block)
+		lane_targets.append(anchor_target)
+
+
+func for_each_lane_count() -> int:
+	return for_each_lanes.size()
+
+
+## Where lane `k`'s emitters anchor (effect-relative), live: a lane's emitters move with it.
+## A no-op on a single-lane document (its lane is the document's, on `anchor_target`).
+func set_lane_target(k: int, target: Vector3) -> void:
+	var key := _lane_key(k)
+	if key <= 0 or key >= lane_targets.size():
+		return
+	lane_targets[key] = target
+	for emitter in active_emitters:
+		if emitter.for_each_lane == key:
+			emitter.anchor_world = target
+			emitter.anchor_cursor = target
+			emitter.anchor_target = target
+
+
+## The emitter lane key of for_each lane `k`: 0 on a single-lane document, else k + 1.
+func _lane_key(k: int) -> int:
+	return k + 1 if for_each_lanes.size() > 1 else 0
+
+
+## True once every for_each lane has played its channels out (none = true).
+func for_each_finished() -> bool:
+	for block in for_each_lanes:
+		if not block.is_finished():
+			return false
+	return true
+
+
+## Every PhaseBlock the document runs: the outer phases and each for_each lane.
+func _all_blocks() -> Array:
+	var out: Array = []
+	for block in [phase1_block, phase2_block]:
+		if block != null:
+			out.append(block)
+	out.append_array(for_each_lanes)
+	return out
 
 
 
@@ -177,7 +242,10 @@ func _relay_emitter_stopped(emitter_index: int, channel_index: int, frame: int) 
 	emitter_stopped.emit(emitter_index, channel_index, frame)
 
 
-func _relay_action_flags_triggered(flags: int, channel_index: int, frame: int) -> void:
+func _relay_action_flags_triggered(flags: int, channel_index: int, frame: int, lane: String,
+		lane_index: int = 0) -> void:
+	last_action_phase = lane
+	last_action_lane = lane_index
 	action_flags_triggered.emit(flags, channel_index, frame)
 
 
@@ -202,8 +270,14 @@ func advance(frame: int, phase: Array) -> void:
 	var spawn_requests: Array = []
 	if EffectPhaseClass.PHASE1 in phase and phase1_block:
 		spawn_requests.append_array(phase1_block.advance_frame())
-	if EffectPhaseClass.PHASE_FOR_EACH in phase and for_each_block:
-		spawn_requests.append_array(for_each_block.advance_frame())
+	if EffectPhaseClass.PHASE_FOR_EACH in phase:
+		# Lane k is the child for target k: it opens its offset after phase 1.
+		for k in for_each_lanes.size():
+			if frame - phase1_duration < for_each_lane_offsets[k]:
+				continue
+			for request in for_each_lanes[k].advance_frame():
+				request["lane"] = _lane_key(k)
+				spawn_requests.append(request)
 	if EffectPhaseClass.PHASE2 in phase and phase2_block:
 		spawn_requests.append_array(phase2_block.advance_frame())
 	for request in spawn_requests:
@@ -226,16 +300,25 @@ func _process_spawn_request(request: Dictionary) -> void:
 	var spawn_counter: int = request.spawn_counter
 	var channel_idx: int = request.get("channel_index", 0)
 	var action_flags: int = request.get("action_flags", 0)
+	var lane: int = request.get("lane", 0)
 
 	# PSX disassembly at 0x801A40F0: andi v0,v0,0x7 → if non-zero, invoke callback
 	var callback_slot: int = action_flags & 0x7
 	if callback_slot != 0 and callback_manager:
+		# The ROM gives each child its own callback slots (ctx+0xD4); the port has one
+		# CallbackManager per document, so only lane 0 drives it (N36, ADR-0372 "Not claimed").
+		if lane > 1:
+			return
+		# A seek invokes callbacks without a render pass. Launches and cached banks
+		# need the authoritative subsystem anchors now, not next _process.
+		callback_manager.update_anchors(anchor_origin, anchor_target,
+			anchor_world, anchor_cursor, caster_facing_angle)
 		var duration_remaining: int = request.get("duration_remaining", -1)
 		callback_manager.invoke(callback_slot - 1, emitter_idx, spawn_counter, channel_idx, duration_remaining)
 		return
 
 	# Find or create an ActiveEmitter for this index
-	var emitter = _get_or_create_emitter(emitter_idx, channel_idx)
+	var emitter = _get_or_create_emitter(emitter_idx, channel_idx, lane)
 	if emitter:
 		# Spawn particles for this frame
 		emitter.spawn_particles_for_timeline(spawn_counter)
@@ -259,11 +342,12 @@ func current_phase() -> Array:
 	return open
 
 
-func _get_or_create_emitter(emitter_index: int, channel_idx: int = 0) -> ActiveEmitter:
-	"""Get existing emitter or create new one for timeline spawning"""
-	# Check if emitter already exists
+func _get_or_create_emitter(emitter_index: int, channel_idx: int = 0, lane: int = 0) -> ActiveEmitter:
+	"""Get existing emitter or create new one for timeline spawning. `lane` is the emitter
+	lane key: a fanned-out document's for_each lanes have their own emitters, anchored at
+	their own target (N36)."""
 	for emitter in active_emitters:
-		if emitter.emitter_index == emitter_index:
+		if emitter.emitter_index == emitter_index and emitter.for_each_lane == lane:
 			return emitter
 
 	# Create new emitter with very long duration (timeline controls lifetime)
@@ -276,13 +360,17 @@ func _get_or_create_emitter(emitter_index: int, channel_idx: int = 0) -> ActiveE
 	emitter.initialize(config, effect_data, particle_pool, physics, 10000)
 	emitter.channel_index = channel_idx  # Set channel for Z-ordering
 
-	# Set anchors and facing
 	emitter.anchor_world = anchor_world
 	emitter.anchor_cursor = anchor_cursor
 	emitter.anchor_origin = anchor_origin
 	emitter.anchor_target = anchor_target
 	emitter.anchor_camera = anchor_camera
 	emitter.caster_facing_angle = caster_facing_angle
+	if lane > 0 and lane < lane_targets.size():
+		emitter.for_each_lane = lane
+		emitter.anchor_world = lane_targets[lane]
+		emitter.anchor_cursor = lane_targets[lane]
+		emitter.anchor_target = lane_targets[lane]
 
 	active_emitters.append(emitter)
 	return emitter
@@ -312,11 +400,9 @@ func _physics_step() -> void:
 	for particle in particles:
 		particle.age += 1
 
-	# Update animations
 	for particle in particles:
 		animator.tick(particle)
 
-	# Tick callback physics
 	if callback_manager:
 		callback_manager.physics_step()
 
@@ -326,7 +412,6 @@ func _check_homing_arrival(particle: Particle) -> void:
 		return
 	if particle.lifetime == -1:
 		return  # Already animation-driven
-	# Per-axis check: all three must be within threshold
 	var threshold: float = particle.homing_arrival_threshold
 	if absf(particle.position.x - particle.homing_target.x) >= threshold:
 		return
@@ -334,7 +419,6 @@ func _check_homing_arrival(particle: Particle) -> void:
 		return
 	if absf(particle.position.z - particle.homing_target.z) >= threshold:
 		return
-	# Arrived — transition to animation-driven death
 	particle.animation_held = false  # Clear hold so terminal frame can trigger death
 	particle.lifetime = -1
 
@@ -351,17 +435,18 @@ func _process_particle_deaths() -> void:
 					child_spawn_requests.append({
 						"child_index": particle.child_emitter_on_death,
 						"position": particle.position,
-						"channel_index": particle.channel_index
+						"channel_index": particle.channel_index,
+						"lane": particle.for_each_lane
 					})
 
 	# PSX uses effect_state->frame_counter for spawn interval gating, not particle age
 	for request in child_spawn_requests:
-		_spawn_child_emitter(request.child_index, request.position, effect_frame, request.get("channel_index", 0))
+		_spawn_child_emitter(request.child_index, request.position, effect_frame,
+			request.get("channel_index", 0), request.get("lane", 0))
 
 
 func _process_midlife_children() -> void:
 	"""Spawn child emitters from alive particles with mid-life spawning enabled."""
-	# One-shot config dump for debugging
 	if not _midlife_debug_logged and EffectsDebug.particle():
 		_midlife_debug_logged = true
 		for i in range(effect_data.emitters.size()):
@@ -388,7 +473,8 @@ func _process_midlife_children() -> void:
 			child_spawn_requests.append({
 				"child_index": particle.child_emitter_mid_life,
 				"position": particle.position,
-				"channel_index": particle.channel_index
+				"channel_index": particle.channel_index,
+				"lane": particle.for_each_lane
 			})
 		else:
 			flag_disabled_count += 1
@@ -400,7 +486,8 @@ func _process_midlife_children() -> void:
 
 	# PSX uses effect_state->frame_counter for spawn interval gating, not particle age
 	for request in child_spawn_requests:
-		_spawn_child_emitter(request.child_index, request.position, effect_frame, request.get("channel_index", 0))
+		_spawn_child_emitter(request.child_index, request.position, effect_frame,
+			request.get("channel_index", 0), request.get("lane", 0))
 
 
 func _cleanup_finished_emitters() -> void:
@@ -417,7 +504,8 @@ func spawn_child_from_callback(child_emitter_index: int, parent_pos: Vector3, fr
 	_spawn_child_emitter(child_emitter_index, parent_pos, frame, 0)
 
 
-func _spawn_child_emitter(child_emitter_index: int, parent_pos: Vector3, frame_counter: int, channel_idx: int = 0) -> void:
+func _spawn_child_emitter(child_emitter_index: int, parent_pos: Vector3, frame_counter: int,
+		channel_idx: int = 0, lane: int = 0) -> void:
 	"""One-shot particle emission at parent's death position.
 
 	Child emitters don't create persistent ActiveEmitters - they do a single
@@ -428,12 +516,10 @@ func _spawn_child_emitter(child_emitter_index: int, parent_pos: Vector3, frame_c
 	if config == null:
 		return
 
-	# Check spawn interval (child emitter's interval determines if spawn happens)
 	var interval = config.spawn_interval_start
 	if interval > 0 and frame_counter % interval != 0:
 		return  # Interval check failed - no emission this frame
 
-	# Spawn particles directly using child emitter config
 	var count = config.particle_count_start
 	for i in range(count):
 		var particle = particle_pool.acquire()
@@ -441,11 +527,11 @@ func _spawn_child_emitter(child_emitter_index: int, parent_pos: Vector3, frame_c
 			if EffectsDebug.particle():
 				print("[MidLife] POOL FULL for child emitter %d" % child_emitter_index)
 			break
-		_initialize_child_particle(particle, config, parent_pos, frame_counter, channel_idx)
+		_initialize_child_particle(particle, config, parent_pos, frame_counter, channel_idx, lane)
 
 
 func _initialize_child_particle(particle: Particle, config: EffectEmitter,
-								parent_pos: Vector3, frame: int, channel_idx: int = 0) -> void:
+								parent_pos: Vector3, frame: int, channel_idx: int = 0, lane: int = 0) -> void:
 	"""Initialize particle from child emitter config at parent's death position.
 
 	Child emitters use PARENT anchor mode - position is relative to parent particle's
@@ -456,8 +542,6 @@ func _initialize_child_particle(particle: Particle, config: EffectEmitter,
 	var align_to_facing_flag = config.flags.get("align_to_facing", false)
 	var is_unit_oriented = velocity_inward_flag and align_to_facing_flag
 
-	# Position: parent position + emitter offset + spread
-	# Child emitters typically use PARENT anchor mode, so base_pos = parent_pos
 	var offset = _interpolate_vec3_for_child("position", config.position_start,
 											  config.position_end, config, frame)
 	var spread = _interpolate_vec3_for_child("spread", config.spread_start,
@@ -515,7 +599,6 @@ func _initialize_child_particle(particle: Particle, config: EffectEmitter,
 	if lifetime >= 0:
 		lifetime = maxi(1, lifetime)
 
-	# Initialize particle
 	particle.initialize(
 		final_pos,
 		velocity,
@@ -559,17 +642,23 @@ func _initialize_child_particle(particle: Particle, config: EffectEmitter,
 		var target_offset = _interpolate_vec3_for_child("target_offset",
 			config.target_offset_start, config.target_offset_end, config, frame)
 		# For child particles, homing target uses anchors from manager
-		particle.homing_target = _get_target_anchor_for_child(config) + target_offset
+		particle.homing_target = _get_target_anchor_for_child(config, lane) + target_offset
 
 	particle.anim_index = config.anim_index
 	particle.channel_index = channel_idx  # Inherit parent's channel for Z-ordering
+	particle.for_each_lane = lane  # and its for_each lane, so a grandchild homes on the same target
 
 	# Set frameset group offset from anim_param (the one derivation — EffectData)
 	particle.frameset_group_offset = effect_data.frameset_group_offset(config.anim_param)
 
 
-func _get_target_anchor_for_child(config: EffectEmitter) -> Vector3:
-	"""Get target anchor position for child emitter homing."""
+func _get_target_anchor_for_child(config: EffectEmitter, lane: int = 0) -> Vector3:
+	"""Get target anchor position for child emitter homing (a for_each lane's own target)."""
+	if lane > 0 and lane < lane_targets.size():
+		match config.get_target_anchor_mode():
+			EffectEmitter.AnchorMode.ORIGIN: return anchor_origin
+			EffectEmitter.AnchorMode.CAMERA: return anchor_camera
+		return lane_targets[lane]
 	match config.get_target_anchor_mode():
 		EffectEmitter.AnchorMode.CURSOR: return anchor_cursor
 		EffectEmitter.AnchorMode.ORIGIN: return anchor_origin
@@ -606,7 +695,6 @@ func _random_box(spread: Vector3) -> Vector3:
 	)
 
 
-# === Interpolation helpers for child emitters ===
 
 func _interpolate_vec3_for_child(param: String, start: Vector3, end: Vector3,
 								  config: EffectEmitter, frame: int) -> Vector3:
@@ -637,6 +725,27 @@ func _get_curve_for_child(param: String, config: EffectEmitter) -> EffectCurve:
 	return effect_data.get_curve(idx)
 
 
+func acquire_driven_particle(emitter_index: int, pos: Vector3) -> Particle:
+	"""A particle a CALLBACK positions itself each physics step, rather than one the
+	emitter launches (ADR-0369 — TrapOrbitalCallback's orbs). It renders through the
+	ordinary sprite path with the emitter's animation and frameset group; it has no
+	velocity or weight, so the integrator leaves it where the callback put it, and an
+	effectively endless lifetime, so it lives until the callback deactivates it. Null
+	when the pool is exhausted or the emitter does not exist."""
+	var config = effect_data.get_emitter(emitter_index)
+	if config == null:
+		return null
+	var particle = particle_pool.acquire()
+	if particle == null:
+		return null
+	particle.initialize(pos, Vector3.ZERO, DRIVEN_LIFETIME, emitter_index)
+	particle.inertia = 4096.0
+	particle.weight = 0.0
+	particle.anim_index = config.anim_index
+	particle.frameset_group_offset = effect_data.frameset_group_offset(config.anim_param)
+	return particle
+
+
 func get_active_particles() -> Array[Particle]:
 	"""Return active particles directly (no dict copy)"""
 	return particle_pool.get_active_particles()
@@ -652,10 +761,34 @@ func get_last_active_effect_frame() -> int:
 	if phase1_block:
 		last = maxi(last, phase1_block.last_active_keyframe_time)
 	if for_each_block:
-		last = maxi(last, for_each_block.last_active_keyframe_time + phase1_duration)
+		last = maxi(last, for_each_block.last_active_keyframe_time + phase1_duration
+			+ for_each_lane_offsets[for_each_lane_offsets.size() - 1])
 	if phase2_block:
 		last = maxi(last, phase2_block.last_active_keyframe_time + phase2_start)
 	return last
+
+
+func stop_spawning() -> void:
+	"""End every timeline channel NOW (EffectInstance.release): no new spawn request or
+	callback invoke is issued again, and the particles already alive run out their lives."""
+	for block in _all_blocks():
+		for state in block.channel_states:
+			state.finished = true
+
+
+func is_quiescent() -> bool:
+	"""Nothing will ever draw again: every timeline channel has finished (or was stopped),
+	no particle is alive and no callback is active. Unlike is_done() this ignores the
+	ActiveEmitter list — a timeline-driven emitter is created with a 10000-frame duration
+	and never deactivates, so it says nothing about whether the effect is over."""
+	for block in _all_blocks():
+		if not block.is_finished():
+			return false
+	if particle_pool.get_active_count() > 0:
+		return false
+	if callback_manager and callback_manager.has_active_callbacks():
+		return false
+	return true
 
 
 func is_done() -> bool:
@@ -690,29 +823,23 @@ func is_child_edge_suppressed(parent_index: int, edge: String) -> bool:
 
 func reset() -> void:
 	"""Reset the effect - clear all particles and restart all timelines"""
-	# Clear active emitters
 	active_emitters.clear()
 
-	# Clear particle pool
 	particle_pool.clear()
 
-	# Reset phase state (phase1_finished / phase2_started now derive from
-	# timeline — no local mirror to reset).
 	effect_frame = 0
 	_midlife_debug_logged = false
 
-	# Reset callback manager
 	if callback_manager:
 		callback_manager.reset()
 
-	# Reinitialize all timeline controllers if present
 	if effect_data.timeline:
 		if phase1_block:
 			phase1_block.initialize(effect_data.timeline, EffectPhaseClass.PHASE1)
 		if phase2_block:
 			phase2_block.initialize(effect_data.timeline, EffectPhaseClass.PHASE2)
-		if for_each_block:
-			for_each_block.initialize(effect_data.timeline, EffectPhaseClass.PHASE_FOR_EACH)
+		for block in for_each_lanes:
+			block.initialize(effect_data.timeline, EffectPhaseClass.PHASE_FOR_EACH)
 
 
 func set_anchors(world: Vector3, cursor: Vector3, origin: Vector3, target: Vector3) -> void:
@@ -722,11 +849,12 @@ func set_anchors(world: Vector3, cursor: Vector3, origin: Vector3, target: Vecto
 	anchor_origin = origin
 	anchor_target = target
 
-	# Update existing emitters
 	for emitter in active_emitters:
+		emitter.anchor_origin = origin
+		if emitter.for_each_lane > 0:
+			continue  # a lane's own target (set_lane_target)
 		emitter.anchor_world = world
 		emitter.anchor_cursor = cursor
-		emitter.anchor_origin = origin
 		emitter.anchor_target = target
 
 

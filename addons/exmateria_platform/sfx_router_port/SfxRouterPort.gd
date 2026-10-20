@@ -1,6 +1,6 @@
 @tool
 extends RefCounted
-## The EVENT-SOUND router's PORT SIGNATURE — the seven verbs an addon may name
+## The EVENT-SOUND router's PORT SIGNATURE — the nine verbs an addon may name
 ## instead of the `SfxRouter` autoload identifier.
 ##
 ## `SfxRouter="*res://src/audio/SfxRouter.gd"` is registered by the HOST's
@@ -34,6 +34,8 @@ extends RefCounted
 ## |---|---|---|
 ## | `play_cue` | plays a registered cue, returns its token | **`0`** |
 ## | `play_system_by_id` | plays a system-bank slot, returns its handle | **`0`** |
+## | `play_system_held` | starts a system sound the caller stops, returns its handle | **`0`** |
+## | `stop_held` | ends a `play_system_held` sound | **no-op** |
 ## | `play_bg` | starts an env ambient, returns its handle | **`0`** |
 ## | `set_bg_volume` | drives a bg cast's ramp volume | **no-op** |
 ## | `stop_bg_handle` | key-off ring-out for one bg cast | **no-op** |
@@ -67,7 +69,7 @@ extends RefCounted
 ## the signature this mirrors is `signal bg_sound_changed(action: String,
 ## sound_id: int, stacking: int, handle: int)`.
 ##
-## 🔴 **SEVEN VERBS IS THE WHOLE REACH AND NOT THE WHOLE ROUTER, STATED AS AN
+## 🔴 **NINE VERBS IS THE WHOLE REACH AND NOT THE WHOLE ROUTER, STATED AS AN
 ## ASYMMETRY.** `SfxRouter` also publishes `play_env`, `stop_bg_sound`,
 ## `set_listener`, its `cue_requested` signal and more; none is reached from inside
 ## any addon today, so none is here. `DisplayPort`'s docstring records what leaving
@@ -129,6 +131,24 @@ static func play_system_by_id(slot: int) -> int:
 	if p == null:
 		return 0
 	return p.play_system_by_id(slot)
+
+
+## A system-bank sound the caller ends — the engine charge secondaries' SFX 0x1F / 0x21,
+## on at init and off on the handler's last tick. Returns the handle, or `0` with no
+## router (the value `stop_held` early-returns on — the same handle chain as `play_bg`).
+static func play_system_held(slot: int) -> int:
+	var p := _resolve()
+	if p == null:
+		return 0
+	return p.play_system_held(slot)
+
+
+## End a `play_system_held` sound.
+static func stop_held(handle: int) -> void:
+	var p := _resolve()
+	if p == null:
+		return
+	p.stop_held(handle)
 
 
 ## `{6B}` BG Sound — start an env-bank ambient (`stacking != 0` = an overlay voice).
